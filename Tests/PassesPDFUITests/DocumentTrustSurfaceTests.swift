@@ -10,6 +10,7 @@ import Testing
 ///
 /// View-construction smoke is covered in `ViewConstructionSmokeTests`.
 @Suite("Document trust surface")
+@MainActor
 struct DocumentTrustSurfaceTests {
 
     @Test func trustCaptionTextMatchesVerbatimWording() {
