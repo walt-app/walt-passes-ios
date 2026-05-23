@@ -43,15 +43,3 @@ public struct ScannableCardId: Sendable, Equatable, Hashable {
         self.value = value
     }
 }
-
-/// Epoch-millisecond timestamp. Mirrors Android's `PassInstant` (defined in `Pass.kt`).
-///
-/// Placeholder location pending the `Pass.kt` port; lives here so `ScannableCard` can compile
-/// without depending on Pass.swift (which is scaffold-only at the time of this bead).
-public struct PassInstant: Sendable, Equatable, Hashable {
-    public let epochMillis: Int64
-
-    public init(epochMillis: Int64) {
-        self.epochMillis = epochMillis
-    }
-}

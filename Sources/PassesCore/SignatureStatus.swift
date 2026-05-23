@@ -25,5 +25,4 @@ public enum SignatureStatus: Sendable, Equatable {
     case certChainIncomplete
 }
 
-// `toKind()` flattening to `SignatureStatusKind` is deferred: `SignatureStatusKind` lives in
-// `TelemetryGuard.kt` on the Android side and is not part of this port.
+// `toKind()` flattening to `SignatureStatusKind` lives in `SignatureStatusKind.swift`.
