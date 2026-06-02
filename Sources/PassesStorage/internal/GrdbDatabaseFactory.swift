@@ -23,9 +23,19 @@ enum GrdbDatabaseFactory {
     /// migration step; rethrows GRDB / SQLite errors otherwise.
     static func open(at url: URL) throws -> DatabaseQueue {
         let queue = try DatabaseQueue(path: url.path)
-        try applyFileProtection(at: url)
         try migrate(queue)
+        // Apply protection AFTER migration so the WAL/SHM sidecars exist and are covered too.
+        try applyDataProtection(at: url)
         return queue
+    }
+
+    /// The DB file plus every sidecar SQLite may create alongside it. Both the protection
+    /// step and the `DataProtectionAssertion` iterate this list, so they cannot drift.
+    static func protectedFileURLs(for dbURL: URL) -> [URL] {
+        ["", "-wal", "-shm", "-journal"].map { suffix in
+            dbURL.deletingLastPathComponent()
+                .appendingPathComponent(dbURL.lastPathComponent + suffix)
+        }
     }
 
     // MARK: - Migration
@@ -89,32 +99,34 @@ enum GrdbDatabaseFactory {
 
     // MARK: - Data Protection
 
-    #if os(iOS)
-    /// Marks the DB file and its WAL/SHM/journal sidecars `FileProtectionType.complete`:
-    /// the OS keeps them encrypted at rest and inaccessible while the device is locked.
-    /// This replaces Android's SQLCipher page encryption (ios-b1f decision). The companion
-    /// backup-exclusion / sidecar assertion lands in E5.
-    static func applyFileProtection(at url: URL) throws {
+    /// Applies the two-part at-rest protection the trust claim rests on, to the DB file and
+    /// every existing sidecar:
+    ///
+    ///  1. **Backup exclusion** (`isExcludedFromBackupKey`) — keeps payment/pass data out of
+    ///     iCloud Backup and device-to-device transfer. The iOS analogue of Android's
+    ///     `<exclude>` backup rules (see `BackupRulesContract`). Cross-platform.
+    ///  2. **Encryption-at-rest** (`FileProtectionType.complete`, iOS only) — the OS keeps the
+    ///     files encrypted and unreadable while the device is locked. This is what replaces
+    ///     Android's SQLCipher page encryption under the ios-b1f Data Protection decision.
+    ///     There is NO app-managed key: the class key is OS/Secure-Enclave-managed and bound
+    ///     to the device passcode, so the kernel's SQLCipher-shaped `PassKeyProvider` /
+    ///     `DatabaseKey` / `PRAGMA key` contract has no iOS counterpart and is intentionally
+    ///     unused (see `DataProtectionAssertion` for the verifiable statement of this claim).
+    static func applyDataProtection(at dbURL: URL) throws {
         let fileManager = FileManager.default
-        let paths = [
-            url.path,
-            url.path + "-wal",
-            url.path + "-shm",
-            url.path + "-journal",
-        ]
-        for path in paths where fileManager.fileExists(atPath: path) {
+        for fileURL in protectedFileURLs(for: dbURL) where fileManager.fileExists(atPath: fileURL.path) {
+            var url = fileURL
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            try url.setResourceValues(values)
+            #if os(iOS)
             try fileManager.setAttributes(
                 [.protectionKey: FileProtectionType.complete],
-                ofItemAtPath: path
+                ofItemAtPath: fileURL.path
             )
+            #endif
         }
     }
-    #else
-    /// Data Protection is an iOS-only capability; on macOS (where the kernel's `swift test`
-    /// runs) the attribute has no effect, so applying it is a documented no-op. Production
-    /// runs only on iOS.
-    static func applyFileProtection(at url: URL) throws {}
-    #endif
 }
 
 /// Failure modes raised while bringing the database to the current schema version. Mapped
