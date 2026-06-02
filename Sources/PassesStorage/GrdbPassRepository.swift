@@ -43,9 +43,11 @@ public final class GrdbPassRepository: PassRepository, @unchecked Sendable {
     ) throws {
         self.dbQueue = dbQueue
         self.clock = clock
-        let summaries = try dbQueue.read { try GrdbPassStore.listSummaries($0) }
+        let (summaries, documents) = try dbQueue.read {
+            (try GrdbPassStore.listSummaries($0), try GrdbDocumentStore.listRows($0))
+        }
         passesBroadcaster = Broadcaster(summaries)
-        documentsBroadcaster = Broadcaster([])
+        documentsBroadcaster = Broadcaster(documents)
         scannableBroadcaster = Broadcaster([])
     }
 
@@ -123,7 +125,7 @@ public final class GrdbPassRepository: PassRepository, @unchecked Sendable {
         passesBroadcaster.send(summaries)
     }
 
-    // MARK: - Documents (placeholder — ios-b1f.3)
+    // MARK: - Documents
 
     public func insertDocument(
         label: String,
@@ -131,7 +133,23 @@ public final class GrdbPassRepository: PassRepository, @unchecked Sendable {
         pageCount: Int,
         thumbnailBytes: Data
     ) async -> StorageResult<DocumentRecordId> {
-        .failure(error: .unknown(kind: .other))
+        guard ensureOpen() else { return .failure(error: .databaseLocked) }
+        if let kind = GrdbDocumentStore.rejection(pdfBytes: pdfBytes, pageCount: pageCount, label: label) {
+            return .failure(error: .documentRejected(kind: kind))
+        }
+        let now = clock()
+        do {
+            let id = try await dbQueue.write { db in
+                try GrdbDocumentStore.insert(
+                    label: label, pdfBytes: pdfBytes, pageCount: pageCount,
+                    thumbnailBytes: thumbnailBytes, nowEpochMs: now, db
+                )
+            }
+            await refreshDocuments()
+            return .success(value: id)
+        } catch {
+            return .failure(error: StorageErrorMapper.map(error))
+        }
     }
 
     public func observeDocuments() -> AsyncStream<[DocumentRow]> {
@@ -139,15 +157,44 @@ public final class GrdbPassRepository: PassRepository, @unchecked Sendable {
     }
 
     public func loadDocumentBytes(id: DocumentRecordId) async -> StorageResult<Data> {
-        .failure(error: .integrityViolation(recordId: .document(id)))
+        guard ensureOpen() else { return .failure(error: .databaseLocked) }
+        do {
+            guard let bytes = try await dbQueue.read({ try GrdbDocumentStore.loadBytes(id: id, $0) }) else {
+                return .failure(error: .integrityViolation(recordId: .document(id)))
+            }
+            return .success(value: bytes)
+        } catch {
+            return .failure(error: StorageErrorMapper.map(error))
+        }
     }
 
     public func loadDocumentThumbnail(id: DocumentRecordId) async -> StorageResult<Data> {
-        .failure(error: .integrityViolation(recordId: .document(id)))
+        guard ensureOpen() else { return .failure(error: .databaseLocked) }
+        do {
+            guard let bytes = try await dbQueue.read({ try GrdbDocumentStore.loadThumbnail(id: id, $0) }) else {
+                return .failure(error: .integrityViolation(recordId: .document(id)))
+            }
+            return .success(value: bytes)
+        } catch {
+            return .failure(error: StorageErrorMapper.map(error))
+        }
     }
 
     public func deleteDocument(id: DocumentRecordId) async -> StorageResult<Void> {
-        .failure(error: .integrityViolation(recordId: .document(id)))
+        guard ensureOpen() else { return .failure(error: .databaseLocked) }
+        do {
+            let existed = try await dbQueue.write { db in try GrdbDocumentStore.delete(id: id, db) }
+            guard existed else { return .failure(error: .integrityViolation(recordId: .document(id))) }
+            await refreshDocuments()
+            return .success(value: ())
+        } catch {
+            return .failure(error: StorageErrorMapper.map(error))
+        }
+    }
+
+    private func refreshDocuments() async {
+        guard let rows = try? await dbQueue.read({ try GrdbDocumentStore.listRows($0) }) else { return }
+        documentsBroadcaster.send(rows)
     }
 
     // MARK: - Scannable cards (placeholder — ios-b1f.4)
