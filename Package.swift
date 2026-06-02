@@ -28,6 +28,12 @@ let package = Package(
         .library(name: "PassesUICore", targets: ["PassesUICore"]),
         .library(name: "PassesUI", targets: ["PassesUI"]),
     ],
+    dependencies: [
+        // Vanilla GRDB over Apple's built-in SQLite. Encryption-at-rest is provided by
+        // iOS Data Protection (FileProtectionType.complete) on the DB file, NOT SQLCipher
+        // (ios-b1f epic decision 2026-06-02). Only PassesStorage links it.
+        .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.11.0"),
+    ],
     targets: [
         .target(
             name: "PassesCore",
@@ -51,7 +57,10 @@ let package = Package(
         ),
         .target(
             name: "PassesStorage",
-            dependencies: ["PassesCore"],
+            dependencies: [
+                "PassesCore",
+                .product(name: "GRDB", package: "GRDB.swift"),
+            ],
             path: "Sources/PassesStorage"
         ),
         .target(
