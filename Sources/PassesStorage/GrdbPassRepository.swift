@@ -43,12 +43,16 @@ public final class GrdbPassRepository: PassRepository, @unchecked Sendable {
     ) throws {
         self.dbQueue = dbQueue
         self.clock = clock
-        let (summaries, documents) = try dbQueue.read {
-            (try GrdbPassStore.listSummaries($0), try GrdbDocumentStore.listRows($0))
+        let (summaries, documents, cards) = try dbQueue.read {
+            (
+                try GrdbPassStore.listSummaries($0),
+                try GrdbDocumentStore.listRows($0),
+                try GrdbScannableCardStore.listAll($0)
+            )
         }
         passesBroadcaster = Broadcaster(summaries)
         documentsBroadcaster = Broadcaster(documents)
-        scannableBroadcaster = Broadcaster([])
+        scannableBroadcaster = Broadcaster(cards)
     }
 
     private func ensureOpen() -> Bool {
@@ -197,28 +201,76 @@ public final class GrdbPassRepository: PassRepository, @unchecked Sendable {
         documentsBroadcaster.send(rows)
     }
 
-    // MARK: - Scannable cards (placeholder — ios-b1f.4)
+    // MARK: - Scannable cards
 
     public func createScannableCard(
         input: ScannableCardCreateInput
     ) async -> StorageResult<ScannableCardRecordId> {
-        .failure(error: .unknown(kind: .other))
+        guard ensureOpen() else { return .failure(error: .databaseLocked) }
+        let now = clock()
+        // The validator is the single insert-time choke point: a rejection bubbles up as
+        // .scannableCardRejected (the row never reaches disk), never a generic infra error.
+        // The id here is a placeholder for validation only; storage owns the real row id.
+        let validation = ScannableCardInputValidator.validate(
+            input: input,
+            id: ScannableCardId("0"),
+            createdAt: PassInstant(epochMillis: now)
+        )
+        guard case .success(let validated) = validation else {
+            return .failure(error: .scannableCardRejected(
+                reason: validation.storageRejectionReason ?? .invalidPayload(reason: .empty)
+            ))
+        }
+        do {
+            // Persist the validator's trimmed, normalized values, not the raw input.
+            let id = try await dbQueue.write { db in
+                try GrdbScannableCardStore.insert(
+                    payload: validated.payload, format: validated.format,
+                    label: validated.label, nowEpochMs: now, db
+                )
+            }
+            await refreshScannableCards()
+            return .success(value: id)
+        } catch {
+            return .failure(error: StorageErrorMapper.map(error))
+        }
     }
 
     public func loadScannableCard(
         id: ScannableCardRecordId
     ) async -> StorageResult<ScannableCard> {
-        .failure(error: .integrityViolation(recordId: .scannableCard(id)))
+        guard ensureOpen() else { return .failure(error: .databaseLocked) }
+        do {
+            guard let card = try await dbQueue.read({ try GrdbScannableCardStore.load(id: id, $0) }) else {
+                return .failure(error: .integrityViolation(recordId: .scannableCard(id)))
+            }
+            return .success(value: card)
+        } catch {
+            return .failure(error: StorageErrorMapper.map(error))
+        }
     }
 
     public func deleteScannableCard(
         id: ScannableCardRecordId
     ) async -> StorageResult<Void> {
-        .failure(error: .integrityViolation(recordId: .scannableCard(id)))
+        guard ensureOpen() else { return .failure(error: .databaseLocked) }
+        do {
+            let existed = try await dbQueue.write { db in try GrdbScannableCardStore.delete(id: id, db) }
+            guard existed else { return .failure(error: .integrityViolation(recordId: .scannableCard(id))) }
+            await refreshScannableCards()
+            return .success(value: ())
+        } catch {
+            return .failure(error: StorageErrorMapper.map(error))
+        }
     }
 
     public func observeScannableCards() -> AsyncStream<[ScannableCard]> {
         scannableBroadcaster.stream()
+    }
+
+    private func refreshScannableCards() async {
+        guard let cards = try? await dbQueue.read({ try GrdbScannableCardStore.listAll($0) }) else { return }
+        scannableBroadcaster.send(cards)
     }
 
     // MARK: - Lifecycle
