@@ -20,6 +20,16 @@ public protocol PassParser: Sendable {
     func parse(source: PassSource) -> ParseResult
 }
 
+/// Factory namespace for the production parser. The concrete pipeline (`DefaultPassParser`) is
+/// internal; `PassParserFactory.create` is the only public way to obtain one, keeping the
+/// implementation a private detail. (A `static` on `PassParser` itself cannot be called on the
+/// existential metatype, so the factory lives on its own type.)
+public enum PassParserFactory {
+    public static func create(config: ParserConfig = ParserConfig()) -> any PassParser {
+        DefaultPassParser(config: config)
+    }
+}
+
 /// A PKPASS archive in a form the parser can stream. The parser materializes the input into
 /// memory only as needed, applying `ParserConfig.maxArchiveBytes` and friends along the way.
 ///

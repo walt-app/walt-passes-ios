@@ -33,12 +33,25 @@ let package = Package(
         // iOS Data Protection (FileProtectionType.complete) on the DB file, NOT SQLCipher
         // (ios-b1f epic decision 2026-06-02). Only PassesStorage links it.
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.11.0"),
+        // Apple's pure-Swift X.509 + CMS. PassesCore's signature verifier uses it to
+        // verify the detached PKCS#7/CMS signature over a pkpass manifest and classify the
+        // chain against bundled Apple roots — the iOS analogue of Android's BouncyCastle
+        // path (user-approved §7 decision 2026-06-02). Pulls swift-asn1 + swift-crypto
+        // transitively. Only PassesCore links it.
+        .package(url: "https://github.com/apple/swift-certificates.git", from: "1.19.1"),
     ],
     targets: [
         .target(
             name: "PassesCore",
-            dependencies: [],
-            path: "Sources/PassesCore"
+            dependencies: [
+                .product(name: "X509", package: "swift-certificates"),
+            ],
+            path: "Sources/PassesCore",
+            resources: [
+                // Bundled Apple trust anchors + WWDR intermediates (mirrors Android's
+                // passes-core/resources/.../certs). Loaded at parse time; never fetched.
+                .copy("Resources/certs"),
+            ]
         ),
         .target(
             name: "PassesPDFCore",
@@ -75,7 +88,14 @@ let package = Package(
         ),
         .testTarget(
             name: "PassesCoreTests",
-            dependencies: ["PassesCore"],
+            dependencies: [
+                "PassesCore",
+                // Signature-verifier tests synthesize a test root/leaf and CMS-sign a manifest,
+                // mirroring swift-certificates' own CMSTests. Only the test target links X509;
+                // P256 key generation is reached through a PassesCore test-support shim (which
+                // already links Crypto transitively) so swift-crypto need not be a direct dep.
+                .product(name: "X509", package: "swift-certificates"),
+            ],
             path: "Tests/PassesCoreTests"
         ),
         .testTarget(
