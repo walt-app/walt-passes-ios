@@ -15,6 +15,7 @@ public struct PassFront: View {
     let signatureStatus: SignatureStatus
     let telemetry: any UiTelemetryGuard
     let locale: PassLocale
+    let userLabel: String?
     let nowEpochMillis: Int64
     let showSignatureBadge: Bool
     let showExpiredOverlay: Bool
@@ -24,6 +25,7 @@ public struct PassFront: View {
         signatureStatus: SignatureStatus,
         telemetry: any UiTelemetryGuard,
         locale: PassLocale = PassLocale("en"),
+        userLabel: String? = nil,
         nowEpochMillis: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
         showSignatureBadge: Bool = true,
         showExpiredOverlay: Bool = true
@@ -32,6 +34,7 @@ public struct PassFront: View {
         self.signatureStatus = signatureStatus
         self.telemetry = telemetry
         self.locale = locale
+        self.userLabel = userLabel
         self.nowEpochMillis = nowEpochMillis
         self.showSignatureBadge = showSignatureBadge
         self.showExpiredOverlay = showExpiredOverlay
@@ -40,14 +43,14 @@ public struct PassFront: View {
     public var body: some View {
         let band = signatureStatus.band
         let strings = pass.resolveLocalizedStrings(preferred: locale)
-        let displayOrg = strings.lookupOrSelf(pass.organizationName)
         let expired = ExpiredOverlayState.from(pass: pass, nowEpochMillis: nowEpochMillis)
         ZStack {
             PassFrontSurface(
                 pass: pass,
                 band: band,
                 strings: strings,
-                displayOrganizationName: displayOrg,
+                userLabel: userLabel,
+                locale: locale,
                 showSignatureBadge: showSignatureBadge
             )
             if showExpiredOverlay {
@@ -68,7 +71,8 @@ private struct PassFrontSurface: View {
     let pass: Pass
     let band: SignatureBand
     let strings: LocalizedStrings
-    let displayOrganizationName: String
+    let userLabel: String?
+    let locale: PassLocale
     let showSignatureBadge: Bool
 
     var body: some View {
@@ -77,9 +81,9 @@ private struct PassFrontSurface: View {
         let lbl = pass.colors.label.swiftUIColorOrDefault(fg.opacity(0.7))
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 12) {
-                Text(displayOrganizationName)
-                    .font(.callout)
-                    .foregroundColor(lbl)
+                // The front-of-card eyebrow routes through PassIdentityBlock so the
+                // trust-caption rule is enforced by the same view every surface uses.
+                PassIdentityBlock(pass: pass, userLabel: userLabel, locale: locale, primaryColor: lbl)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if showSignatureBadge {
                     SignatureTrustBadge(band: band)

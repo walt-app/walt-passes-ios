@@ -45,6 +45,26 @@ struct ViewConstructionSmokeTests {
         #expect(type(of: v.body) != Never.self)
     }
 
+    @Test func passFrontConstructsWithUserLabel() {
+        let v = PassFront(
+            pass: Self.makePass(),
+            signatureStatus: .selfSigned,
+            telemetry: NoopUiTelemetryGuard(),
+            userLabel: "Mom's flight home"
+        )
+        #expect(type(of: v.body) != Never.self)
+    }
+
+    @Test func passIdentityBlockConstructsWithoutOverride() {
+        let v = PassIdentityBlock(pass: Self.makePass(), userLabel: nil)
+        #expect(type(of: v.body) != Never.self)
+    }
+
+    @Test func passIdentityBlockConstructsWithDistinctOverride() {
+        let v = PassIdentityBlock(pass: Self.makePass(), userLabel: "My pass", primaryColor: .black)
+        #expect(type(of: v.body) != Never.self)
+    }
+
     @Test func passBackConstructsWithRequiredCallbacks() {
         let v = PassBack(
             pass: Self.makePass(),
