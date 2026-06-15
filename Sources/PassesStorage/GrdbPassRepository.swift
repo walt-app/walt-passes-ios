@@ -179,6 +179,25 @@ public final class GrdbPassRepository: PassRepository, @unchecked Sendable {
         }
     }
 
+    public func updateDocumentLabel(id: DocumentRecordId, label: String) async -> StorageResult<Void> {
+        guard ensureOpen() else { return .failure(error: .databaseLocked) }
+        // Cap checked before the row lookup, so a too-long label on an unknown id surfaces
+        // as `.documentRejected`, not `.integrityViolation`. Empty/blank labels are allowed.
+        if label.count > DocumentBounds.maxLabelChars {
+            return .failure(error: .documentRejected(kind: .labelTooLongAtStorage))
+        }
+        do {
+            let matched = try await dbQueue.write { db in
+                try GrdbDocumentStore.updateLabel(id: id, label: label, db)
+            }
+            guard matched else { return .failure(error: .integrityViolation(recordId: .document(id))) }
+            await refreshDocuments()
+            return .success(value: ())
+        } catch {
+            return .failure(error: StorageErrorMapper.map(error))
+        }
+    }
+
     public func observeDocuments() -> AsyncStream<[DocumentRow]> {
         documentsBroadcaster.stream()
     }
@@ -254,6 +273,39 @@ public final class GrdbPassRepository: PassRepository, @unchecked Sendable {
             }
             await refreshScannableCards()
             return .success(value: id)
+        } catch {
+            return .failure(error: StorageErrorMapper.map(error))
+        }
+    }
+
+    public func updateScannableCard(
+        id: ScannableCardRecordId,
+        input: ScannableCardCreateInput
+    ) async -> StorageResult<Void> {
+        guard ensureOpen() else { return .failure(error: .databaseLocked) }
+        let now = clock()
+        // Re-validate through the same choke point as create; a rejection bubbles up before
+        // the row lookup, so an invalid input on an unknown id surfaces as .scannableCardRejected.
+        let validation = ScannableCardInputValidator.validate(
+            input: input,
+            id: ScannableCardId("0"),
+            createdAt: PassInstant(epochMillis: now)
+        )
+        guard case .success(let validated) = validation else {
+            return .failure(error: .scannableCardRejected(
+                reason: validation.storageRejectionReason ?? .invalidPayload(reason: .empty)
+            ))
+        }
+        do {
+            let matched = try await dbQueue.write { db in
+                try GrdbScannableCardStore.updateById(
+                    id: id, payload: validated.payload, format: validated.format,
+                    label: validated.label, db
+                )
+            }
+            guard matched else { return .failure(error: .integrityViolation(recordId: .scannableCard(id))) }
+            await refreshScannableCards()
+            return .success(value: ())
         } catch {
             return .failure(error: StorageErrorMapper.map(error))
         }

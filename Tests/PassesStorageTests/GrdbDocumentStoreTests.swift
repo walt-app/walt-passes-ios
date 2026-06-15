@@ -114,6 +114,53 @@ struct GrdbDocumentStoreTests {
         #expect(await iterator.next()?.map(\.displayLabel) == ["persist"])
     }
 
+    @Test func updateDocumentLabelChangesDisplayLabel() async throws {
+        let repo = try makeRepository()
+        guard case .success(let id) = await repo.insertDocument(
+            label: "A", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb
+        ) else { Issue.record("insert failed"); return }
+        guard case .success = await repo.updateDocumentLabel(id: id, label: "B") else {
+            Issue.record("update failed"); return
+        }
+        var iterator = repo.observeDocuments().makeAsyncIterator()
+        let rows = await iterator.next() ?? []
+        #expect(rows.first(where: { $0.id == id })?.displayLabel == "B")
+    }
+
+    @Test func updateDocumentLabelAtCapAcceptedOverCapRejected() async throws {
+        let repo = try makeRepository()
+        guard case .success(let id) = await repo.insertDocument(
+            label: "A", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb
+        ) else { Issue.record("insert failed"); return }
+        let atCap = String(repeating: "x", count: DocumentBounds.maxLabelChars)
+        guard case .success = await repo.updateDocumentLabel(id: id, label: atCap) else {
+            Issue.record("at-cap label should be accepted"); return
+        }
+        let overCap = String(repeating: "x", count: DocumentBounds.maxLabelChars + 1)
+        guard case .failure(let error) = await repo.updateDocumentLabel(id: id, label: overCap) else {
+            Issue.record("expected over-cap rejection"); return
+        }
+        #expect(error == .documentRejected(kind: .labelTooLongAtStorage))
+    }
+
+    @Test func updateDocumentLabelCapRejectionPrecedesUnknownId() async throws {
+        let repo = try makeRepository()
+        let overCap = String(repeating: "x", count: DocumentBounds.maxLabelChars + 1)
+        // Cap is checked before the row lookup: too-long on an unknown id is documentRejected.
+        guard case .failure(let error) = await repo.updateDocumentLabel(id: DocumentRecordId(404), label: overCap) else {
+            Issue.record("expected cap rejection"); return
+        }
+        #expect(error == .documentRejected(kind: .labelTooLongAtStorage))
+    }
+
+    @Test func updateDocumentLabelUnknownIdIsIntegrityViolation() async throws {
+        let repo = try makeRepository()
+        guard case .failure(let error) = await repo.updateDocumentLabel(id: DocumentRecordId(404), label: "x") else {
+            Issue.record("expected integrity violation"); return
+        }
+        #expect(error == .integrityViolation(recordId: .document(DocumentRecordId(404))))
+    }
+
     /// Mutable, thread-safe clock (Swift 6 rejects a captured `var` in a `@Sendable` closure).
     private final class TestClock: @unchecked Sendable {
         private let lock = NSLock()

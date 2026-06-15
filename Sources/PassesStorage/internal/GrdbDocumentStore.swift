@@ -78,6 +78,16 @@ enum GrdbDocumentStore {
         return db.changesCount > 0
     }
 
+    /// Overwrites `display_label` on the row matching `id`. `imported_at_epoch_ms` is left
+    /// untouched. Returns `false` if no row matched (caller maps to integrityViolation).
+    static func updateLabel(id: DocumentRecordId, label: String, _ db: Database) throws -> Bool {
+        try db.execute(
+            sql: "UPDATE \(Schema.Tables.documents) SET display_label = ? WHERE id = ?",
+            arguments: [label, id.value]
+        )
+        return db.changesCount > 0
+    }
+
     /// Storage-side defense-in-depth (ADR 0005 D7): re-checks the size / page / label caps
     /// before any bytes reach disk, so a future caller bug cannot land an oversized row.
     /// Returns the rejected kind, or `nil` if the document is within bounds.
