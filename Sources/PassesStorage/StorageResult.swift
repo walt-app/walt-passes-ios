@@ -58,6 +58,12 @@ public enum StorageError: Sendable, Equatable {
     /// without re-running validation. The row never reaches disk.
     case scannableCardRejected(reason: ScannableCardRejectionReason)
 
+    /// A pass-side update (today: `user_label`) was refused by a storage-layer bound check.
+    /// Carries a typed `PassUpdateRejectedKind` so the consumer localizes without re-running
+    /// the check. Takes precedence over `integrityViolation`: a too-long label on an unknown
+    /// id surfaces here, because the bound is checked before the row lookup.
+    case passRejected(kind: PassUpdateRejectedKind)
+
     /// The schema version on disk is newer than this build of `PassesStorage`
     /// understands. This happens when a user downgrades the wallet app. The DB is
     /// read-only-protected until a forward-compatible build runs again.
@@ -84,6 +90,19 @@ public enum ScannableCardRejectionReason: Sendable, Equatable {
     case invalidPayload(reason: PayloadRejection)
     case unsupportedFormat(format: ScannableFormat)
     case encoderFailure(reason: EncoderFailureReason)
+}
+
+/// Why a pass-side update (today: `updatePassUserLabel`) was refused by a storage-layer
+/// bound check. Mirrors passes-android `PassUpdateRejectedKind`.
+public enum PassUpdateRejectedKind: Sendable, Equatable, CaseIterable {
+    case labelTooLong
+}
+
+/// Bounds for the user-supplied pass-label override. The cap lives only at this layer;
+/// nothing upstream of `PassRepository.updatePassUserLabel` enforces it. Mirrors
+/// passes-android `PassUserLabelBounds`.
+public enum PassUserLabelBounds {
+    public static let maxUserLabelChars: Int = 100
 }
 
 /// Stable telemetry-friendly enumeration of the open-ended failure space. New arms here

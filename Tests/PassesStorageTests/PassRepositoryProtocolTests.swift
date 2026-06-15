@@ -259,6 +259,10 @@ private final class FakePassRepository: PassRepository, @unchecked Sendable {
         .success(value: ())
     }
 
+    func updatePassUserLabel(id: PassRecordId, label: String?) async -> StorageResult<Void> {
+        .success(value: ())
+    }
+
     func insertDocument(
         label: String,
         pdfBytes: Data,

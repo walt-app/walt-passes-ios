@@ -124,6 +124,29 @@ public final class GrdbPassRepository: PassRepository, @unchecked Sendable {
         }
     }
 
+    public func updatePassUserLabel(id: PassRecordId, label: String?) async -> StorageResult<Void> {
+        guard ensureOpen() else { return .failure(error: .databaseLocked) }
+        // Normalize: trim, then collapse blank-after-trim to nil (a clear). The trimmed
+        // value is what the cap is measured against and what reaches the store.
+        let trimmed = label?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = (trimmed?.isEmpty ?? true) ? nil : trimmed
+        // Cap is checked before the row lookup, so a too-long label on an unknown id
+        // surfaces as `.passRejected`, not `.integrityViolation`.
+        if let normalized, normalized.count > PassUserLabelBounds.maxUserLabelChars {
+            return .failure(error: .passRejected(kind: .labelTooLong))
+        }
+        do {
+            let existed = try await dbQueue.write { db in
+                try GrdbPassStore.updateUserLabel(id: id, label: normalized, db)
+            }
+            guard existed else { return .failure(error: .integrityViolation(recordId: .pass(id))) }
+            await refreshPasses()
+            return .success(value: ())
+        } catch {
+            return .failure(error: StorageErrorMapper.map(error))
+        }
+    }
+
     private func refreshPasses() async {
         guard let summaries = try? await dbQueue.read({ try GrdbPassStore.listSummaries($0) }) else { return }
         passesBroadcaster.send(summaries)

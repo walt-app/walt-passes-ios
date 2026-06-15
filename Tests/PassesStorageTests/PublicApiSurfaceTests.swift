@@ -42,6 +42,7 @@ struct PublicApiSurfaceTests {
             .unknown(kind: .diskFull),
             .documentRejected(kind: .oversizedAtStorage),
             .scannableCardRejected(reason: .invalidLabel(reason: .empty)),
+            .passRejected(kind: .labelTooLong),
         ]
         let labels = errors.map { error -> String in
             switch error {
@@ -64,6 +65,7 @@ struct PublicApiSurfaceTests {
                 case .unsupportedFormat(let f): return "card-rejected:fmt:\(f)"
                 case .encoderFailure(let r): return "card-rejected:enc:\(r)"
                 }
+            case .passRejected(let kind): return "pass-rejected:\(kind)"
             }
         }
         #expect(labels == [
@@ -77,6 +79,7 @@ struct PublicApiSurfaceTests {
             "unknown:diskFull",
             "doc-rejected:oversizedAtStorage",
             "card-rejected:label:empty",
+            "pass-rejected:labelTooLong",
         ])
     }
 
