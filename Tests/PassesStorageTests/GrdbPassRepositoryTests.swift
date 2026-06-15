@@ -129,6 +129,95 @@ struct GrdbPassRepositoryTests {
         #expect(error == .integrityViolation(recordId: .pass(id)))
     }
 
+    @Test func updatePassUserLabelSetsTrimmedLabel() async throws {
+        let repo = try makeRepository()
+        guard case .success(let id) = await repo.upsert(pass: samplePass(), signatureStatus: .unsigned) else {
+            Issue.record("upsert failed"); return
+        }
+        guard case .success = await repo.updatePassUserLabel(id: id, label: "  Gym card  ") else {
+            Issue.record("update failed"); return
+        }
+        guard case .success(let summary) = await repo.summaryOf(id: id) else {
+            Issue.record("summaryOf failed"); return
+        }
+        #expect(summary.userLabel == "Gym card")
+    }
+
+    @Test func updatePassUserLabelClearsOnNilOrBlank() async throws {
+        let repo = try makeRepository()
+        guard case .success(let id) = await repo.upsert(pass: samplePass(), signatureStatus: .unsigned) else {
+            Issue.record("upsert failed"); return
+        }
+        _ = await repo.updatePassUserLabel(id: id, label: "Temp")
+        // nil clears.
+        _ = await repo.updatePassUserLabel(id: id, label: nil)
+        guard case .success(let afterNil) = await repo.summaryOf(id: id) else {
+            Issue.record("summaryOf failed"); return
+        }
+        #expect(afterNil.userLabel == nil)
+        // blank-after-trim also clears.
+        _ = await repo.updatePassUserLabel(id: id, label: "Temp")
+        _ = await repo.updatePassUserLabel(id: id, label: "   ")
+        guard case .success(let afterBlank) = await repo.summaryOf(id: id) else {
+            Issue.record("summaryOf failed"); return
+        }
+        #expect(afterBlank.userLabel == nil)
+    }
+
+    @Test func updatePassUserLabelAtCapAcceptedOverCapRejected() async throws {
+        let repo = try makeRepository()
+        guard case .success(let id) = await repo.upsert(pass: samplePass(), signatureStatus: .unsigned) else {
+            Issue.record("upsert failed"); return
+        }
+        let atCap = String(repeating: "a", count: PassUserLabelBounds.maxUserLabelChars)
+        guard case .success = await repo.updatePassUserLabel(id: id, label: atCap) else {
+            Issue.record("at-cap label should be accepted"); return
+        }
+        let overCap = String(repeating: "a", count: PassUserLabelBounds.maxUserLabelChars + 1)
+        guard case .failure(let error) = await repo.updatePassUserLabel(id: id, label: overCap) else {
+            Issue.record("expected over-cap rejection"); return
+        }
+        #expect(error == .passRejected(kind: .labelTooLong))
+        // The rejected update must not have overwritten the accepted at-cap value.
+        guard case .success(let summary) = await repo.summaryOf(id: id) else {
+            Issue.record("summaryOf failed"); return
+        }
+        #expect(summary.userLabel == atCap)
+    }
+
+    @Test func updatePassUserLabelCapRejectionPrecedesUnknownId() async throws {
+        let repo = try makeRepository()
+        let overCap = String(repeating: "a", count: PassUserLabelBounds.maxUserLabelChars + 1)
+        // Too-long label on a nonexistent id surfaces as passRejected, not integrityViolation.
+        guard case .failure(let error) = await repo.updatePassUserLabel(id: PassRecordId(404), label: overCap) else {
+            Issue.record("expected cap rejection"); return
+        }
+        #expect(error == .passRejected(kind: .labelTooLong))
+    }
+
+    @Test func updatePassUserLabelUnknownIdIsIntegrityViolation() async throws {
+        let repo = try makeRepository()
+        guard case .failure(let error) = await repo.updatePassUserLabel(id: PassRecordId(404), label: "x") else {
+            Issue.record("expected integrity violation"); return
+        }
+        #expect(error == .integrityViolation(recordId: .pass(PassRecordId(404))))
+    }
+
+    @Test func updatePassUserLabelDoesNotBumpUpdatedAt() async throws {
+        let clock = TestClock(1_000)
+        let repo = try makeRepository(now: clock.now)
+        guard case .success(let id) = await repo.upsert(pass: samplePass(), signatureStatus: .unsigned) else {
+            Issue.record("upsert failed"); return
+        }
+        clock.set(9_000)
+        _ = await repo.updatePassUserLabel(id: id, label: "Renamed")
+        guard case .success(let summary) = await repo.summaryOf(id: id) else {
+            Issue.record("summaryOf failed"); return
+        }
+        #expect(summary.userLabel == "Renamed")
+        #expect(summary.updatedAt.epochMillis == 1_000)
+    }
+
     @Test func loadAbsentPassIsIntegrityViolation() async throws {
         let repo = try makeRepository()
         let result = await repo.load(id: PassRecordId(404))

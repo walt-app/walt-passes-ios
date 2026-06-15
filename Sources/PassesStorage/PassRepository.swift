@@ -54,6 +54,19 @@ public protocol PassRepository: Sendable {
     /// Confirmation UI is the caller's responsibility; the repository trusts the call.
     func delete(id: PassRecordId) async -> StorageResult<Void>
 
+    /// Set or clear the user-supplied display-label override on the pass with `id`. The
+    /// override is stored beside the signed `pass_json` and never alters the signed
+    /// identity. Normalization (mirrors passes-android):
+    /// - the label is trimmed of leading/trailing whitespace before storage;
+    /// - a `nil` or blank-after-trim label clears the override (writes SQL NULL);
+    /// - a trimmed label longer than `PassUserLabelBounds.maxUserLabelChars` is rejected
+    ///   with `StorageError.passRejected(.labelTooLong)` — the bound is checked before the
+    ///   row lookup, so this takes precedence over `integrityViolation` for an unknown id.
+    ///
+    /// Does not bump `updated_at` (the signed pass content is unchanged). Returns
+    /// `integrityViolation` when no row matches `id` and the label was within bounds.
+    func updatePassUserLabel(id: PassRecordId, label: String?) async -> StorageResult<Void>
+
     /// Insert a stored PDF document. Bytes and thumbnail bytes are written into the
     /// `documents` and `document_thumbnails` tables in the same transaction; the assigned
     /// row id is returned. The repository never decodes `pdfBytes` or `thumbnailBytes`;

@@ -146,6 +146,17 @@ enum GrdbPassStore {
         return db.changesCount > 0
     }
 
+    /// Sets or clears (`nil` -> SQL NULL) the `user_label` column on the row matching `id`.
+    /// Deliberately does not touch `updated_at` — the signed pass content is unchanged.
+    /// Returns `false` if no row matched, so the repository can surface `.integrityViolation`.
+    static func updateUserLabel(id: PassRecordId, label: String?, _ db: Database) throws -> Bool {
+        try db.execute(
+            sql: "UPDATE \(Schema.Tables.passes) SET user_label = ? WHERE id = ?",
+            arguments: [label, id.value]
+        )
+        return db.changesCount > 0
+    }
+
     // MARK: - Row mapping
 
     private static func summary(from row: Row) -> PassSummary? {
