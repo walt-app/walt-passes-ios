@@ -53,6 +53,23 @@ enum GrdbScannableCardStore {
         return db.changesCount > 0
     }
 
+    /// Overwrites payload / format / label on the row matching `id`. `created_at_epoch_ms`
+    /// is left untouched. Returns `false` if no row matched (caller maps to integrityViolation).
+    static func updateById(
+        id: ScannableCardRecordId,
+        payload: String,
+        format: ScannableFormat,
+        label: String,
+        _ db: Database
+    ) throws -> Bool {
+        try db.execute(
+            sql: "UPDATE \(Schema.Tables.scannableCards) "
+                + "SET payload = ?, format = ?, label = ? WHERE id = ?",
+            arguments: [payload, format.dbValue, label, id.value]
+        )
+        return db.changesCount > 0
+    }
+
     /// Reconstructs a `ScannableCard` from a row through the validator (the only construction
     /// path). The row id becomes the consumer-visible `ScannableCardId`; a row that no longer
     /// validates returns `nil` and is dropped.

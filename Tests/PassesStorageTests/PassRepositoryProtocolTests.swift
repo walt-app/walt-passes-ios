@@ -291,10 +291,21 @@ private final class FakePassRepository: PassRepository, @unchecked Sendable {
         .success(value: ())
     }
 
+    func updateDocumentLabel(id: DocumentRecordId, label: String) async -> StorageResult<Void> {
+        .success(value: ())
+    }
+
     func createScannableCard(
         input: ScannableCardCreateInput
     ) async -> StorageResult<ScannableCardRecordId> {
         createScannableCardResult
+    }
+
+    func updateScannableCard(
+        id: ScannableCardRecordId,
+        input: ScannableCardCreateInput
+    ) async -> StorageResult<Void> {
+        .success(value: ())
     }
 
     func loadScannableCard(

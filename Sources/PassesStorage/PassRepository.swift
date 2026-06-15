@@ -117,6 +117,14 @@ public protocol PassRepository: Sendable {
     /// `onDocumentDeleted` is emitted.
     func deleteDocument(id: DocumentRecordId) async -> StorageResult<Void>
 
+    /// Overwrites the `display_label` of an existing document row. Empty and blank labels
+    /// are accepted (mirrors the create path). A label longer than `DocumentBounds.maxLabelChars`
+    /// is rejected with `StorageError.documentRejected(.labelTooLongAtStorage)` and no row is
+    /// touched — the cap is checked before the row lookup, so a too-long label on an unknown
+    /// id surfaces as `documentRejected`, not `integrityViolation`. Returns `integrityViolation`
+    /// when no row matches `id` and the label is within bounds. `imported_at` is preserved.
+    func updateDocumentLabel(id: DocumentRecordId, label: String) async -> StorageResult<Void>
+
     /// Mints a `ScannableCard` from raw `input` and persists it. Storage owns the id and
     /// `createdAt` timestamp; the consumer-visible `ScannableCardId` is the stringified
     /// row id. The kernel's `ScannableCardInputValidator` is the single insert-time choke
@@ -126,6 +134,18 @@ public protocol PassRepository: Sendable {
     func createScannableCard(
         input: ScannableCardCreateInput
     ) async -> StorageResult<ScannableCardRecordId>
+
+    /// Overwrites the payload / format / label of an existing scannable-card row. Re-runs the
+    /// kernel `ScannableCardInputValidator` (the same insert-time choke point), persisting the
+    /// validator's normalized values; a rejection bubbles up as `StorageError.scannableCardRejected`
+    /// with the typed reason preserved. Validation runs before the row lookup, so an invalid input
+    /// on an unknown id surfaces as `scannableCardRejected`, not `integrityViolation` (mirrors
+    /// `updateDocumentLabel`). Returns `integrityViolation` when no row matches `id` and the input
+    /// is valid. `created_at` is preserved.
+    func updateScannableCard(
+        id: ScannableCardRecordId,
+        input: ScannableCardCreateInput
+    ) async -> StorageResult<Void>
 
     /// Loads a stored `ScannableCard` by row id. Returns `StorageError.integrityViolation`
     /// if no row matches.
