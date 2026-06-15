@@ -113,12 +113,13 @@ struct GrdbDatabaseFactoryTests {
 
             try GrdbDatabaseFactory.migrate(queue)
 
-            let (version, hasDocuments, hasScannable, scannableColumns) = try queue.read { db in
+            let (version, hasDocuments, hasScannable, scannableColumns, passesColumns) = try queue.read { db in
                 (
                     try GrdbDatabaseFactory.readVersion(db),
                     try db.tableExists(Schema.Tables.documents),
                     try db.tableExists(Schema.Tables.scannableCards),
-                    try db.columns(in: Schema.Tables.scannableCards).map(\.name)
+                    try db.columns(in: Schema.Tables.scannableCards).map(\.name),
+                    try db.columns(in: Schema.Tables.passes).map(\.name)
                 )
             }
             #expect(version == Schema.version)
@@ -127,6 +128,20 @@ struct GrdbDatabaseFactoryTests {
             #expect(hasScannable)
             // v3->v4 dropped color_argb.
             #expect(!scannableColumns.contains("color_argb"))
+            // v4->v5 added user_label.
+            #expect(passesColumns.contains("user_label"))
+        }
+    }
+
+    /// The fresh `ddl` and the migration ladder must agree on the `passes` shape: both add
+    /// `user_label`, or a fresh install and an upgraded install silently drift.
+    @Test func freshDatabaseHasUserLabelColumn() throws {
+        try withTempDatabase { url in
+            let queue = try GrdbDatabaseFactory.open(at: url)
+            let passesColumns = try queue.read { db in
+                try db.columns(in: Schema.Tables.passes).map(\.name)
+            }
+            #expect(passesColumns.contains("user_label"))
         }
     }
 

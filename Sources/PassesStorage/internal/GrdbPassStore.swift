@@ -7,11 +7,10 @@ import PassesCore
 /// GRDB `Database` handle so the owning repository controls the transaction boundary
 /// (`dbQueue.write` / `dbQueue.read`); the store itself holds no state.
 enum GrdbPassStore {
-    /// Columns backing `PassSummary`, in a fixed order. iOS has no `user_label` column
-    /// (the kernel schema stopped at v4; Android's v5 `user_label` is not modeled here).
+    /// Columns backing `PassSummary`, in a fixed order.
     private static let summaryColumns = """
         id, type, serial_number, organization_name, description, expiration_epoch_ms, \
-        voided, signature_status_kind, created_at_epoch_ms, updated_at_epoch_ms
+        voided, signature_status_kind, created_at_epoch_ms, updated_at_epoch_ms, user_label
         """
 
     static func listSummaries(_ db: Database) throws -> [PassSummary] {
@@ -64,7 +63,8 @@ enum GrdbPassStore {
             pass: pass,
             signatureStatus: summary.signatureStatus,
             createdAt: summary.createdAt,
-            updatedAt: summary.updatedAt
+            updatedAt: summary.updatedAt,
+            userLabel: summary.userLabel
         )
     }
 
@@ -164,7 +164,8 @@ enum GrdbPassStore {
             voided: (row["voided"] as Int64) != 0,
             signatureStatus: SignatureStatus(kind: kind),
             createdAt: PassInstant(epochMillis: row["created_at_epoch_ms"]),
-            updatedAt: PassInstant(epochMillis: row["updated_at_epoch_ms"])
+            updatedAt: PassInstant(epochMillis: row["updated_at_epoch_ms"]),
+            userLabel: row["user_label"]
         )
     }
 
