@@ -109,6 +109,10 @@ package struct PDFKitRenderer: PDFRendererBinder {
             ) else {
                 return false
             }
+            // page.draw composites onto the zeroed (transparent) buffer without clearing;
+            // fill white first so implicit-white pages don't show through dark UI (GH#92).
+            ctx.setFillColor(red: 1, green: 1, blue: 1, alpha: 1)
+            ctx.fill(CGRect(x: 0, y: 0, width: widthPx, height: heightPx))
             // PDFKit draws in PDF coordinate space (origin bottom-left).
             // The bitmap is top-left, so flip y to match the Android
             // Bitmap layout consumers expect.
