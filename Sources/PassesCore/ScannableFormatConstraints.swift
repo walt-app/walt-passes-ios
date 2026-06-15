@@ -63,7 +63,7 @@ enum ScannableFormatConstraints {
     // a correctly-sized payload and only verifies the check digit.
     private static func validateEan13(_ payload: String) -> PayloadRejection? {
         // EAN-13: rightmost digit is the check digit. Weights from right (excluding check
-        // digit) alternate 1, 3, 1, 3 ...; sum mod 10, then (10 - sum mod 10) mod 10.
+        // digit) alternate 3, 1, 3, 1 ...; sum mod 10, then (10 - sum mod 10) mod 10.
         let digits = payload.compactMap { $0.wholeNumberValue }
         guard digits.count == payload.count, let last = digits.last else { return nil }
         let expected = ean13CheckDigit(Array(digits.dropLast()))
@@ -81,9 +81,9 @@ enum ScannableFormatConstraints {
 
     private static func ean13CheckDigit(_ twelveDigits: [Int]) -> Int {
         var sum = 0
-        // Index from the right: position 0 = weight 1, position 1 = weight 3, alternating.
+        // Index from the right: position 0 = weight 3, position 1 = weight 1, alternating.
         for (indexFromRight, digit) in twelveDigits.reversed().enumerated() {
-            sum += digit * (indexFromRight % 2 == 0 ? 1 : 3)
+            sum += digit * (indexFromRight % 2 == 0 ? 3 : 1)
         }
         return (10 - sum % 10) % 10
     }

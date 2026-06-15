@@ -40,13 +40,25 @@ struct ScannableFormatConstraintsTests {
     }
 
     @Test func validateStructuralAcceptsValidEan13() {
-        // "1234567890120" — happy-path EAN-13 used by passes-android's validator tests.
-        #expect(ScannableFormatConstraints.validateStructural(format: .ean13, payload: "1234567890120") == nil)
+        // Check digit 8 for data 123456789012 (weights from right: 3,1,3,1...).
+        #expect(ScannableFormatConstraints.validateStructural(format: .ean13, payload: "1234567890128") == nil)
+    }
+
+    @Test func validateStructuralAcceptsRealWorldEan13() {
+        // Real EAN-13 (check digit 1); guards against the flipped-weights regression.
+        #expect(ScannableFormatConstraints.validateStructural(format: .ean13, payload: "4006381333931") == nil)
     }
 
     @Test func validateStructuralRejectsBadEan13CheckDigit() {
         // "1234567890121" — one-off-by-one check digit, also from passes-android's tests.
         let result = ScannableFormatConstraints.validateStructural(format: .ean13, payload: "1234567890121")
+        #expect(result == .invalidCheckDigit(format: .ean13))
+    }
+
+    @Test func validateStructuralRejectsFlippedWeightEan13() {
+        // Regression: 1234567890120 validates only under the old, flipped weights
+        // (rightmost data digit weighted 1 instead of 3). It must now be rejected.
+        let result = ScannableFormatConstraints.validateStructural(format: .ean13, payload: "1234567890120")
         #expect(result == .invalidCheckDigit(format: .ean13))
     }
 

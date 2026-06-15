@@ -24,8 +24,15 @@ struct ScannableCardInputValidatorTests {
     }
 
     @Test func ean13HappyPathWithValidCheckDigit() {
-        let result = validate(payload: "1234567890120", format: .ean13)
-        assertSuccessWithPayload(result, expected: "1234567890120")
+        // Check digit 8 for data 123456789012 (weights from right: 3,1,3,1...).
+        let result = validate(payload: "1234567890128", format: .ean13)
+        assertSuccessWithPayload(result, expected: "1234567890128")
+    }
+
+    @Test func ean13HappyPathRealWorldBarcode() {
+        // Real EAN-13 (check digit 1); guards against the flipped-weights regression.
+        let result = validate(payload: "4006381333931", format: .ean13)
+        assertSuccessWithPayload(result, expected: "4006381333931")
     }
 
     @Test func upcAHappyPathWithValidCheckDigit() {
@@ -162,6 +169,17 @@ struct ScannableCardInputValidatorTests {
 
     @Test func ean13InvalidCheckDigitRejected() {
         let rejection = expectPayloadRejection("1234567890121", format: .ean13)
+        guard case let .invalidCheckDigit(format) = rejection else {
+            Issue.record("expected .invalidCheckDigit, got \(rejection)")
+            return
+        }
+        #expect(format == .ean13)
+    }
+
+    @Test func ean13FlippedWeightCheckDigitRejected() {
+        // Regression: 1234567890120 validates only under the old, flipped weights
+        // (rightmost data digit weighted 1 instead of 3). It must now be rejected.
+        let rejection = expectPayloadRejection("1234567890120", format: .ean13)
         guard case let .invalidCheckDigit(format) = rejection else {
             Issue.record("expected .invalidCheckDigit, got \(rejection)")
             return
