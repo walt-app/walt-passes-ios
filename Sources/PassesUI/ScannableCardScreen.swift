@@ -26,8 +26,10 @@ public struct ScannableCardScreen: View {
                 .padding(.horizontal, 24)
                 .padding(.vertical, 16)
                 .frame(maxWidth: .infinity)
-            ScannableCardView(card: card)
-                .accessibilityHidden(true)
+            // The detail surface is the one place large enough for the POS-scan payload
+            // caption (GH #102); opting in means the view manages its own a11y (image
+            // hidden, caption announced), so no blanket accessibilityHidden here.
+            ScannableCardView(card: card, showPayloadCaption: true)
                 .padding(24)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             ScannableCardTrustCaption()
