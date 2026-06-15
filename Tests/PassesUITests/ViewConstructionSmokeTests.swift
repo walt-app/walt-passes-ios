@@ -154,6 +154,21 @@ struct ViewConstructionSmokeTests {
         _ = ScannableCardTile(card: card, onTap: {})
         _ = ScannableCardScreen(card: card)
         _ = ScannableCardView(card: card)
+        _ = ScannableCardView(card: card, showPayloadCaption: true)
         _ = ScannableCardRowTile(card: card, onTap: {})
+    }
+
+    @Test func scannableCardViewWithCaptionConstructs() {
+        let result = ScannableCardInputValidator.validate(
+            input: ScannableCardCreateInput(payload: "QR payload", format: .qr, label: "Loyalty"),
+            id: ScannableCardId("card-1"),
+            createdAt: PassInstant(epochMillis: 0)
+        )
+        guard case .success(let card) = result else {
+            Issue.record("validator should accept fixture input: \(result)")
+            return
+        }
+        let v = ScannableCardView(card: card, showPayloadCaption: true)
+        #expect(type(of: v.body) != Never.self)
     }
 }
