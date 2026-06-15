@@ -159,6 +159,9 @@ public struct PassSummary: Sendable, Equatable {
     public let signatureStatus: SignatureStatus
     public let createdAt: PassInstant
     public let updatedAt: PassInstant
+    /// User-supplied display-label override stored beside the signed `pass_json`; `nil`
+    /// when unset. Does not alter the signed pass identity.
+    public let userLabel: String?
 
     public init(
         id: PassRecordId,
@@ -170,7 +173,8 @@ public struct PassSummary: Sendable, Equatable {
         voided: Bool,
         signatureStatus: SignatureStatus,
         createdAt: PassInstant,
-        updatedAt: PassInstant
+        updatedAt: PassInstant,
+        userLabel: String? = nil
     ) {
         self.id = id
         self.type = type
@@ -182,6 +186,7 @@ public struct PassSummary: Sendable, Equatable {
         self.signatureStatus = signatureStatus
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.userLabel = userLabel
     }
 }
 
@@ -195,18 +200,22 @@ public struct StoredPass: Sendable, Equatable {
     public let signatureStatus: SignatureStatus
     public let createdAt: PassInstant
     public let updatedAt: PassInstant
+    /// User-supplied display-label override (see ``PassSummary/userLabel``); `nil` when unset.
+    public let userLabel: String?
 
     public init(
         id: PassRecordId,
         pass: Pass,
         signatureStatus: SignatureStatus,
         createdAt: PassInstant,
-        updatedAt: PassInstant
+        updatedAt: PassInstant,
+        userLabel: String? = nil
     ) {
         self.id = id
         self.pass = pass
         self.signatureStatus = signatureStatus
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.userLabel = userLabel
     }
 }

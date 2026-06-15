@@ -12,7 +12,7 @@ import Foundation
 public enum Schema {
     public static let databaseName: String = "walt_passes.db"
 
-    public static let version: Int = 4
+    public static let version: Int = 5
 
     public enum Tables {
         public static let schemaMeta: String = "schema_meta"
@@ -144,7 +144,8 @@ public enum Schema {
             signature_status_kind TEXT    NOT NULL,
             pass_json             BLOB    NOT NULL,
             created_at_epoch_ms   INTEGER NOT NULL,
-            updated_at_epoch_ms   INTEGER NOT NULL
+            updated_at_epoch_ms   INTEGER NOT NULL,
+            user_label            TEXT
         )
         """,
         "CREATE INDEX IF NOT EXISTS idx_passes_type ON passes(type)",
@@ -171,6 +172,13 @@ public enum Schema {
         """,
     ] + v2DocumentTables + v4ScannableCardTables)
 
+    /// v4 -> v5 migration. Adds the nullable `user_label` column to `passes` for the
+    /// user-supplied display-label override. Additive (existing rows get NULL); mirrored in
+    /// `ddl` so fresh installs and upgrades reach the same shape.
+    private static let v4ToV5AddUserLabel: [String] = [
+        "ALTER TABLE passes ADD COLUMN user_label TEXT",
+    ]
+
     /// Schema migrations, keyed by `fromVersion`. Forward-only per ADR 0002. Each
     /// entry's statements are executed inside a single transaction; the
     /// `schema_meta.schema_version` row is bumped to `fromVersion + 1` in the same
@@ -186,9 +194,13 @@ public enum Schema {
     /// consumer no longer reads or writes the field; the column was dormant
     /// user-private data on disk. Row identity is preserved; per-row colour bytes are
     /// lost, which is intentional — Walt already stopped reading them.
+    ///
+    /// v4 -> v5 adds the nullable `user_label` column to `passes` for the user-supplied
+    /// display-label override (side-channel beside the signed `pass_json`).
     public static let migrations: [Int: [String]] = [
         1: v2DocumentTables,
         2: v3ScannableCardTables,
         3: v3ToV4DropColorColumn,
+        4: v4ToV5AddUserLabel,
     ]
 }
