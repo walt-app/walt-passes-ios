@@ -1,9 +1,29 @@
 name: CI
 
+# macOS billing is 10x. The kernel's core target imports Apple's Compression
+# framework, so it cannot build on a cheap Linux runner — macOS is unavoidable
+# for build/test. Cost is therefore controlled by running macOS LESS:
+#   - PRs run macOS once and gate auto-merge (kept: the kernel is security-
+#     critical, merges stay validated).
+#   - The redundant post-merge `push: main` macOS run is removed (the PR already
+#     validated the squash content).
+#   - A weekly cron + manual dispatch act as the `main` safety net in place of
+#     the per-merge run, and validate direct-to-main pushes.
+#   - `concurrency` cancels superseded in-flight runs; `timeout-minutes` caps
+#     runaway billing.
+# Follow-up (ipass bead): add a Linux swift-format/SwiftLint cheap tier to gate
+# auto-merge so macOS can drop off the per-PR path entirely. Deferred because the
+# codebase needs a one-time reformat first.
 on:
-  push:
-    branches: [main]
   pull_request:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC — main safety-net sweep
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -13,6 +33,7 @@ jobs:
   build-and-test:
     name: Build & Test
     runs-on: macos-15
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
