@@ -1,25 +1,16 @@
 import Foundation
 import SwiftASN1
 
-/// Normalizes a detached PKCS#7 / CMS blob so swift-certificates can verify passes whose
-/// `SignerInfo.signatureAlgorithm` carries the bare `rsaEncryption` OID (`1.2.840.113549.1.1.1`,
-/// parameters absent) with the hash conveyed separately in `digestAlgorithm`. This is exactly
-/// what Apple PassKit emits; swift-certificates 1.19.x only recognizes the combined
-/// `shaNNNWithRSAEncryption` OIDs, so it throws while resolving the algorithm and Walt
-/// misclassifies a valid pass as `.tampered(.manifestSignatureMismatch)` (walt-passes-ios#31).
+/// Rewrites each CMS `SignerInfo.signatureAlgorithm` from the bare `rsaEncryption` OID to the
+/// `shaNNNWithRSAEncryption` OID implied by its `digestAlgorithm`, so swift-certificates 1.19.x
+/// (which only knows the combined OIDs) can verify passes Apple PassKit signs this way; otherwise
+/// a valid pass is misread as `.tampered(.manifestSignatureMismatch)` (walt-passes-ios#31).
+/// Mirrors Android's BouncyCastle path.
 ///
-/// The fix replicates BouncyCastle's behavior (Android): rewrite each `SignerInfo`'s bare
-/// `rsaEncryption` `signatureAlgorithm` to the `shaNNNWithRSAEncryption` OID implied by that
-/// signer's `digestAlgorithm`, then hand the rewritten DER to `CMS.isValidSignature`. The
-/// signature is computed over `signedAttrs`, not over the `signatureAlgorithm` field, so the
-/// rewrite does not invalidate it; `digestAlgorithm` / `digestAlgorithms` are left untouched so
-/// swift-certificates' `digestAlgorithmFor(signatureAlgorithm) == signer.digestAlgorithm`
-/// cross-check still holds.
-///
-/// **Scope.** RSA-only and digest-driven. ECDSA / Ed25519 signers and the combined RSA OIDs are
-/// left alone. Anything that does not parse as the expected structure, or whose digest is not one
-/// of SHA-256/384/512, is returned unchanged so the verifier classifies it exactly as before -
-/// this can only ever turn a previously-failing bare-`rsaEncryption` pass into a verifiable one.
+/// Safe because the signature is over `signedAttrs`, not the `signatureAlgorithm` field, so the
+/// rewrite cannot make a tampered pass verify; `digestAlgorithm` is left intact so swift-
+/// certificates' `digestAlgorithmFor(signatureAlgorithm) == signer.digestAlgorithm` cross-check
+/// still holds. RSA-only and digest-driven; every other shape returns byte-identical input.
 func normalizeCMSSignatureAlgorithm(_ signatureBytes: [UInt8]) -> [UInt8] {
     do {
         let root = try DER.parse(signatureBytes)
@@ -54,9 +45,9 @@ private enum CMSOID {
 
 /// Re-serializes `node` into `serializer`, rewriting any `SignerInfo.signatureAlgorithm` that
 /// carries bare `rsaEncryption`. Returns whether anything was rewritten anywhere in the subtree.
-/// Constructed nodes that contain no rewrite are still rebuilt structurally; for DER the rebuild
-/// is byte-for-byte canonical, so untouched subtrees (certificates, signedAttrs, signatures)
-/// round-trip exactly.
+/// Untouched subtrees (certificates, signedAttrs, signatures) round-trip byte-for-byte *because
+/// the input is canonical DER* (gated by `DER.parse`); the rebuild reproduces canonical DER, so
+/// the bytes those signatures cover are unchanged.
 private func rewriteNode(_ node: ASN1Node, into serializer: inout DER.Serializer) throws -> Bool {
     guard case .constructed(let collection) = node.content else {
         serializer.serialize(node)  // primitive: verbatim
@@ -95,28 +86,28 @@ private func rewriteNode(_ node: ASN1Node, into serializer: inout DER.Serializer
     return changed
 }
 
-/// True if `node` is an `AlgorithmIdentifier` SEQUENCE whose algorithm OID is bare
-/// `rsaEncryption` (the combined `shaNNNWithRSAEncryption` OIDs are intentionally not matched).
-private func isBareRSAAlgorithmIdentifier(_ node: ASN1Node) -> Bool {
-    guard case .constructed(let fields) = node.content, let oidNode = fields.first(where: { _ in true }),
-        let oid = try? ASN1ObjectIdentifier(derEncoded: oidNode)
-    else {
-        return false
-    }
-    return oid == CMSOID.rsaEncryption
+/// The leading OID of a constructed node - i.e. the `algorithm` field of an `AlgorithmIdentifier`
+/// SEQUENCE. Returns nil for a primitive, an empty SEQUENCE, or a node whose first child is not an
+/// OID (e.g. `issuerAndSerialNumber`, whose first child is a Name). `ASN1NodeCollection` is a
+/// `Sequence`, not a `Collection`, so the first element is read through its iterator.
+private func leadingOID(of node: ASN1Node) -> ASN1ObjectIdentifier? {
+    guard case .constructed(let fields) = node.content else { return nil }
+    var iterator = fields.makeIterator()
+    guard let oidNode = iterator.next() else { return nil }
+    return try? ASN1ObjectIdentifier(derEncoded: oidNode)
 }
 
-/// The digest OID from the `SignerInfo`'s `digestAlgorithm` - the AlgorithmIdentifier SEQUENCE
-/// among the siblings before `index` whose OID is a known SHA digest. (The sibling list may also
-/// hold `issuerAndSerialNumber`, which is a SEQUENCE but whose first element is a Name, not an
-/// OID, so it is skipped.)
+/// True if `node` is an `AlgorithmIdentifier` whose algorithm OID is bare `rsaEncryption` (the
+/// combined `shaNNNWithRSAEncryption` OIDs are intentionally not matched).
+private func isBareRSAAlgorithmIdentifier(_ node: ASN1Node) -> Bool {
+    leadingOID(of: node) == CMSOID.rsaEncryption
+}
+
+/// The digest OID from the `SignerInfo`'s `digestAlgorithm` - the `AlgorithmIdentifier` among the
+/// siblings before `index` whose OID is a known SHA digest.
 private func digestOID(amongSiblingsBefore index: Int, in children: [ASN1Node]) -> ASN1ObjectIdentifier? {
     for sibling in children[..<index] {
-        guard case .constructed(let fields) = sibling.content, let oidNode = fields.first(where: { _ in true }),
-            let oid = try? ASN1ObjectIdentifier(derEncoded: oidNode)
-        else {
-            continue
-        }
+        guard let oid = leadingOID(of: sibling) else { continue }
         if oid == CMSOID.sha256 || oid == CMSOID.sha384 || oid == CMSOID.sha512 {
             return oid
         }

@@ -118,6 +118,38 @@ struct SignatureVerifierTests {
         #expect(result == .ok(.appleVerified))
     }
 
+    @Test func realAppleSignedPkpassWithTamperedManifestStillFails() throws {
+        // Locks the security property behind the walt-passes-ios#31 fix: the bare-rsaEncryption
+        // normalization must not let a mutated manifest verify. Same real bare-RSA blob as the
+        // green case, but one manifest byte flipped, so the signed messageDigest no longer matches.
+        let fixture = try AppleSignedFixture.load()
+        var tampered = fixture.manifest
+        tampered[tampered.count / 2] ^= 0x01
+        let result = verifySignature(
+            signatureBytes: fixture.signature,
+            manifestBytes: tampered,
+            config: ParserConfig()
+        )
+        #expect(result == .failed(.manifestSignatureMismatch))
+    }
+
+    @Test func normalizerLeavesNonBareRSABlobsByteIdentical() throws {
+        // The blast-radius guarantee: the normalizer only rewrites bare-rsaEncryption SignerInfos
+        // and returns everything else verbatim. Non-DER garbage and a valid ECDSA (combined-OID)
+        // CMS blob must both round-trip unchanged.
+        let garbage: [UInt8] = [0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x01, 0x02]
+        #expect(normalizeCMSSignatureAlgorithm(garbage) == garbage)
+
+        let root = try SignatureTestSupport.makeRoot(commonName: "Root")
+        let leaf = try SignatureTestSupport.makeLeaf(commonName: "Leaf", issuer: root)
+        let ecdsaBlob = try SignatureTestSupport.sign(manifestBytes: manifest, signer: leaf)
+        #expect(normalizeCMSSignatureAlgorithm(ecdsaBlob) == ecdsaBlob)
+
+        // Sanity: the bare-RSA fixture IS rewritten, so the round-trip checks above are meaningful.
+        let fixture = try AppleSignedFixture.load()
+        #expect(normalizeCMSSignatureAlgorithm(fixture.signature) != fixture.signature)
+    }
+
     @Test func garbageSignatureBlobIsCryptoFailure() {
         let result = SignatureTestSupport.verify(
             signatureBytes: [0x00, 0x01, 0x02, 0x03],
