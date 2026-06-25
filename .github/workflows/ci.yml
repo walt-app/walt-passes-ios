@@ -23,7 +23,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Pin to 6.2 to match the toolchain the tree was formatted with.
       - uses: swift-actions/setup-swift@v2
@@ -51,7 +51,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Official Linux image carries SourceKit so AST rules match macOS. Pinned
       # (not `latest`) since lint is the sole merge gate: bumps stay explicit.
