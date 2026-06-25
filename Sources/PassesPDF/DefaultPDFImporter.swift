@@ -84,7 +84,8 @@ package final class DefaultPDFImporter: PDFImporter {
     public func `import`(
         source: PDFImportSource,
         displayLabel: String,
-        persist: @Sendable (_ label: String, _ pdfBytes: Data, _ pageCount: Int, _ thumbnailBytes: Data) async throws -> Void
+        persist:
+            @Sendable (_ label: String, _ pdfBytes: Data, _ pageCount: Int, _ thumbnailBytes: Data) async throws -> Void
     ) async throws -> PDFImportResult {
         let startedAt = deps.now()
         config.telemetryGuard.onImportStarted()
@@ -183,7 +184,8 @@ package final class DefaultPDFImporter: PDFImporter {
         session: RendererSession,
         bytes: Data,
         displayLabel: String,
-        persist: @Sendable (_ label: String, _ pdfBytes: Data, _ pageCount: Int, _ thumbnailBytes: Data) async throws -> Void,
+        persist:
+            @Sendable (_ label: String, _ pdfBytes: Data, _ pageCount: Int, _ thumbnailBytes: Data) async throws -> Void,
         startedAt: Int64
     ) async throws -> PDFImportResult {
         let pages: Int

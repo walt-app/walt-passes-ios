@@ -95,19 +95,21 @@ struct GrdbDatabaseFactoryTests {
             // stamped at version 1, then let the factory walk migrations to current.
             let queue = try DatabaseQueue(path: url.path)
             try queue.write { db in
-                try db.execute(sql: """
-                    CREATE TABLE schema_meta (key TEXT PRIMARY KEY NOT NULL, value BLOB NOT NULL)
-                    """)
-                try db.execute(sql: """
-                    CREATE TABLE passes (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        type TEXT NOT NULL, serial_number TEXT NOT NULL,
-                        organization_name TEXT NOT NULL, description TEXT NOT NULL,
-                        expiration_epoch_ms INTEGER, voided INTEGER NOT NULL DEFAULT 0,
-                        signature_status_kind TEXT NOT NULL, pass_json BLOB NOT NULL,
-                        created_at_epoch_ms INTEGER NOT NULL, updated_at_epoch_ms INTEGER NOT NULL
-                    )
-                    """)
+                try db.execute(
+                    sql: """
+                        CREATE TABLE schema_meta (key TEXT PRIMARY KEY NOT NULL, value BLOB NOT NULL)
+                        """)
+                try db.execute(
+                    sql: """
+                        CREATE TABLE passes (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            type TEXT NOT NULL, serial_number TEXT NOT NULL,
+                            organization_name TEXT NOT NULL, description TEXT NOT NULL,
+                            expiration_epoch_ms INTEGER, voided INTEGER NOT NULL DEFAULT 0,
+                            signature_status_kind TEXT NOT NULL, pass_json BLOB NOT NULL,
+                            created_at_epoch_ms INTEGER NOT NULL, updated_at_epoch_ms INTEGER NOT NULL
+                        )
+                        """)
                 try GrdbDatabaseFactory.writeVersion(db, 1)
             }
 
@@ -149,9 +151,10 @@ struct GrdbDatabaseFactoryTests {
         try withTempDatabase { url in
             let queue = try DatabaseQueue(path: url.path)
             try queue.write { db in
-                try db.execute(sql: """
-                    CREATE TABLE schema_meta (key TEXT PRIMARY KEY NOT NULL, value BLOB NOT NULL)
-                    """)
+                try db.execute(
+                    sql: """
+                        CREATE TABLE schema_meta (key TEXT PRIMARY KEY NOT NULL, value BLOB NOT NULL)
+                        """)
                 try GrdbDatabaseFactory.writeVersion(db, Schema.version + 1)
             }
             #expect(throws: DatabaseOpenError.unsupported(onDiskSchemaVersion: Schema.version + 1)) {

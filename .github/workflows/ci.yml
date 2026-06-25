@@ -1,74 +1,87 @@
 name: CI
 
-# macOS billing is 10x. The kernel's core target imports Apple's Compression
-# framework, so it cannot build on a cheap Linux runner — macOS is unavoidable
-# for build/test. Cost is therefore controlled by running macOS LESS:
-#   - PRs run macOS once and gate auto-merge (kept: the kernel is security-
-#     critical, merges stay validated).
-#   - The redundant post-merge `push: main` macOS run is removed (the PR already
-#     validated the squash content).
-#   - A weekly cron + manual dispatch act as the `main` safety net in place of
-#     the per-merge run, and validate direct-to-main pushes.
-#   - `concurrency` cancels superseded in-flight runs; `timeout-minutes` caps
-#     runaway billing.
-# Follow-up (ipass bead): add a Linux swift-format/SwiftLint cheap tier to gate
-# auto-merge so macOS can drop off the per-PR path entirely. Deferred because the
-# codebase needs a one-time reformat first.
+# CHEAP tier (1x Linux): lint-only gate on every PR. PassesCore imports Apple
+# Compression so the kernel can't compile on Linux — there's no compile signal,
+# and auto-merge gates on lint alone. macOS build/test lives in full-ci.yml.
+# The only reliable full-suite gate is DRAFT status (auto-merge skips drafts):
+# open risky PRs as a draft, label `full-ci` for the signal, mark ready when
+# green. The label alone does NOT gate — a ready PR race-merges on lint first.
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches: [main]
-  workflow_dispatch:
-  schedule:
-    - cron: "0 6 * * 1" # Mondays 06:00 UTC — main safety-net sweep
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: read
-  pull-requests: write
-
 jobs:
-  build-and-test:
-    name: Build & Test
-    runs-on: macos-15
-    timeout-minutes: 40
+  swift-format:
+    name: swift-format (lint)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
-      - name: Show Xcode version
-        run: xcodebuild -version
+      # Pin to 6.2 to match the toolchain the tree was formatted with.
+      - uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.2"
 
-      - name: Resolve packages
-        run: swift package resolve
-
-      - name: Build
+      - name: Show tool versions
         run: |
-          swift build \
-            --package-path .
+          swift --version
+          swift-format --version || swift format --version || true
 
-      - name: Test
+      - name: Run swift-format lint
         run: |
-          swift test \
-            --package-path .
+          # Toolchain exposes swift-format as either a binary or a subcommand.
+          if command -v swift-format >/dev/null 2>&1; then
+            swift-format lint --recursive --strict Sources Tests
+          else
+            swift format lint --recursive --strict Sources Tests
+          fi
+
+  swiftlint:
+    name: SwiftLint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # Official Linux image carries SourceKit so AST rules match macOS. Pinned
+      # (not `latest`) since lint is the sole merge gate: bumps stay explicit.
+      - name: Run SwiftLint (official Linux image)
+        run: |
+          docker run --rm \
+            --entrypoint swiftlint \
+            -v "$PWD:/work" -w /work \
+            ghcr.io/realm/swiftlint:0.63.2 \
+            lint --quiet --strict
 
   auto-merge:
     name: Auto-merge on green CI
+    needs: [swift-format, swiftlint]
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.type != 'Bot'
     runs-on: ubuntu-latest
-    needs: build-and-test
-    if: >
-      github.event_name == 'pull_request'
-      && github.event.pull_request.head.repo.full_name == github.repository
-      && github.event.pull_request.user.type != 'Bot'
+    timeout-minutes: 5
     permissions:
       contents: write
       pull-requests: write
     steps:
-      - name: Merge pull request
+      - name: Squash-merge PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh pr merge "${{ github.event.pull_request.number }}" \
             --repo "${{ github.repository }}" \
-            --squash --delete-branch
+            --squash \
+            --delete-branch

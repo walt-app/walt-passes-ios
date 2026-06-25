@@ -1,6 +1,6 @@
-import SwiftUI
 import PassesCore
 import PassesUICore
+import SwiftUI
 
 /// Security confirmation sheet for an outbound URL detected on a pass back
 /// field. Displays the issuer, source field label, and verbatim URL the host
@@ -229,8 +229,7 @@ private struct ContainerLayout: View {
             .font(.title2)
             .foregroundColor((emphasis?.bodyForeground ?? ArgbColor(argb: 0xFF202020)).swiftUIColor)
         Text(
-            isolated(source.organizationName) +
-                (source.fieldLabel.map { " — \(isolated($0))" } ?? "")
+            isolated(source.organizationName) + (source.fieldLabel.map { " — \(isolated($0))" } ?? "")
         )
         .font(.caption)
         .foregroundColor((emphasis?.bodyForeground ?? ArgbColor(argb: 0xFF202020)).swiftUIColor)

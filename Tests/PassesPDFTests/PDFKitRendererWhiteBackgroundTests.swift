@@ -37,7 +37,7 @@ struct PDFKitRendererWhiteBackgroundTests {
         let result = await PDFKitRenderer().render(
             pdf: pdf, page: 0, widthPx: 50, heightPx: 50, sourceRect: .fullPage
         )
-        guard case let .ok(pixels, widthPx, heightPx, _) = result else {
+        guard case .ok(let pixels, let widthPx, let heightPx, _) = result else {
             Issue.record("expected .ok, got \(result)")
             return
         }

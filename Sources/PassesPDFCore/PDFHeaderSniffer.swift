@@ -20,22 +20,16 @@ private let headerLength = 8
 public func isPDFHeader(_ bytes: Data) -> Bool {
     guard bytes.count >= headerLength else { return false }
     let b = [UInt8](bytes.prefix(headerLength))
-    let percent: UInt8 = 0x25 // '%'
-    let cP: UInt8 = 0x50      // 'P'
-    let cD: UInt8 = 0x44      // 'D'
-    let cF: UInt8 = 0x46      // 'F'
-    let dash: UInt8 = 0x2D    // '-'
-    let one: UInt8 = 0x31     // '1'
-    let two: UInt8 = 0x32     // '2'
-    let dot: UInt8 = 0x2E     // '.'
-    let zero: UInt8 = 0x30    // '0'
-    let nine: UInt8 = 0x39    // '9'
-    return b[0] == percent &&
-        b[1] == cP &&
-        b[2] == cD &&
-        b[3] == cF &&
-        b[4] == dash &&
-        (b[5] == one || b[5] == two) &&
-        b[6] == dot &&
-        (b[7] >= zero && b[7] <= nine)
+    let percent: UInt8 = 0x25  // '%'
+    let cP: UInt8 = 0x50  // 'P'
+    let cD: UInt8 = 0x44  // 'D'
+    let cF: UInt8 = 0x46  // 'F'
+    let dash: UInt8 = 0x2D  // '-'
+    let one: UInt8 = 0x31  // '1'
+    let two: UInt8 = 0x32  // '2'
+    let dot: UInt8 = 0x2E  // '.'
+    let zero: UInt8 = 0x30  // '0'
+    let nine: UInt8 = 0x39  // '9'
+    return b[0] == percent && b[1] == cP && b[2] == cD && b[3] == cF && b[4] == dash && (b[5] == one || b[5] == two)
+        && b[6] == dot && (b[7] >= zero && b[7] <= nine)
 }

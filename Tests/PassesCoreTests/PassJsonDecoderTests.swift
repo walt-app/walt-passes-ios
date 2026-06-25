@@ -7,7 +7,7 @@ import Testing
 struct PassJsonDecoderTests {
 
     private func decode(_ json: String, config: ParserConfig = ParserConfig()) -> PassJsonDecodeResult {
-        decodePassJson([(name: PASS_JSON_FILE_NAME, bytes: [UInt8](json.utf8))], config: config)
+        decodePassJson([(name: passJsonFileName, bytes: [UInt8](json.utf8))], config: config)
     }
 
     private func pass(_ result: PassJsonDecodeResult) -> Pass? {
@@ -15,7 +15,8 @@ struct PassJsonDecoderTests {
         return nil
     }
 
-    private let minimal = #"{"formatVersion":1,"serialNumber":"s","description":"d","organizationName":"o","generic":{}}"#
+    private let minimal =
+        #"{"formatVersion":1,"serialNumber":"s","description":"d","organizationName":"o","generic":{}}"#
 
     @Test func missingEntry() {
         #expect(decodePassJson([], config: ParserConfig()) == .failed(.missing))
@@ -82,7 +83,8 @@ struct PassJsonDecoderTests {
 
     @Test func stringLimitTrips() {
         let config = ParserConfig(maxJsonStringBytes: 3)
-        let json = #"{"formatVersion":1,"serialNumber":"toolongvalue","description":"d","organizationName":"o","generic":{}}"#
+        let json =
+            #"{"formatVersion":1,"serialNumber":"toolongvalue","description":"d","organizationName":"o","generic":{}}"#
         #expect(decode(json, config: config) == .failed(.jsonStringTooLong))
     }
 

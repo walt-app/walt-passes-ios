@@ -1,5 +1,5 @@
-import SwiftUI
 import PassesUICore
+import SwiftUI
 
 /// SwiftUI environment key carrying the host-supplied `DocumentSemantics`.
 /// Reading this outside a `documentTheme(_:)` scope returns `nil`; consuming
@@ -10,17 +10,17 @@ public struct DocumentSemanticsKey: EnvironmentKey {
     public static let defaultValue: DocumentSemantics? = nil
 }
 
-public extension EnvironmentValues {
-    var documentSemantics: DocumentSemantics? {
+extension EnvironmentValues {
+    public var documentSemantics: DocumentSemantics? {
         get { self[DocumentSemanticsKey.self] }
         set { self[DocumentSemanticsKey.self] = newValue }
     }
 }
 
-public extension View {
+extension View {
     /// Wraps `content` so every PassesPDFUI view can read
     /// `\.documentSemantics`. Mirror of Android's `DocumentTheme` composable.
-    func documentTheme(_ semantics: DocumentSemantics) -> some View {
+    public func documentTheme(_ semantics: DocumentSemantics) -> some View {
         environment(\.documentSemantics, semantics)
     }
 }

@@ -1,7 +1,7 @@
-import SwiftUI
 import CoreGraphics
 import ImageIO
 import PassesCore
+import SwiftUI
 
 /// Decodes `bytes` through ImageIO with explicit dimension caps. Prevents a
 /// hostile pass archive from forcing a multi-gigabyte image allocation.

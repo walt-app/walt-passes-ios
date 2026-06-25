@@ -1,6 +1,6 @@
-import SwiftUI
 import PassesCore
 import PassesUICore
+import SwiftUI
 
 /// Trust-claim-bearing confirmation surface for the in-app PKPASS import flow.
 /// The user sees the parsed pass exactly as Walt will store it - preview

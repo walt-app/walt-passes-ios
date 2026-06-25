@@ -55,12 +55,12 @@ internal func parseStrings(_ bytes: [UInt8], config: ParserConfig) -> StringsRes
 /// Android gets from a `CodingErrorAction.REPORT` decoder.
 private func decodeWithBomSniff(_ bytes: [UInt8]) -> String? {
     let (encoding, skip): (String.Encoding, Int)
-    if hasPrefix(bytes, BOM_UTF8) {
-        (encoding, skip) = (.utf8, BOM_UTF8.count)
-    } else if hasPrefix(bytes, BOM_UTF16BE) {
-        (encoding, skip) = (.utf16BigEndian, BOM_UTF16BE.count)
-    } else if hasPrefix(bytes, BOM_UTF16LE) {
-        (encoding, skip) = (.utf16LittleEndian, BOM_UTF16LE.count)
+    if hasPrefix(bytes, bomUtf8) {
+        (encoding, skip) = (.utf8, bomUtf8.count)
+    } else if hasPrefix(bytes, bomUtf16be) {
+        (encoding, skip) = (.utf16BigEndian, bomUtf16be.count)
+    } else if hasPrefix(bytes, bomUtf16le) {
+        (encoding, skip) = (.utf16LittleEndian, bomUtf16le.count)
     } else {
         (encoding, skip) = (.utf8, 0)
     }
@@ -80,8 +80,8 @@ private func hasPrefix(_ bytes: [UInt8], _ prefix: [UInt8]) -> Bool {
 /// through. Not suitable for serialization sizing.
 private func utf8Bytes(_ codeUnit: UInt16) -> Int {
     let code = Int(codeUnit)
-    if code < UTF8_TWO_BYTE_THRESHOLD { return 1 }
-    if code < UTF8_THREE_BYTE_THRESHOLD { return 2 }
+    if code < utf8TwoByteThreshold { return 1 }
+    if code < utf8ThreeByteThreshold { return 2 }
     return 3
 }
 
@@ -195,16 +195,16 @@ private final class StringsLexer {
         case BACKSLASH, QUOTE:
             pos += 1
             return [c]
-        case LOWER_N:
+        case lowerN:
             pos += 1
             return [LF]
-        case LOWER_R:
+        case lowerR:
             pos += 1
             return [CR]
-        case LOWER_T:
+        case lowerT:
             pos += 1
             return [TAB]
-        case UPPER_U:
+        case upperU:
             return try readUnicodeEscape()
         default:
             throw StringsFailure.badEscape
@@ -221,26 +221,26 @@ private final class StringsLexer {
         if isLowSurrogate(first) { throw StringsFailure.badEscape }
         if !isHighSurrogate(first) { return [first] }
         let partnerOk =
-            pos + SURROGATE_PARTNER_PREFIX_LEN <= units.count
+            pos + surrogatePartnerPrefixLen <= units.count
             && units[pos] == BACKSLASH
-            && units[pos + 1] == UPPER_U
+            && units[pos + 1] == upperU
         if !partnerOk { throw StringsFailure.badEscape }
-        pos += SURROGATE_PARTNER_PREFIX_LEN
+        pos += surrogatePartnerPrefixLen
         let low = try readUnicodeCodeUnit()
         if !isLowSurrogate(low) { throw StringsFailure.badEscape }
         return [first, low]
     }
 
     private func readUnicodeCodeUnit() throws -> UInt16 {
-        guard pos + UNICODE_ESCAPE_HEX_DIGITS <= units.count else { throw StringsFailure.badEscape }
+        guard pos + unicodeEscapeHexDigits <= units.count else { throw StringsFailure.badEscape }
         var value = 0
-        for i in 0..<UNICODE_ESCAPE_HEX_DIGITS {
+        for i in 0..<unicodeEscapeHexDigits {
             guard let scalar = Unicode.Scalar(units[pos + i]),
                 let digit = Character(scalar).hexDigitValue
             else { throw StringsFailure.badEscape }
             value = (value << 4) | digit
         }
-        pos += UNICODE_ESCAPE_HEX_DIGITS
+        pos += unicodeEscapeHexDigits
         return UInt16(value)
     }
 }
@@ -261,16 +261,16 @@ private let SEMICOLON: UInt16 = 0x3B
 private let LF: UInt16 = 0x0A
 private let CR: UInt16 = 0x0D
 private let TAB: UInt16 = 0x09
-private let LOWER_N: UInt16 = 0x6E
-private let LOWER_R: UInt16 = 0x72
-private let LOWER_T: UInt16 = 0x74
-private let UPPER_U: UInt16 = 0x55
+private let lowerN: UInt16 = 0x6E
+private let lowerR: UInt16 = 0x72
+private let lowerT: UInt16 = 0x74
+private let upperU: UInt16 = 0x55
 
-private let UNICODE_ESCAPE_HEX_DIGITS = 4
-private let SURROGATE_PARTNER_PREFIX_LEN = 2
-private let UTF8_TWO_BYTE_THRESHOLD = 0x80
-private let UTF8_THREE_BYTE_THRESHOLD = 0x800
+private let unicodeEscapeHexDigits = 4
+private let surrogatePartnerPrefixLen = 2
+private let utf8TwoByteThreshold = 0x80
+private let utf8ThreeByteThreshold = 0x800
 
-private let BOM_UTF8: [UInt8] = [0xEF, 0xBB, 0xBF]
-private let BOM_UTF16BE: [UInt8] = [0xFE, 0xFF]
-private let BOM_UTF16LE: [UInt8] = [0xFF, 0xFE]
+private let bomUtf8: [UInt8] = [0xEF, 0xBB, 0xBF]
+private let bomUtf16be: [UInt8] = [0xFE, 0xFF]
+private let bomUtf16le: [UInt8] = [0xFF, 0xFE]

@@ -1,6 +1,6 @@
-import SwiftUI
 import PassesCore
 import PassesUICore
+import SwiftUI
 
 /// Renders a `ScannableCard`'s barcode as a 1-bit-per-module raster using a
 /// CoreImage generator where available; for symbologies Apple does not ship a

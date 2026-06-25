@@ -18,7 +18,9 @@ struct GrdbScannableCardStoreTests {
         at url: URL? = nil,
         now: @escaping @Sendable () -> Int64 = { 1_000 }
     ) throws -> GrdbPassRepository {
-        let path = url ?? FileManager.default.temporaryDirectory
+        let path =
+            url
+            ?? FileManager.default.temporaryDirectory
             .appendingPathComponent("walt_cards_\(UUID().uuidString).db")
         return try GrdbPassRepository(dbQueue: try GrdbDatabaseFactory.open(at: path), clock: now)
     }
@@ -30,7 +32,8 @@ struct GrdbScannableCardStoreTests {
 
         let input = ScannableCardCreateInput(payload: "  loyalty-123  ", format: .code128, label: "  Cafe  ")
         guard case .success(let id) = await repo.createScannableCard(input: input) else {
-            Issue.record("create failed"); return
+            Issue.record("create failed")
+            return
         }
         #expect(id.value == 1)
 
@@ -46,11 +49,17 @@ struct GrdbScannableCardStoreTests {
 
     @Test func loadReturnsCreatedCard() async throws {
         let repo = try makeRepository()
-        guard case .success(let id) = await repo.createScannableCard(
-            input: ScannableCardCreateInput(payload: "https://x.example", format: .qr, label: "Site")
-        ) else { Issue.record("create failed"); return }
+        guard
+            case .success(let id) = await repo.createScannableCard(
+                input: ScannableCardCreateInput(payload: "https://x.example", format: .qr, label: "Site")
+            )
+        else {
+            Issue.record("create failed")
+            return
+        }
         guard case .success(let card) = await repo.loadScannableCard(id: id) else {
-            Issue.record("load failed"); return
+            Issue.record("load failed")
+            return
         }
         #expect(card.payload == "https://x.example")
         #expect(card.format == .qr)
@@ -72,10 +81,12 @@ struct GrdbScannableCardStoreTests {
             input: ScannableCardCreateInput(payload: "12345", format: .ean13, label: "Card")
         )
         guard case .failure(.scannableCardRejected(.invalidPayload(let reason))) = result else {
-            Issue.record("expected invalidPayload rejection, got \(result)"); return
+            Issue.record("expected invalidPayload rejection, got \(result)")
+            return
         }
         guard case .wrongLength(let actual, let required, let format) = reason else {
-            Issue.record("expected wrongLength, got \(reason)"); return
+            Issue.record("expected wrongLength, got \(reason)")
+            return
         }
         #expect(actual == 5)
         #expect(required == 13)
@@ -84,16 +95,23 @@ struct GrdbScannableCardStoreTests {
 
     @Test func deleteRemovesCardAndAbsentIdIsIntegrityViolation() async throws {
         let repo = try makeRepository()
-        guard case .success(let id) = await repo.createScannableCard(
-            input: ScannableCardCreateInput(payload: "abc", format: .code128, label: "L")
-        ) else { Issue.record("create failed"); return }
+        guard
+            case .success(let id) = await repo.createScannableCard(
+                input: ScannableCardCreateInput(payload: "abc", format: .code128, label: "L")
+            )
+        else {
+            Issue.record("create failed")
+            return
+        }
         guard case .success = await repo.deleteScannableCard(id: id) else {
-            Issue.record("delete failed"); return
+            Issue.record("delete failed")
+            return
         }
         #expect(await repo.observeScannableCardsFirstSnapshot().isEmpty)
 
         guard case .failure(let error) = await repo.deleteScannableCard(id: id) else {
-            Issue.record("expected failure"); return
+            Issue.record("expected failure")
+            return
         }
         #expect(error == .integrityViolation(recordId: .scannableCard(id)))
     }
@@ -118,14 +136,25 @@ struct GrdbScannableCardStoreTests {
 
     @Test func updateScannableCardOverwritesFields() async throws {
         let repo = try makeRepository()
-        guard case .success(let id) = await repo.createScannableCard(
-            input: ScannableCardCreateInput(payload: "old-1234", format: .qr, label: "Old")
-        ) else { Issue.record("create failed"); return }
-        guard case .success = await repo.updateScannableCard(
-            id: id, input: ScannableCardCreateInput(payload: "new-payload", format: .code128, label: "New")
-        ) else { Issue.record("update failed"); return }
+        guard
+            case .success(let id) = await repo.createScannableCard(
+                input: ScannableCardCreateInput(payload: "old-1234", format: .qr, label: "Old")
+            )
+        else {
+            Issue.record("create failed")
+            return
+        }
+        guard
+            case .success = await repo.updateScannableCard(
+                id: id, input: ScannableCardCreateInput(payload: "new-payload", format: .code128, label: "New")
+            )
+        else {
+            Issue.record("update failed")
+            return
+        }
         guard case .success(let card) = await repo.loadScannableCard(id: id) else {
-            Issue.record("load failed"); return
+            Issue.record("load failed")
+            return
         }
         #expect(card.payload == "new-payload")
         #expect(card.format == .code128)
@@ -134,18 +163,30 @@ struct GrdbScannableCardStoreTests {
 
     @Test func updateScannableCardInvalidInputRejectedAndRowUnchanged() async throws {
         let repo = try makeRepository()
-        guard case .success(let id) = await repo.createScannableCard(
-            input: ScannableCardCreateInput(payload: "keep-me", format: .code128, label: "Keep")
-        ) else { Issue.record("create failed"); return }
+        guard
+            case .success(let id) = await repo.createScannableCard(
+                input: ScannableCardCreateInput(payload: "keep-me", format: .code128, label: "Keep")
+            )
+        else {
+            Issue.record("create failed")
+            return
+        }
         // Empty payload fails the validator, before any write.
-        guard case .failure(let error) = await repo.updateScannableCard(
-            id: id, input: ScannableCardCreateInput(payload: "", format: .code128, label: "X")
-        ) else { Issue.record("expected rejection"); return }
+        guard
+            case .failure(let error) = await repo.updateScannableCard(
+                id: id, input: ScannableCardCreateInput(payload: "", format: .code128, label: "X")
+            )
+        else {
+            Issue.record("expected rejection")
+            return
+        }
         guard case .scannableCardRejected = error else {
-            Issue.record("expected .scannableCardRejected, got \(error)"); return
+            Issue.record("expected .scannableCardRejected, got \(error)")
+            return
         }
         guard case .success(let card) = await repo.loadScannableCard(id: id) else {
-            Issue.record("load failed"); return
+            Issue.record("load failed")
+            return
         }
         #expect(card.payload == "keep-me")
     }
@@ -153,19 +194,31 @@ struct GrdbScannableCardStoreTests {
     @Test func updateScannableCardRejectionPrecedesUnknownId() async throws {
         let repo = try makeRepository()
         // Invalid input on a nonexistent id surfaces as scannableCardRejected, not integrity.
-        guard case .failure(let error) = await repo.updateScannableCard(
-            id: ScannableCardRecordId(404), input: ScannableCardCreateInput(payload: "", format: .qr, label: "X")
-        ) else { Issue.record("expected rejection"); return }
+        guard
+            case .failure(let error) = await repo.updateScannableCard(
+                id: ScannableCardRecordId(404), input: ScannableCardCreateInput(payload: "", format: .qr, label: "X")
+            )
+        else {
+            Issue.record("expected rejection")
+            return
+        }
         guard case .scannableCardRejected = error else {
-            Issue.record("expected .scannableCardRejected, got \(error)"); return
+            Issue.record("expected .scannableCardRejected, got \(error)")
+            return
         }
     }
 
     @Test func updateScannableCardUnknownIdIsIntegrityViolation() async throws {
         let repo = try makeRepository()
-        guard case .failure(let error) = await repo.updateScannableCard(
-            id: ScannableCardRecordId(404), input: ScannableCardCreateInput(payload: "valid", format: .qr, label: "L")
-        ) else { Issue.record("expected failure"); return }
+        guard
+            case .failure(let error) = await repo.updateScannableCard(
+                id: ScannableCardRecordId(404),
+                input: ScannableCardCreateInput(payload: "valid", format: .qr, label: "L")
+            )
+        else {
+            Issue.record("expected failure")
+            return
+        }
         #expect(error == .integrityViolation(recordId: .scannableCard(ScannableCardRecordId(404))))
     }
 
@@ -174,9 +227,14 @@ struct GrdbScannableCardStoreTests {
             .appendingPathComponent("walt_cards_update_\(UUID().uuidString).db")
         defer { try? FileManager.default.removeItem(at: url) }
         let first = try makeRepository(at: url, now: { 1_000 })
-        guard case .success(let id) = await first.createScannableCard(
-            input: ScannableCardCreateInput(payload: "abc", format: .code128, label: "L")
-        ) else { Issue.record("create failed"); return }
+        guard
+            case .success(let id) = await first.createScannableCard(
+                input: ScannableCardCreateInput(payload: "abc", format: .code128, label: "L")
+            )
+        else {
+            Issue.record("create failed")
+            return
+        }
         first.close()
         // Reopen under a later clock and update; created_at must not move.
         let second = try makeRepository(at: url, now: { 9_000 })
@@ -184,7 +242,8 @@ struct GrdbScannableCardStoreTests {
             id: id, input: ScannableCardCreateInput(payload: "abc2", format: .code128, label: "L2")
         )
         guard case .success(let card) = await second.loadScannableCard(id: id) else {
-            Issue.record("load failed"); return
+            Issue.record("load failed")
+            return
         }
         #expect(card.payload == "abc2")
         #expect(card.createdAt == PassInstant(epochMillis: 1_000))

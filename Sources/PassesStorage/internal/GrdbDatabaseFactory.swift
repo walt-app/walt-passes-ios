@@ -81,7 +81,8 @@ enum GrdbDatabaseFactory {
             arguments: [Schema.MetaKeys.schemaVersion]
         )
         guard let data: Data = row?["value"] else { return nil }
-        return Int(String(decoding: data, as: UTF8.self))
+        guard let text = String(bytes: data, encoding: .utf8) else { return nil }
+        return Int(text)
     }
 
     /// The version is stored as the decimal string in the `value` BLOB column. iOS passes

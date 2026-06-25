@@ -14,7 +14,7 @@ struct PassParserTests {
     }
 
     @Test func unsignedValidArchiveParsesAsUnsigned() {
-        let payload = [ZipBuilder.File(PASS_JSON_FILE_NAME, PkpassFixtures.passJson())]
+        let payload = [ZipBuilder.File(passJsonFileName, PkpassFixtures.passJson())]
         let archive = PkpassFixtures.unsignedArchive(payload: payload)
         let result = parse(archive)
         guard case .success(let pass, let status) = result else {
@@ -28,7 +28,7 @@ struct PassParserTests {
     }
 
     @Test func streamSourceParsesIdenticallyToBytes() {
-        let payload = [ZipBuilder.File(PASS_JSON_FILE_NAME, PkpassFixtures.passJson())]
+        let payload = [ZipBuilder.File(passJsonFileName, PkpassFixtures.passJson())]
         let archive = PkpassFixtures.unsignedArchive(payload: payload)
         let parser = PassParserFactory.create()
         let stream = InputStream(data: Data(archive))
@@ -38,7 +38,7 @@ struct PassParserTests {
     }
 
     @Test func unsignedRejectedInStrictMode() {
-        let payload = [ZipBuilder.File(PASS_JSON_FILE_NAME, PkpassFixtures.passJson())]
+        let payload = [ZipBuilder.File(passJsonFileName, PkpassFixtures.passJson())]
         let archive = PkpassFixtures.unsignedArchive(payload: payload)
         let result = parse(archive, config: .strict)
         #expect(result == .tampered(reason: .signatureCryptoFailure))
@@ -64,17 +64,17 @@ struct PassParserTests {
 
     @Test func tamperedFileHashSurfacesTampered() {
         // Build a valid manifest, then swap pass.json bytes so its hash no longer matches.
-        let realPass = ZipBuilder.File(PASS_JSON_FILE_NAME, PkpassFixtures.passJson())
+        let realPass = ZipBuilder.File(passJsonFileName, PkpassFixtures.passJson())
         let manifestBytes = PkpassFixtures.manifest(for: [realPass])
-        let tamperedPass = ZipBuilder.File(PASS_JSON_FILE_NAME, PkpassFixtures.passJson(style: "coupon"))
-        let archive = ZipBuilder.build([tamperedPass, ZipBuilder.File(MANIFEST_FILE_NAME, manifestBytes)])
+        let tamperedPass = ZipBuilder.File(passJsonFileName, PkpassFixtures.passJson(style: "coupon"))
+        let archive = ZipBuilder.build([tamperedPass, ZipBuilder.File(manifestFileName, manifestBytes)])
         let result = parse(archive)
         #expect(result == .tampered(reason: .fileHashMismatch))
     }
 
     @Test func unknownFormatVersionUnsupported() {
         let json = #"{"formatVersion":2,"serialNumber":"s","description":"d","organizationName":"o","generic":{}}"#
-        let pass = ZipBuilder.File(PASS_JSON_FILE_NAME, json)
+        let pass = ZipBuilder.File(passJsonFileName, json)
         let archive = PkpassFixtures.unsignedArchive(payload: [pass])
         let result = parse(archive)
         #expect(result == .unsupported(reason: .formatVersion(version: 2)))
@@ -82,7 +82,7 @@ struct PassParserTests {
 
     @Test func localizedStringsAttachedToPass() {
         let payload = [
-            ZipBuilder.File(PASS_JSON_FILE_NAME, PkpassFixtures.passJson()),
+            ZipBuilder.File(passJsonFileName, PkpassFixtures.passJson()),
             ZipBuilder.File("en.lproj/pass.strings", "\"k\" = \"Hello\";"),
         ]
         let archive = PkpassFixtures.unsignedArchive(payload: payload)
@@ -96,7 +96,7 @@ struct PassParserTests {
 
     @Test func imageAttachedToPass() {
         let payload = [
-            ZipBuilder.File(PASS_JSON_FILE_NAME, PkpassFixtures.passJson()),
+            ZipBuilder.File(passJsonFileName, PkpassFixtures.passJson()),
             ZipBuilder.File("icon.png", pngBytes(width: 4, height: 4)),
         ]
         let archive = PkpassFixtures.unsignedArchive(payload: payload)
@@ -113,7 +113,7 @@ struct PassParserTests {
         // synthesized root acts as the trust anchor and the signed manifest verifies against it.
         let root = try SignatureTestSupport.makeRoot(commonName: "Test Root")
         let leaf = try SignatureTestSupport.makeLeaf(commonName: "Test Leaf", issuer: root)
-        let payload = [ZipBuilder.File(PASS_JSON_FILE_NAME, PkpassFixtures.passJson())]
+        let payload = [ZipBuilder.File(passJsonFileName, PkpassFixtures.passJson())]
         let manifestBytes = PkpassFixtures.manifest(for: payload)
         let signature = try SignatureTestSupport.sign(manifestBytes: manifestBytes, signer: leaf)
         let result = SignatureTestSupport.verify(

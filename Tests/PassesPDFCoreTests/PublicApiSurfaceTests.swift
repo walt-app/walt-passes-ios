@@ -153,11 +153,12 @@ struct PublicApiSurfaceTests {
         )
         g.onConsumerRenderFailed(reason: .dimensionMismatch)
 
-        #expect(recorder.values == [
-            "started",
-            "ok:99:2:11",
-            "failed:tooManyPages:3",
-            "render:dimensionMismatch",
-        ])
+        #expect(
+            recorder.values == [
+                "started",
+                "ok:99:2:11",
+                "failed:tooManyPages:3",
+                "render:dimensionMismatch",
+            ])
     }
 }

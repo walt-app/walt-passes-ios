@@ -22,7 +22,7 @@ public func isSourceRectValid(_ sourceRect: RenderSourceRect) -> Bool {
     switch sourceRect {
     case .fullPage:
         return true
-    case let .subRect(left, top, right, bottom):
+    case .subRect(let left, let top, let right, let bottom):
         let finite = left.isFinite && top.isFinite && right.isFinite && bottom.isFinite
         return finite
             && (0.0...1.0).contains(left)

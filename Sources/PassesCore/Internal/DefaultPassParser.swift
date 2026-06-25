@@ -86,7 +86,7 @@ internal struct DefaultPassParser: PassParser {
         _ entries: [(name: String, bytes: [UInt8])],
         manifestBytes: [UInt8]
     ) -> Phase<SignatureStatus> {
-        guard let signatureBytes = entries.first(where: { $0.name == SIGNATURE_FILE_NAME })?.bytes else {
+        guard let signatureBytes = entries.first(where: { $0.name == signatureFileName })?.bytes else {
             // No signature blob. Lenient default surfaces `.unsigned`; strict mode treats absence
             // as a security event, routed through `.signatureCryptoFailure` (same category of
             // refusal as "the bytes did not parse as a CMS envelope").
@@ -134,8 +134,8 @@ internal struct DefaultPassParser: PassParser {
     }
 
     private func topLevelImageRole(_ name: String) -> ImageRole? {
-        let isTopLevelPng = !name.contains("/") && name.lowercased().hasSuffix(PNG_EXTENSION)
-        return isTopLevelPng ? ROLE_BY_BASENAME[name.lowercased()] : nil
+        let isTopLevelPng = !name.contains("/") && name.lowercased().hasSuffix(pngExtension)
+        return isTopLevelPng ? roleByBasename[name.lowercased()] : nil
     }
 
     private func pngPixelLimitFailure(_ bytes: [UInt8]) -> ParseResult? {
@@ -191,12 +191,12 @@ private func stringsFailureToResult(_ failure: StringsFailure) -> ParseResult {
 private func lprojStringsLocale(_ name: String) -> String? {
     // A valid PKPASS keeps locale dirs at the archive root, so the locale segment must be
     // non-empty and slash-free. Path traversal is already rejected upstream.
-    guard name.hasSuffix(LPROJ_STRINGS_SUFFIX) else { return nil }
-    let locale = String(name.dropLast(LPROJ_STRINGS_SUFFIX.count))
+    guard name.hasSuffix(lprojStringsSuffix) else { return nil }
+    let locale = String(name.dropLast(lprojStringsSuffix.count))
     return (locale.isEmpty || locale.contains("/")) ? nil : locale
 }
 
-private let ROLE_BY_BASENAME: [String: ImageRole] = [
+private let roleByBasename: [String: ImageRole] = [
     "logo.png": .logo,
     "logo@2x.png": .logoRetina,
     "logo@3x.png": .logoSuperRetina,
@@ -217,5 +217,5 @@ private let ROLE_BY_BASENAME: [String: ImageRole] = [
     "footer@3x.png": .footerSuperRetina,
 ]
 
-private let PNG_EXTENSION = ".png"
-private let LPROJ_STRINGS_SUFFIX = ".lproj/pass.strings"
+private let pngExtension = ".png"
+private let lprojStringsSuffix = ".lproj/pass.strings"

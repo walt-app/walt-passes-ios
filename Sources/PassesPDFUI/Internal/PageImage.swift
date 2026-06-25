@@ -44,19 +44,21 @@ func decodePageImage(from decoded: DecodedPage) -> PageImage? {
     let bitmapInfo = CGBitmapInfo(
         rawValue: CGImageAlphaInfo.premultipliedLast.rawValue
     )
-    guard let cgImage = CGImage(
-        width: decoded.widthPx,
-        height: decoded.heightPx,
-        bitsPerComponent: 8,
-        bitsPerPixel: 32,
-        bytesPerRow: bytesPerRow,
-        space: colorSpace,
-        bitmapInfo: bitmapInfo,
-        provider: provider,
-        decode: nil,
-        shouldInterpolate: true,
-        intent: .defaultIntent
-    ) else {
+    guard
+        let cgImage = CGImage(
+            width: decoded.widthPx,
+            height: decoded.heightPx,
+            bitsPerComponent: 8,
+            bitsPerPixel: 32,
+            bytesPerRow: bytesPerRow,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo,
+            provider: provider,
+            decode: nil,
+            shouldInterpolate: true,
+            intent: .defaultIntent
+        )
+    else {
         return nil
     }
     return PageImage(cgImage: cgImage, pageAspect: decoded.pageAspect)

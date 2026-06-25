@@ -1,5 +1,5 @@
-import SwiftUI
 import PassesPDFCore
+import SwiftUI
 
 /// The Documents lane that sits below the passes list on the wallet root
 /// screen. The lane renders nothing when `documents` is empty — there is

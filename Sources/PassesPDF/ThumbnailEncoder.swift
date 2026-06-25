@@ -1,4 +1,5 @@
 import Foundation
+
 #if canImport(ImageIO)
 import ImageIO
 #endif
@@ -32,7 +33,7 @@ package struct PNGThumbnailEncoder: ThumbnailEncoder {
     package init() {}
 
     package func encode(render: RenderResult) throws -> Data {
-        guard case let .ok(pixels, widthPx, heightPx, _) = render else {
+        guard case .ok(let pixels, let widthPx, let heightPx, _) = render else {
             throw ThumbnailEncoderError("encode requires a .ok render result")
         }
         let bytesPerPixel = 4
@@ -45,19 +46,21 @@ package struct PNGThumbnailEncoder: ThumbnailEncoder {
         }
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
-        guard let image = CGImage(
-            width: widthPx,
-            height: heightPx,
-            bitsPerComponent: 8,
-            bitsPerPixel: 32,
-            bytesPerRow: bytesPerRow,
-            space: colorSpace,
-            bitmapInfo: bitmapInfo,
-            provider: provider,
-            decode: nil,
-            shouldInterpolate: false,
-            intent: .defaultIntent
-        ) else {
+        guard
+            let image = CGImage(
+                width: widthPx,
+                height: heightPx,
+                bitsPerComponent: 8,
+                bitsPerPixel: 32,
+                bytesPerRow: bytesPerRow,
+                space: colorSpace,
+                bitmapInfo: bitmapInfo,
+                provider: provider,
+                decode: nil,
+                shouldInterpolate: false,
+                intent: .defaultIntent
+            )
+        else {
             throw ThumbnailEncoderError("CGImage creation failed")
         }
         let dest = CFDataCreateMutable(nil, 0)!

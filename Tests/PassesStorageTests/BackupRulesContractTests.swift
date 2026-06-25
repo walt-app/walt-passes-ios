@@ -32,10 +32,11 @@ struct BackupRulesContractTests {
     }
 
     @Test func sectionAllCasesIsTheDocumentedThree() {
-        #expect(BackupRulesContract.Section.allCases == [
-            .fullBackupContent,
-            .cloudBackup,
-            .deviceTransfer,
-        ])
+        #expect(
+            BackupRulesContract.Section.allCases == [
+                .fullBackupContent,
+                .cloudBackup,
+                .deviceTransfer,
+            ])
     }
 }

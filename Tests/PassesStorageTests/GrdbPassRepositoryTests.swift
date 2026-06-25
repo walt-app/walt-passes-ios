@@ -19,9 +19,17 @@ struct GrdbPassRepositoryTests {
         private let lock = NSLock()
         private var value: Int64
         init(_ value: Int64) { self.value = value }
-        func set(_ value: Int64) { lock.lock(); self.value = value; lock.unlock() }
+        func set(_ value: Int64) {
+            lock.lock()
+            self.value = value
+            lock.unlock()
+        }
         var now: @Sendable () -> Int64 {
-            { [self] in lock.lock(); defer { lock.unlock() }; return value }
+            { [self] in
+                lock.lock()
+                defer { lock.unlock() }
+                return value
+            }
         }
     }
 
@@ -57,10 +65,12 @@ struct GrdbPassRepositoryTests {
         let repo = try makeRepository()
         let pass = samplePass()
         guard case .success(let id) = await repo.upsert(pass: pass, signatureStatus: .selfSigned) else {
-            Issue.record("upsert failed"); return
+            Issue.record("upsert failed")
+            return
         }
         guard case .success(let stored) = await repo.load(id: id) else {
-            Issue.record("load failed"); return
+            Issue.record("load failed")
+            return
         }
         #expect(stored.pass.serialNumber == "SN-1")
         #expect(stored.pass.barcode?.message == "hello")
@@ -76,19 +86,21 @@ struct GrdbPassRepositoryTests {
         let repo = try makeRepository(now: clock.now)
 
         guard case .success(let firstId) = await repo.upsert(pass: samplePass(), signatureStatus: .unsigned) else {
-            Issue.record("first upsert failed"); return
+            Issue.record("first upsert failed")
+            return
         }
         clock.set(5_000)
         let updated = samplePass()  // same identity tuple (type/serial/org)
         guard case .success(let secondId) = await repo.upsert(pass: updated, signatureStatus: .appleVerified) else {
-            Issue.record("second upsert failed"); return
+            Issue.record("second upsert failed")
+            return
         }
         #expect(firstId == secondId)  // replaced, not inserted
 
         let all = await repo.passes
         #expect(all.count == 1)
-        #expect(all.first?.createdAt == PassInstant(epochMillis: 1_000))   // preserved
-        #expect(all.first?.updatedAt == PassInstant(epochMillis: 5_000))   // bumped
+        #expect(all.first?.createdAt == PassInstant(epochMillis: 1_000))  // preserved
+        #expect(all.first?.updatedAt == PassInstant(epochMillis: 5_000))  // bumped
         #expect(all.first?.signatureStatus == .appleVerified)
     }
 
@@ -116,15 +128,18 @@ struct GrdbPassRepositoryTests {
     @Test func deleteRemovesRowAndAbsentIdIsIntegrityViolation() async throws {
         let repo = try makeRepository()
         guard case .success(let id) = await repo.upsert(pass: samplePass(), signatureStatus: .unsigned) else {
-            Issue.record("upsert failed"); return
+            Issue.record("upsert failed")
+            return
         }
         guard case .success = await repo.delete(id: id) else {
-            Issue.record("delete failed"); return
+            Issue.record("delete failed")
+            return
         }
         #expect(await repo.passes.isEmpty)
 
         guard case .failure(let error) = await repo.delete(id: id) else {
-            Issue.record("expected failure on second delete"); return
+            Issue.record("expected failure on second delete")
+            return
         }
         #expect(error == .integrityViolation(recordId: .pass(id)))
     }
@@ -132,13 +147,16 @@ struct GrdbPassRepositoryTests {
     @Test func updatePassUserLabelSetsTrimmedLabel() async throws {
         let repo = try makeRepository()
         guard case .success(let id) = await repo.upsert(pass: samplePass(), signatureStatus: .unsigned) else {
-            Issue.record("upsert failed"); return
+            Issue.record("upsert failed")
+            return
         }
         guard case .success = await repo.updatePassUserLabel(id: id, label: "  Gym card  ") else {
-            Issue.record("update failed"); return
+            Issue.record("update failed")
+            return
         }
         guard case .success(let summary) = await repo.summaryOf(id: id) else {
-            Issue.record("summaryOf failed"); return
+            Issue.record("summaryOf failed")
+            return
         }
         #expect(summary.userLabel == "Gym card")
     }
@@ -146,20 +164,23 @@ struct GrdbPassRepositoryTests {
     @Test func updatePassUserLabelClearsOnNilOrBlank() async throws {
         let repo = try makeRepository()
         guard case .success(let id) = await repo.upsert(pass: samplePass(), signatureStatus: .unsigned) else {
-            Issue.record("upsert failed"); return
+            Issue.record("upsert failed")
+            return
         }
         _ = await repo.updatePassUserLabel(id: id, label: "Temp")
         // nil clears.
         _ = await repo.updatePassUserLabel(id: id, label: nil)
         guard case .success(let afterNil) = await repo.summaryOf(id: id) else {
-            Issue.record("summaryOf failed"); return
+            Issue.record("summaryOf failed")
+            return
         }
         #expect(afterNil.userLabel == nil)
         // blank-after-trim also clears.
         _ = await repo.updatePassUserLabel(id: id, label: "Temp")
         _ = await repo.updatePassUserLabel(id: id, label: "   ")
         guard case .success(let afterBlank) = await repo.summaryOf(id: id) else {
-            Issue.record("summaryOf failed"); return
+            Issue.record("summaryOf failed")
+            return
         }
         #expect(afterBlank.userLabel == nil)
     }
@@ -167,20 +188,24 @@ struct GrdbPassRepositoryTests {
     @Test func updatePassUserLabelAtCapAcceptedOverCapRejected() async throws {
         let repo = try makeRepository()
         guard case .success(let id) = await repo.upsert(pass: samplePass(), signatureStatus: .unsigned) else {
-            Issue.record("upsert failed"); return
+            Issue.record("upsert failed")
+            return
         }
         let atCap = String(repeating: "a", count: PassUserLabelBounds.maxUserLabelChars)
         guard case .success = await repo.updatePassUserLabel(id: id, label: atCap) else {
-            Issue.record("at-cap label should be accepted"); return
+            Issue.record("at-cap label should be accepted")
+            return
         }
         let overCap = String(repeating: "a", count: PassUserLabelBounds.maxUserLabelChars + 1)
         guard case .failure(let error) = await repo.updatePassUserLabel(id: id, label: overCap) else {
-            Issue.record("expected over-cap rejection"); return
+            Issue.record("expected over-cap rejection")
+            return
         }
         #expect(error == .passRejected(kind: .labelTooLong))
         // The rejected update must not have overwritten the accepted at-cap value.
         guard case .success(let summary) = await repo.summaryOf(id: id) else {
-            Issue.record("summaryOf failed"); return
+            Issue.record("summaryOf failed")
+            return
         }
         #expect(summary.userLabel == atCap)
     }
@@ -190,7 +215,8 @@ struct GrdbPassRepositoryTests {
         let overCap = String(repeating: "a", count: PassUserLabelBounds.maxUserLabelChars + 1)
         // Too-long label on a nonexistent id surfaces as passRejected, not integrityViolation.
         guard case .failure(let error) = await repo.updatePassUserLabel(id: PassRecordId(404), label: overCap) else {
-            Issue.record("expected cap rejection"); return
+            Issue.record("expected cap rejection")
+            return
         }
         #expect(error == .passRejected(kind: .labelTooLong))
     }
@@ -198,7 +224,8 @@ struct GrdbPassRepositoryTests {
     @Test func updatePassUserLabelUnknownIdIsIntegrityViolation() async throws {
         let repo = try makeRepository()
         guard case .failure(let error) = await repo.updatePassUserLabel(id: PassRecordId(404), label: "x") else {
-            Issue.record("expected integrity violation"); return
+            Issue.record("expected integrity violation")
+            return
         }
         #expect(error == .integrityViolation(recordId: .pass(PassRecordId(404))))
     }
@@ -207,12 +234,14 @@ struct GrdbPassRepositoryTests {
         let clock = TestClock(1_000)
         let repo = try makeRepository(now: clock.now)
         guard case .success(let id) = await repo.upsert(pass: samplePass(), signatureStatus: .unsigned) else {
-            Issue.record("upsert failed"); return
+            Issue.record("upsert failed")
+            return
         }
         clock.set(9_000)
         _ = await repo.updatePassUserLabel(id: id, label: "Renamed")
         guard case .success(let summary) = await repo.summaryOf(id: id) else {
-            Issue.record("summaryOf failed"); return
+            Issue.record("summaryOf failed")
+            return
         }
         #expect(summary.userLabel == "Renamed")
         #expect(summary.updatedAt.epochMillis == 1_000)

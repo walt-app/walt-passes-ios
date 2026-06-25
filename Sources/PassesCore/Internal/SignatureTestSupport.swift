@@ -1,8 +1,6 @@
 import Crypto
 import Foundation
 import SwiftASN1
-import X509
-
 @_spi(CMS) import X509
 
 /// **Test-only support.** Shims P256 key/certificate generation and CMS signing through

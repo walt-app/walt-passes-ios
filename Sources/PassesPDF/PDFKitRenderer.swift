@@ -54,7 +54,8 @@ package struct PDFKitRenderer: PDFRendererBinder {
         heightPx: Int,
         sourceRect: RenderSourceRect
     ) async -> RenderResult {
-        let dimsOk = widthPx > 0
+        let dimsOk =
+            widthPx > 0
             && heightPx > 0
             && Int64(widthPx) * Int64(heightPx) <= Self.maxPixels
         let rectOk = isSourceRectValid(sourceRect)
@@ -98,15 +99,17 @@ package struct PDFKitRenderer: PDFRendererBinder {
             guard let base = raw.baseAddress else { return false }
             let colorSpace = CGColorSpaceCreateDeviceRGB()
             let bitmapInfo: UInt32 = CGImageAlphaInfo.premultipliedLast.rawValue
-            guard let ctx = CGContext(
-                data: base,
-                width: widthPx,
-                height: heightPx,
-                bitsPerComponent: 8,
-                bytesPerRow: bytesPerRow,
-                space: colorSpace,
-                bitmapInfo: bitmapInfo
-            ) else {
+            guard
+                let ctx = CGContext(
+                    data: base,
+                    width: widthPx,
+                    height: heightPx,
+                    bitsPerComponent: 8,
+                    bytesPerRow: bytesPerRow,
+                    space: colorSpace,
+                    bitmapInfo: bitmapInfo
+                )
+            else {
                 return false
             }
             // page.draw composites onto the zeroed (transparent) buffer without clearing;
@@ -124,7 +127,7 @@ package struct PDFKitRenderer: PDFRendererBinder {
                     x: CGFloat(widthPx) / pageBounds.width,
                     y: CGFloat(heightPx) / pageBounds.height
                 )
-            case let .subRect(left, top, right, bottom):
+            case .subRect(let left, let top, let right, let bottom):
                 let srcLeft = CGFloat(left) * pageBounds.width
                 let srcTop = CGFloat(top) * pageBounds.height
                 let srcW = CGFloat(right - left) * pageBounds.width

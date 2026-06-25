@@ -69,7 +69,7 @@ public struct ParserConfig: Sendable, Equatable {
 
 // `telemetryGuard` field is deferred: `TelemetryGuard` is not part of this port.
 
-public extension ResourceLimit {
+extension ResourceLimit {
     /// The configured ceiling for this resource limit, expressed in the unit the parser
     /// actually compares against (bytes for size limits, count for everything else). Returned
     /// as `Int64` so the caller can compare without overflow concerns on archive sizes.
@@ -77,7 +77,7 @@ public extension ResourceLimit {
     /// The exhaustive `switch` is the drift detector: adding a `ResourceLimit` arm without
     /// giving it a `ParserConfig` field is a compile error here, so an enum value can never
     /// silently lack a backing limit.
-    func limitFrom(_ config: ParserConfig) -> Int64 {
+    public func limitFrom(_ config: ParserConfig) -> Int64 {
         switch self {
         case .archiveSize: return config.maxArchiveBytes
         case .entryCount: return Int64(config.maxEntries)

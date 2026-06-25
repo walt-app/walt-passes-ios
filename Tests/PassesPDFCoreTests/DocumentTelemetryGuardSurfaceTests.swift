@@ -46,15 +46,30 @@ struct DocumentTelemetryGuardSurfaceTests {
     /// the lock, this test fails first and surfaces the issue inside the same file as
     /// the rule it protects.
     @Test func allowlistRejectsKnownStringSmugglingShapes() {
-        struct BadListOfString { let tags: [String]; let durationMillis: Int64 }
-        struct BadSetOfString { let tags: Set<String>; let durationMillis: Int64 }
+        struct BadListOfString {
+            let tags: [String]
+            let durationMillis: Int64
+        }
+        struct BadSetOfString {
+            let tags: Set<String>
+            let durationMillis: Int64
+        }
         struct BadMapEnumToString {
             let tags: [DocumentRejectedKind: String]
             let durationMillis: Int64
         }
-        struct BadTupleOfStringInt { let tag: (String, Int64); let durationMillis: Int64 }
-        struct BadByteData { let payload: Data; let durationMillis: Int64 }
-        struct BadStringField { let tag: String; let durationMillis: Int64 }
+        struct BadTupleOfStringInt {
+            let tag: (String, Int64)
+            let durationMillis: Int64
+        }
+        struct BadByteData {
+            let payload: Data
+            let durationMillis: Int64
+        }
+        struct BadStringField {
+            let tag: String
+            let durationMillis: Int64
+        }
 
         let cases: [Any] = [
             BadListOfString(tags: [], durationMillis: 0),

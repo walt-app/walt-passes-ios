@@ -27,14 +27,15 @@ struct RenderWatchdogTests {
 
         var thrown: Error?
         do {
-            _ = try await watchdog.guard_ {
-                // Cooperatively suspend until cancelled; the watchdog cancels
-                // the task group on timeout, so this returns via cancellation.
-                while !Task.isCancelled {
-                    try? await Task.sleep(nanoseconds: 5_000_000)
-                }
-                return ()
-            } as Void
+            _ =
+                try await watchdog.guard_ {
+                    // Cooperatively suspend until cancelled; the watchdog cancels
+                    // the task group on timeout, so this returns via cancellation.
+                    while !Task.isCancelled {
+                        try? await Task.sleep(nanoseconds: 5_000_000)
+                    }
+                    return ()
+                } as Void
         } catch {
             thrown = error
         }

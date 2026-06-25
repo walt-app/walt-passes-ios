@@ -149,10 +149,12 @@ public enum FieldLinkScanner {
         // Use NSString for code-unit-aligned indexing - `match.start` and
         // `match.endExclusive` are NSString offsets.
         let ns = fullText as NSString
-        let before: Character? = match.start > 0
+        let before: Character? =
+            match.start > 0
             ? Character(ns.substring(with: NSRange(location: match.start - 1, length: 1)))
             : nil
-        let after: Character? = match.endExclusive < ns.length
+        let after: Character? =
+            match.endExclusive < ns.length
             ? Character(ns.substring(with: NSRange(location: match.endExclusive, length: 1)))
             : nil
         if let b = before, phonePrefixHints.contains(b) { return true }
@@ -173,18 +175,14 @@ public enum FieldLinkScanner {
 /// UTF-16-equivalent offsets (since the underlying regex match operates on
 /// `String`'s Character indices, callers using SwiftUI's `AttributedString`
 /// can map these directly).
+///
+/// The memberwise initializer is internal (Swift's default for a `public` struct), so
+/// consumers can only obtain a `LinkSpan` from `FieldLinkScanner.scan`, which guarantees
+/// the target survived validation.
 public struct LinkSpan: Sendable, Equatable {
     public let start: Int
     public let endExclusive: Int
     public let intent: SecurityIntent
-
-    // Construction is internal so consumers can only obtain a `LinkSpan` from
-    // `FieldLinkScanner.scan`, which guarantees the target survived validation.
-    internal init(start: Int, endExclusive: Int, intent: SecurityIntent) {
-        self.start = start
-        self.endExclusive = endExclusive
-        self.intent = intent
-    }
 }
 
 // MARK: - Regex helpers

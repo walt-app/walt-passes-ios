@@ -1,0 +1,64 @@
+included:
+  - Sources
+  - Tests
+
+excluded:
+  - .build
+  - "**/.build"
+  - "**/DerivedData"
+
+disabled_rules:
+  - todo
+  - trailing_comma
+  - orphaned_doc_comment
+  - large_tuple
+  - multiple_closures_with_trailing_closure
+
+opt_in_rules:
+  - empty_count
+  - explicit_init
+  - first_where
+  - sorted_first_last
+  - toggle_bool
+
+analyzer_rules:
+  - unused_import
+
+line_length:
+  warning: 160
+  error: 200
+  ignores_comments: true
+  ignores_urls: true
+
+identifier_name:
+  min_length: 1
+  excluded:
+    - id
+
+type_name:
+  min_length: 3
+  max_length:
+    warning: 60
+    error: 80
+
+file_length:
+  warning: 600
+  error: 1000
+
+function_body_length:
+  warning: 80
+  error: 150
+
+type_body_length:
+  warning: 400
+  error: 600
+
+cyclomatic_complexity:
+  warning: 15
+  error: 25
+
+nesting:
+  type_level: 2
+  function_level: 3
+
+reporter: "github-actions-logging"

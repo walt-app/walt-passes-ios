@@ -67,7 +67,8 @@ public enum DataProtectionAssertion {
                 completeProtection: nil
             )
         }
-        let excluded = (try? url.resourceValues(forKeys: [.isExcludedFromBackupKey]))?
+        let excluded =
+            (try? url.resourceValues(forKeys: [.isExcludedFromBackupKey]))?
             .isExcludedFromBackup ?? false
 
         var complete: Bool?

@@ -46,7 +46,7 @@ private struct JsonLimitTokenizer {
         } else if b == BACKSLASH {
             escape = true
             bumpStringByte()
-        } else if b == DOUBLE_QUOTE {
+        } else if b == doubleQuote {
             inString = false
         } else {
             bumpStringByte()
@@ -55,7 +55,7 @@ private struct JsonLimitTokenizer {
 
     private mutating func consumeOutsideString(_ b: UInt8) {
         switch b {
-        case DOUBLE_QUOTE:
+        case doubleQuote:
             inString = true
             stringByteCount = 0
         case LBRACE, LBRACKET:
@@ -77,7 +77,7 @@ private struct JsonLimitTokenizer {
     }
 }
 
-private let DOUBLE_QUOTE: UInt8 = 0x22
+private let doubleQuote: UInt8 = 0x22
 private let BACKSLASH: UInt8 = 0x5C
 private let LBRACE: UInt8 = 0x7B
 private let RBRACE: UInt8 = 0x7D

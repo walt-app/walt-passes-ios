@@ -32,7 +32,7 @@ struct PngDimensionsTests {
     @Test func imagePixelCapTripsInPipeline() {
         // A 4096x4096 default cap; a 5000x5000 image exceeds it.
         let payload = [
-            ZipBuilder.File(PASS_JSON_FILE_NAME, PkpassFixtures.passJson()),
+            ZipBuilder.File(passJsonFileName, PkpassFixtures.passJson()),
             ZipBuilder.File("background.png", pngBytes(width: 5000, height: 5000)),
         ]
         let archive = PkpassFixtures.unsignedArchive(payload: payload)

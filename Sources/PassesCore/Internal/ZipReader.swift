@@ -115,9 +115,10 @@ internal enum ZipReader {
         let nameStart = offset + fixed
         guard nameStart + nameLen <= data.count else { throw ReadError.notAZip }
         // ZIP64 stuffs 0xFFFFFFFF sentinels into the size / offset fields; unsupported here.
-        if compressedSize == 0xFFFF_FFFF || uncompressedSize == 0xFFFF_FFFF
+        let hasZip64Sentinel =
+            compressedSize == 0xFFFF_FFFF || uncompressedSize == 0xFFFF_FFFF
             || localOffset == 0xFFFF_FFFF
-        {
+        if hasZip64Sentinel {
             throw ReadError.notAZip
         }
         guard let name = decodeEntryName(Array(data[nameStart..<nameStart + nameLen]), flags: flags)

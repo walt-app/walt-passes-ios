@@ -81,10 +81,8 @@ public enum ScannableCardInputValidator {
                 return .tooLong(actual: payload.count, max: max)
             }
         }
-        for char in payload {
-            if !ScannableFormatConstraints.isAllowedChar(format: format, char: char) {
-                return .wrongCharset(format: format, offendingChar: char)
-            }
+        for char in payload where !ScannableFormatConstraints.isAllowedChar(format: format, char: char) {
+            return .wrongCharset(format: format, offendingChar: char)
         }
         return ScannableFormatConstraints.validateStructural(format: format, payload: payload)
     }

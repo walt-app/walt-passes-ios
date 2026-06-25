@@ -49,56 +49,67 @@ struct PublicApiSurfaceTests {
             case .keyUnavailable: return "key-unavailable"
             case .keyUnwrapFailed: return "key-unwrap-failed"
             case .databaseLocked: return "db-locked"
-            case .integrityViolation(let recordId):
-                switch recordId {
-                case .pass(let id): return "integrity-pass:\(id.value)"
-                case .document(let id): return "integrity-doc:\(id.value)"
-                case .scannableCard(let id): return "integrity-card:\(id.value)"
-                }
+            case .integrityViolation(let recordId): return Self.integrityLabel(recordId)
             case .unsupported(let v): return "unsupported:\(v)"
             case .unknown(let kind): return "unknown:\(kind)"
             case .documentRejected(let kind): return "doc-rejected:\(kind)"
-            case .scannableCardRejected(let reason):
-                switch reason {
-                case .invalidLabel(let r): return "card-rejected:label:\(r)"
-                case .invalidPayload(let r): return "card-rejected:payload:\(r)"
-                case .unsupportedFormat(let f): return "card-rejected:fmt:\(f)"
-                case .encoderFailure(let r): return "card-rejected:enc:\(r)"
-                }
+            case .scannableCardRejected(let reason): return Self.cardRejectedLabel(reason)
             case .passRejected(let kind): return "pass-rejected:\(kind)"
             }
         }
-        #expect(labels == [
-            "key-unavailable",
-            "key-unwrap-failed",
-            "db-locked",
-            "integrity-pass:1",
-            "integrity-doc:2",
-            "integrity-card:3",
-            "unsupported:99",
-            "unknown:diskFull",
-            "doc-rejected:oversizedAtStorage",
-            "card-rejected:label:empty",
-            "pass-rejected:labelTooLong",
-        ])
+        #expect(
+            labels == [
+                "key-unavailable",
+                "key-unwrap-failed",
+                "db-locked",
+                "integrity-pass:1",
+                "integrity-doc:2",
+                "integrity-card:3",
+                "unsupported:99",
+                "unknown:diskFull",
+                "doc-rejected:oversizedAtStorage",
+                "card-rejected:label:empty",
+                "pass-rejected:labelTooLong",
+            ])
+    }
+
+    // Inner-arm coverage extracted from `storageErrorArmsAreReachableViaSwitch` so each
+    // switch stays exhaustive (no `default`) without inflating one function's complexity.
+    private static func integrityLabel(_ recordId: AnyRecordId) -> String {
+        switch recordId {
+        case .pass(let id): return "integrity-pass:\(id.value)"
+        case .document(let id): return "integrity-doc:\(id.value)"
+        case .scannableCard(let id): return "integrity-card:\(id.value)"
+        }
+    }
+
+    private static func cardRejectedLabel(_ reason: ScannableCardRejectionReason) -> String {
+        switch reason {
+        case .invalidLabel(let r): return "card-rejected:label:\(r)"
+        case .invalidPayload(let r): return "card-rejected:payload:\(r)"
+        case .unsupportedFormat(let f): return "card-rejected:fmt:\(f)"
+        case .encoderFailure(let r): return "card-rejected:enc:\(r)"
+        }
     }
 
     @Test func unknownStorageFailureKindCoversTheDocumentedFiveBuckets() {
-        #expect(UnknownStorageFailureKind.allCases == [
-            .diskFull,
-            .permissionDenied,
-            .databaseCorrupt,
-            .serializationFailure,
-            .other,
-        ])
+        #expect(
+            UnknownStorageFailureKind.allCases == [
+                .diskFull,
+                .permissionDenied,
+                .databaseCorrupt,
+                .serializationFailure,
+                .other,
+            ])
     }
 
     @Test func keyBackingEnumeratesTheThreeDocumentedBackings() {
-        #expect(KeyBacking.allCases == [
-            .strongBox,
-            .tee,
-            .software,
-        ])
+        #expect(
+            KeyBacking.allCases == [
+                .strongBox,
+                .tee,
+                .software,
+            ])
     }
 
     @Test func recordIdSealedArmsAreExhaustive() {
@@ -205,20 +216,22 @@ struct PublicApiSurfaceTests {
             case .encoderFailure(let r): return "enc:\(r)"
             }
         }
-        #expect(labels == [
-            "label:empty",
-            "payload:empty",
-            "fmt:qr",
-            "enc:payloadTooDense",
-        ])
+        #expect(
+            labels == [
+                "label:empty",
+                "payload:empty",
+                "fmt:qr",
+                "enc:payloadTooDense",
+            ])
     }
 
     @Test func documentStorageRejectedKindCoversTheThreeStorageSideArms() {
-        #expect(DocumentStorageRejectedKind.allCases == [
-            .oversizedAtStorage,
-            .tooManyPagesAtStorage,
-            .labelTooLongAtStorage,
-        ])
+        #expect(
+            DocumentStorageRejectedKind.allCases == [
+                .oversizedAtStorage,
+                .tooManyPagesAtStorage,
+                .labelTooLongAtStorage,
+            ])
     }
 
     @Test func documentBoundsMirrorAdr0005D7CapsAndCarryALabelLengthCap() {

@@ -5,10 +5,10 @@ import Foundation
 /// self-reference, and the signature signs the manifest") rides on three call sites using the
 /// same string; the constant lives here so agreement is structural rather than three private
 /// duplicates that could drift.
-internal let SIGNATURE_FILE_NAME = "signature"
+internal let signatureFileName = "signature"
 
-/// See `SIGNATURE_FILE_NAME` - same rationale, applied to `manifest.json`.
-internal let MANIFEST_FILE_NAME = "manifest.json"
+/// See `signatureFileName` - same rationale, applied to `manifest.json`.
+internal let manifestFileName = "manifest.json"
 
-/// See `SIGNATURE_FILE_NAME` - applied to `pass.json`.
-internal let PASS_JSON_FILE_NAME = "pass.json"
+/// See `signatureFileName` - applied to `pass.json`.
+internal let passJsonFileName = "pass.json"

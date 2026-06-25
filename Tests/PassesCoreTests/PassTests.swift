@@ -73,14 +73,14 @@ struct PassTests {
 
     @Test func resolveLocalizedStringsLanguageOnlyFallback() {
         let p = sample(locales: [
-            PassLocale("en"): LocalizedStrings(entries: ["k": "en"]),
+            PassLocale("en"): LocalizedStrings(entries: ["k": "en"])
         ])
         #expect(p.resolveLocalizedStrings(preferred: PassLocale("en-US")).entries["k"] == "en")
     }
 
     @Test func resolveLocalizedStringsLanguageOnlyFallbackUnderscoreSplit() {
         let p = sample(locales: [
-            PassLocale("sv"): LocalizedStrings(entries: ["k": "sv"]),
+            PassLocale("sv"): LocalizedStrings(entries: ["k": "sv"])
         ])
         #expect(p.resolveLocalizedStrings(preferred: PassLocale("sv_FI")).entries["k"] == "sv")
     }

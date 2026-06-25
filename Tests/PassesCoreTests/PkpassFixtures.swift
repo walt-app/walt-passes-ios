@@ -164,7 +164,7 @@ enum PkpassFixtures {
     static func unsignedArchive(payload: [ZipBuilder.File]) -> [UInt8] {
         let manifestBytes = manifest(for: payload)
         var files = payload
-        files.append(ZipBuilder.File(MANIFEST_FILE_NAME, manifestBytes))
+        files.append(ZipBuilder.File(manifestFileName, manifestBytes))
         return ZipBuilder.build(files)
     }
 
@@ -181,8 +181,8 @@ enum PkpassFixtures {
             intermediates: intermediates
         )
         var files = payload
-        files.append(ZipBuilder.File(MANIFEST_FILE_NAME, manifestBytes))
-        files.append(ZipBuilder.File(SIGNATURE_FILE_NAME, signature))
+        files.append(ZipBuilder.File(manifestFileName, manifestBytes))
+        files.append(ZipBuilder.File(signatureFileName, signature))
         return (ZipBuilder.build(files), manifestBytes)
     }
 }

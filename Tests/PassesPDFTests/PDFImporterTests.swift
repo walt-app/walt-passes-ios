@@ -1,6 +1,6 @@
 import Foundation
-import Testing
 import PassesPDFCore
+import Testing
 
 @testable import PassesPDF
 
@@ -361,7 +361,8 @@ struct PDFImporterTests {
             }
         )
 
-        if case .imported = result {} else {
+        if case .imported = result {
+        } else {
             Issue.record("Expected .imported, got \(result)")
         }
         #expect(persists.snapshot.first?.byteSize == TestFixtures.validPDFBytes.count)

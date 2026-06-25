@@ -1,5 +1,5 @@
-import SwiftUI
 import PassesUICore
+import SwiftUI
 
 /// The non-suppressible "this is a user-supplied document" caption that
 /// anchors the trust contract of the PDF surface (ADR 0005 D5 / D8): a PDF

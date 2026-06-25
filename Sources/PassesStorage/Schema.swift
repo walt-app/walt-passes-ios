@@ -47,8 +47,7 @@ public enum Schema {
             created_at_epoch_ms INTEGER NOT NULL
         )
         """,
-        "CREATE INDEX IF NOT EXISTS idx_scannable_cards_created_at " +
-            "ON scannable_cards(created_at_epoch_ms)",
+        "CREATE INDEX IF NOT EXISTS idx_scannable_cards_created_at " + "ON scannable_cards(created_at_epoch_ms)",
     ]
 
     /// Statements that introduce the v4 scannable-cards table — the v3 shape minus the
@@ -65,8 +64,7 @@ public enum Schema {
             created_at_epoch_ms INTEGER NOT NULL
         )
         """,
-        "CREATE INDEX IF NOT EXISTS idx_scannable_cards_created_at " +
-            "ON scannable_cards(created_at_epoch_ms)",
+        "CREATE INDEX IF NOT EXISTS idx_scannable_cards_created_at " + "ON scannable_cards(created_at_epoch_ms)",
     ]
 
     /// v3 -> v4 migration. Drops the `color_argb` column from the scannable_cards table.
@@ -94,8 +92,7 @@ public enum Schema {
             SELECT id, payload, format, label, created_at_epoch_ms FROM scannable_cards_v3
         """,
         "DROP TABLE scannable_cards_v3",
-        "CREATE INDEX IF NOT EXISTS idx_scannable_cards_created_at " +
-            "ON scannable_cards(created_at_epoch_ms)",
+        "CREATE INDEX IF NOT EXISTS idx_scannable_cards_created_at " + "ON scannable_cards(created_at_epoch_ms)",
     ]
 
     /// Statements that introduce the v2 document tables. Referenced from both `ddl` (for
@@ -125,58 +122,59 @@ public enum Schema {
     /// The DDL block that brings a fresh database to `version`. Statements are listed in
     /// dependency order (parent tables before child tables); they are executed in a
     /// single transaction by the implementation.
-    public static let ddl: [String] = ([
-        """
-        CREATE TABLE IF NOT EXISTS schema_meta (
-            key   TEXT PRIMARY KEY NOT NULL,
-            value BLOB NOT NULL
-        )
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS passes (
-            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-            type                  TEXT    NOT NULL,
-            serial_number         TEXT    NOT NULL,
-            organization_name     TEXT    NOT NULL,
-            description           TEXT    NOT NULL,
-            expiration_epoch_ms   INTEGER,
-            voided                INTEGER NOT NULL DEFAULT 0,
-            signature_status_kind TEXT    NOT NULL,
-            pass_json             BLOB    NOT NULL,
-            created_at_epoch_ms   INTEGER NOT NULL,
-            updated_at_epoch_ms   INTEGER NOT NULL,
-            user_label            TEXT
-        )
-        """,
-        "CREATE INDEX IF NOT EXISTS idx_passes_type ON passes(type)",
-        "CREATE INDEX IF NOT EXISTS idx_passes_expiration ON passes(expiration_epoch_ms)",
-        """
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_passes_identity
-            ON passes(type, serial_number, organization_name)
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS pass_images (
-            pass_id INTEGER NOT NULL REFERENCES passes(id) ON DELETE CASCADE,
-            role    TEXT    NOT NULL,
-            bytes   BLOB    NOT NULL,
-            PRIMARY KEY (pass_id, role)
-        )
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS pass_locales (
-            pass_id      INTEGER NOT NULL REFERENCES passes(id) ON DELETE CASCADE,
-            locale_tag   TEXT    NOT NULL,
-            strings_json BLOB    NOT NULL,
-            PRIMARY KEY (pass_id, locale_tag)
-        )
-        """,
-    ] + v2DocumentTables + v4ScannableCardTables)
+    public static let ddl: [String] =
+        ([
+            """
+            CREATE TABLE IF NOT EXISTS schema_meta (
+                key   TEXT PRIMARY KEY NOT NULL,
+                value BLOB NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS passes (
+                id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+                type                  TEXT    NOT NULL,
+                serial_number         TEXT    NOT NULL,
+                organization_name     TEXT    NOT NULL,
+                description           TEXT    NOT NULL,
+                expiration_epoch_ms   INTEGER,
+                voided                INTEGER NOT NULL DEFAULT 0,
+                signature_status_kind TEXT    NOT NULL,
+                pass_json             BLOB    NOT NULL,
+                created_at_epoch_ms   INTEGER NOT NULL,
+                updated_at_epoch_ms   INTEGER NOT NULL,
+                user_label            TEXT
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_passes_type ON passes(type)",
+            "CREATE INDEX IF NOT EXISTS idx_passes_expiration ON passes(expiration_epoch_ms)",
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_passes_identity
+                ON passes(type, serial_number, organization_name)
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS pass_images (
+                pass_id INTEGER NOT NULL REFERENCES passes(id) ON DELETE CASCADE,
+                role    TEXT    NOT NULL,
+                bytes   BLOB    NOT NULL,
+                PRIMARY KEY (pass_id, role)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS pass_locales (
+                pass_id      INTEGER NOT NULL REFERENCES passes(id) ON DELETE CASCADE,
+                locale_tag   TEXT    NOT NULL,
+                strings_json BLOB    NOT NULL,
+                PRIMARY KEY (pass_id, locale_tag)
+            )
+            """,
+        ] + v2DocumentTables + v4ScannableCardTables)
 
     /// v4 -> v5 migration. Adds the nullable `user_label` column to `passes` for the
     /// user-supplied display-label override. Additive (existing rows get NULL); mirrored in
     /// `ddl` so fresh installs and upgrades reach the same shape.
     private static let v4ToV5AddUserLabel: [String] = [
-        "ALTER TABLE passes ADD COLUMN user_label TEXT",
+        "ALTER TABLE passes ADD COLUMN user_label TEXT"
     ]
 
     /// Schema migrations, keyed by `fromVersion`. Forward-only per ADR 0002. Each
