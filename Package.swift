@@ -96,7 +96,12 @@ let package = Package(
                 // already links Crypto transitively) so swift-crypto need not be a direct dep.
                 .product(name: "X509", package: "swift-certificates"),
             ],
-            path: "Tests/PassesCoreTests"
+            path: "Tests/PassesCoreTests",
+            resources: [
+                // Real Apple-signed pkpass artifacts (manifest + detached CMS), copied
+                // verbatim from the Android side. Regression guard for walt-passes-ios#31.
+                .copy("Fixtures"),
+            ]
         ),
         .testTarget(
             name: "PassesPDFCoreTests",

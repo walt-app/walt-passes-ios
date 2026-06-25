@@ -101,6 +101,23 @@ struct SignatureVerifierTests {
         #expect(result == .failed(.manifestSignatureMismatch))
     }
 
+    @Test func realAppleSignedPkpassIsAppleVerified() throws {
+        // Regression guard for walt-passes-ios#31. The fixture's CMS SignerInfo uses the bare
+        // `rsaEncryption` OID for `signatureAlgorithm` (digest conveyed separately in
+        // `digestAlgorithm`), a wire shape Apple PassKit ships and swift-certificates 1.19.x does
+        // not recognize. Runs the PRODUCTION verifier path (bundled Apple anchors), not the test
+        // seam: leaf -> WWDR G4 (embedded) -> Apple Root CA (bundled). Red before the
+        // `normalizeCMSSignatureAlgorithm` pre-pass (returns `.manifestSignatureMismatch`), green
+        // after. See `Fixtures/apple-signed/README.md` for provenance and shelf life.
+        let fixture = try AppleSignedFixture.load()
+        let result = verifySignature(
+            signatureBytes: fixture.signature,
+            manifestBytes: fixture.manifest,
+            config: ParserConfig()
+        )
+        #expect(result == .ok(.appleVerified))
+    }
+
     @Test func garbageSignatureBlobIsCryptoFailure() {
         let result = SignatureTestSupport.verify(
             signatureBytes: [0x00, 0x01, 0x02, 0x03],
@@ -113,4 +130,32 @@ struct SignatureVerifierTests {
         if case .failed = result { return }
         Issue.record("expected a failed result, got \(result)")
     }
+}
+
+/// Real Apple-signed pkpass manifest + detached CMS, loaded from bundled test resources.
+private struct AppleSignedFixture {
+    let manifest: [UInt8]
+    let signature: [UInt8]
+
+    static func load() throws -> AppleSignedFixture {
+        AppleSignedFixture(
+            manifest: try bytes(resource: "manifest", ext: "json"),
+            signature: try bytes(resource: "signature", ext: nil)
+        )
+    }
+
+    private static func bytes(resource: String, ext: String?) throws -> [UInt8] {
+        guard
+            let url = Bundle.module.url(
+                forResource: resource,
+                withExtension: ext,
+                subdirectory: "Fixtures/apple-signed"
+            )
+        else {
+            throw FixtureError.missing("\(resource).\(ext ?? "")")
+        }
+        return [UInt8](try Data(contentsOf: url))
+    }
+
+    enum FixtureError: Error { case missing(String) }
 }
