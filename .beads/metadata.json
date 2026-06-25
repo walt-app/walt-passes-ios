@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "ipass",
+  "project_id": "53b47335-19fa-4b60-8051-bafdac9b68c7"
+}
