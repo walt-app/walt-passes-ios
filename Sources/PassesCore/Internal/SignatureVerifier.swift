@@ -96,9 +96,13 @@ private func classify(
     anchors: [Certificate],
     intermediates: [Certificate]
 ) async -> SignatureVerifyResult {
+    // Apple PassKit emits `SignerInfo.signatureAlgorithm` as bare `rsaEncryption`; swift-
+    // certificates only knows the combined `shaNNNWithRSAEncryption` OIDs. Normalize first so a
+    // valid Apple pass is not misread as tampered (walt-passes-ios#31). No-op for any other shape.
+    let normalizedSignatureBytes = normalizeCMSSignatureAlgorithm(signatureBytes)
     let result = await CMS.isValidSignature(
         dataBytes: manifestBytes,
-        signatureBytes: signatureBytes,
+        signatureBytes: normalizedSignatureBytes,
         additionalIntermediateCertificates: intermediates,
         trustRoots: CertificateStore(anchors),
         diagnosticCallback: nil
