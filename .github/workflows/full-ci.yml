@@ -1,0 +1,56 @@
+name: Full CI (macOS)
+
+# FULL tier (10x macOS): safety net, never a pre-merge gate — the kernel can't
+# compile on the cheap Linux runners. Runs on weekly cron, manual dispatch, push
+# to main, and the `full-ci` label. The label RUNS this for a signal but does NOT
+# block merge (auto-merge fires on lint first); to actually gate, keep the PR a
+# draft until this is green, or make it a required check via branch protection.
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC — main safety-net sweep
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "Sources/**"
+      - "Tests/**"
+      - "**/Package.swift"
+      - "Package.resolved"
+  pull_request:
+    types: [labeled]
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build & Test (macOS)
+    # Run for cron/dispatch/push always; for a PR only when labeled `full-ci`.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.label.name == 'full-ci'
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Resolve packages
+        run: swift package resolve
+
+      - name: Build
+        run: |
+          swift build \
+            --package-path .
+
+      - name: Test
+        run: |
+          swift test \
+            --package-path .

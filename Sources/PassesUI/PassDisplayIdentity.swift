@@ -43,7 +43,8 @@ public func resolvePassDisplayIdentity(
     let displayOrganizationName = localizedStrings.lookupOrSelf(organizationName)
     let override = userLabel?
         .trimmingCharacters(in: .whitespacesAndNewlines)
-        .nonEmptyUnless(caseInsensitivelyEqualTo: displayOrganizationName.trimmingCharacters(in: .whitespacesAndNewlines))
+        .nonEmptyUnless(
+            caseInsensitivelyEqualTo: displayOrganizationName.trimmingCharacters(in: .whitespacesAndNewlines))
 
     if let override {
         return PassDisplayIdentity(primary: isolated(override), eyebrow: isolated(displayOrganizationName))
@@ -67,10 +68,10 @@ public func resolvePassDisplayIdentity(
     )
 }
 
-private extension String {
+extension String {
     /// Returns `self` unless it is empty or case-insensitively equal to `other`, in which
     /// case it returns `nil` (the override is suppressed).
-    func nonEmptyUnless(caseInsensitivelyEqualTo other: String) -> String? {
+    fileprivate func nonEmptyUnless(caseInsensitivelyEqualTo other: String) -> String? {
         guard !isEmpty, caseInsensitiveCompare(other) != .orderedSame else { return nil }
         return self
     }

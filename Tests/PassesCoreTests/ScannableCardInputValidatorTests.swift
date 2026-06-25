@@ -50,7 +50,7 @@ struct ScannableCardInputValidatorTests {
     @Test func code128TooLong() {
         let payload = String(repeating: "A", count: 81)
         let rejection = expectPayloadRejection(payload, format: .code128)
-        guard case let .tooLong(actual, max) = rejection else {
+        guard case .tooLong(let actual, let max) = rejection else {
             Issue.record("expected .tooLong, got \(rejection)")
             return
         }
@@ -74,7 +74,7 @@ struct ScannableCardInputValidatorTests {
 
     @Test func code128RejectsNonAsciiBecauseOfCharset() {
         let rejection = expectPayloadRejection("ABCé", format: .code128)
-        guard case let .wrongCharset(format, char) = rejection else {
+        guard case .wrongCharset(let format, let char) = rejection else {
             Issue.record("expected .wrongCharset, got \(rejection)")
             return
         }
@@ -158,7 +158,7 @@ struct ScannableCardInputValidatorTests {
 
     @Test func ean13WrongLengthRejected() {
         let rejection = expectPayloadRejection("123456789012", format: .ean13)
-        guard case let .wrongLength(actual, required, format) = rejection else {
+        guard case .wrongLength(let actual, let required, let format) = rejection else {
             Issue.record("expected .wrongLength, got \(rejection)")
             return
         }
@@ -169,7 +169,7 @@ struct ScannableCardInputValidatorTests {
 
     @Test func ean13InvalidCheckDigitRejected() {
         let rejection = expectPayloadRejection("1234567890121", format: .ean13)
-        guard case let .invalidCheckDigit(format) = rejection else {
+        guard case .invalidCheckDigit(let format) = rejection else {
             Issue.record("expected .invalidCheckDigit, got \(rejection)")
             return
         }
@@ -180,7 +180,7 @@ struct ScannableCardInputValidatorTests {
         // Regression: 1234567890120 validates only under the old, flipped weights
         // (rightmost data digit weighted 1 instead of 3). It must now be rejected.
         let rejection = expectPayloadRejection("1234567890120", format: .ean13)
-        guard case let .invalidCheckDigit(format) = rejection else {
+        guard case .invalidCheckDigit(let format) = rejection else {
             Issue.record("expected .invalidCheckDigit, got \(rejection)")
             return
         }
@@ -189,7 +189,7 @@ struct ScannableCardInputValidatorTests {
 
     @Test func ean13LongLengthRejectedAsWrongLength() {
         let rejection = expectPayloadRejection("12345678901234", format: .ean13)
-        guard case let .wrongLength(actual, required, format) = rejection else {
+        guard case .wrongLength(let actual, let required, let format) = rejection else {
             Issue.record("expected .wrongLength, got \(rejection)")
             return
         }
@@ -202,7 +202,7 @@ struct ScannableCardInputValidatorTests {
 
     @Test func upcAShortLengthRejected() {
         let rejection = expectPayloadRejection("12345678901", format: .upcA)
-        guard case let .wrongLength(actual, required, _) = rejection else {
+        guard case .wrongLength(let actual, let required, _) = rejection else {
             Issue.record("expected .wrongLength, got \(rejection)")
             return
         }
@@ -215,7 +215,7 @@ struct ScannableCardInputValidatorTests {
         // so the consumer has a single arm to render for "wrong digit count" regardless of
         // whether the user typed too few or too many.
         let rejection = expectPayloadRejection("1234567890128", format: .upcA)
-        guard case let .wrongLength(actual, required, format) = rejection else {
+        guard case .wrongLength(let actual, let required, let format) = rejection else {
             Issue.record("expected .wrongLength, got \(rejection)")
             return
         }
@@ -234,7 +234,7 @@ struct ScannableCardInputValidatorTests {
 
     @Test func labelEmptyRejected() {
         let result = validateInput(payload: "ABC", format: .code128, label: "")
-        guard case let .invalidLabel(reason) = result else {
+        guard case .invalidLabel(let reason) = result else {
             Issue.record("expected .invalidLabel, got \(result)")
             return
         }
@@ -243,7 +243,7 @@ struct ScannableCardInputValidatorTests {
 
     @Test func labelBidiCharRejected() {
         let result = validateInput(payload: "ABC", format: .code128, label: "Card\u{202E}")
-        guard case let .invalidLabel(reason) = result else {
+        guard case .invalidLabel(let reason) = result else {
             Issue.record("expected .invalidLabel, got \(result)")
             return
         }
@@ -252,7 +252,7 @@ struct ScannableCardInputValidatorTests {
 
     @Test func labelControlCharRejected() {
         let result = validateInput(payload: "ABC", format: .code128, label: "Card\u{0007}")
-        guard case let .invalidLabel(reason) = result else {
+        guard case .invalidLabel(let reason) = result else {
             Issue.record("expected .invalidLabel, got \(result)")
             return
         }
@@ -262,11 +262,11 @@ struct ScannableCardInputValidatorTests {
     @Test func labelTooLongRejected() {
         let long = String(repeating: "L", count: 65)
         let result = validateInput(payload: "ABC", format: .code128, label: long)
-        guard case let .invalidLabel(reason) = result else {
+        guard case .invalidLabel(let reason) = result else {
             Issue.record("expected .invalidLabel, got \(result)")
             return
         }
-        guard case let .tooLong(actual, max) = reason else {
+        guard case .tooLong(let actual, let max) = reason else {
             Issue.record("expected .tooLong, got \(reason)")
             return
         }
@@ -282,7 +282,7 @@ struct ScannableCardInputValidatorTests {
 
     @Test func whitespaceOnlyLabelIsEmpty() {
         let result = validateInput(payload: "ABC", format: .code128, label: "   ")
-        guard case let .invalidLabel(reason) = result else {
+        guard case .invalidLabel(let reason) = result else {
             Issue.record("expected .invalidLabel, got \(result)")
             return
         }
@@ -293,7 +293,7 @@ struct ScannableCardInputValidatorTests {
 
     @Test func successCardCarriesTrimmedPayloadNotRaw() {
         let result = validate(payload: "  hello  ", format: .code128)
-        guard case let .success(card) = result else {
+        guard case .success(let card) = result else {
             Issue.record("expected .success, got \(result)")
             return
         }
@@ -303,7 +303,7 @@ struct ScannableCardInputValidatorTests {
 
     @Test func successCardCarriesTrimmedLabelNotRaw() {
         let result = validateInput(payload: "ABC", format: .code128, label: "  My Card  ")
-        guard case let .success(card) = result else {
+        guard case .success(let card) = result else {
             Issue.record("expected .success, got \(result)")
             return
         }
@@ -312,7 +312,7 @@ struct ScannableCardInputValidatorTests {
 
     @Test func successCardCarriesCallerIdAndTimestamp() {
         let result = validate(payload: "ABC", format: .code128)
-        guard case let .success(card) = result else {
+        guard case .success(let card) = result else {
             Issue.record("expected .success, got \(result)")
             return
         }
@@ -340,7 +340,7 @@ struct ScannableCardInputValidatorTests {
 
     private func expectPayloadRejection(_ payload: String, format: ScannableFormat) -> PayloadRejection {
         let result = validate(payload: payload, format: format)
-        guard case let .invalidPayload(reason) = result else {
+        guard case .invalidPayload(let reason) = result else {
             Issue.record("expected .invalidPayload, got \(result)")
             return .empty
         }
@@ -348,7 +348,7 @@ struct ScannableCardInputValidatorTests {
     }
 
     private func assertSuccessWithPayload(_ result: ScannableCardCreateResult, expected: String) {
-        guard case let .success(card) = result else {
+        guard case .success(let card) = result else {
             Issue.record("expected .success, got \(result)")
             return
         }

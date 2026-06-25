@@ -25,30 +25,33 @@ enum GrdbDocumentStore {
             }
     }
 
+    /// Fields for a single document insert. Grouped so `insert` stays within a sane
+    /// parameter count; `byteCount` is derived inside `insert`, never caller-asserted.
+    struct Insert {
+        let label: String
+        let pdfBytes: Data
+        let pageCount: Int
+        let thumbnailBytes: Data
+        let nowEpochMs: Int64
+    }
+
     /// Inserts the document + thumbnail in one transaction and returns the new id. The
     /// persisted `byte_count` is derived from `pdfBytes.count` (not caller-asserted), so a
     /// stale size cannot bypass the cap.
-    static func insert(
-        label: String,
-        pdfBytes: Data,
-        pageCount: Int,
-        thumbnailBytes: Data,
-        nowEpochMs: Int64,
-        _ db: Database
-    ) throws -> DocumentRecordId {
-        let byteCount = Int64(pdfBytes.count)
+    static func insert(_ doc: Insert, _ db: Database) throws -> DocumentRecordId {
+        let byteCount = Int64(doc.pdfBytes.count)
         try db.execute(
             sql: """
                 INSERT INTO \(Schema.Tables.documents)
                     (display_label, pdf_bytes, byte_count, page_count, imported_at_epoch_ms)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-            arguments: [label, pdfBytes, byteCount, pageCount, nowEpochMs]
+            arguments: [doc.label, doc.pdfBytes, byteCount, doc.pageCount, doc.nowEpochMs]
         )
         let rowId = db.lastInsertedRowID
         try db.execute(
             sql: "INSERT INTO \(Schema.Tables.documentThumbnails) (document_id, bytes) VALUES (?, ?)",
-            arguments: [rowId, thumbnailBytes]
+            arguments: [rowId, doc.thumbnailBytes]
         )
         return DocumentRecordId(rowId)
     }

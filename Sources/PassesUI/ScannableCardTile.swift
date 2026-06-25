@@ -1,6 +1,6 @@
-import SwiftUI
 import PassesCore
 import PassesUICore
+import SwiftUI
 
 /// Home-lane tile for a `ScannableCard`. Renders four redundant artifact-class
 /// distinguishers (dashed outline, leading accent band, smaller corner radius,

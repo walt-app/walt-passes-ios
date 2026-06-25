@@ -1,7 +1,5 @@
 import Foundation
 import SwiftASN1
-import X509
-
 @_spi(CMS) import X509
 
 /// Outcome of running `verifySignature` over a detached PKCS#7 / CMS signature blob and the
@@ -130,14 +128,16 @@ private func classify(
 /// rather than crashing.
 private func classifyInvalidBlock(_ reason: String) -> TamperReason {
     let lower = reason.lowercased()
-    if lower.contains("locate signing certificate") || lower.contains("too many signatures")
+    let signerMissing =
+        lower.contains("locate signing certificate") || lower.contains("too many signatures")
         || lower.contains("no attached content")
-    {
+    if signerMissing {
         return .signerCertificateMissing
     }
-    if lower.contains("invalid signature") || lower.contains("message digest mismatch")
+    let signatureMismatch =
+        lower.contains("invalid signature") || lower.contains("message digest mismatch")
         || lower.contains("digest")
-    {
+    if signatureMismatch {
         return .manifestSignatureMismatch
     }
     return .signatureCryptoFailure

@@ -132,7 +132,7 @@ final class RecordingBinder: PDFRendererBinder, @unchecked Sendable {
 }
 
 struct StubThumbnailEncoder: ThumbnailEncoder {
-    var bytes: Data = Data([0x89, 0x50, 0x4E, 0x47]) // PNG magic
+    var bytes: Data = Data([0x89, 0x50, 0x4E, 0x47])  // PNG magic
 
     func encode(render: RenderResult) throws -> Data { bytes }
 }

@@ -1,5 +1,5 @@
-import Testing
 import PassesCore
+import Testing
 
 @testable import PassesUI
 

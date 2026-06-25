@@ -88,9 +88,9 @@ private func materialize(_ source: PassSource) -> [UInt8]? {
 /// Returns `notAZipArchive` if the leading 4 bytes are neither a local-file-header nor an
 /// end-of-central-directory signature.
 private func magicByteFailure(_ bytes: [UInt8]) -> MalformedReason? {
-    guard bytes.count >= MAGIC_PREFIX_LENGTH else { return .notAZipArchive }
-    let head = Array(bytes[0..<MAGIC_PREFIX_LENGTH])
-    let matches = head == LOCAL_FILE_HEADER_MAGIC || head == END_OF_CENTRAL_DIR_MAGIC
+    guard bytes.count >= magicPrefixLength else { return .notAZipArchive }
+    let head = Array(bytes[0..<magicPrefixLength])
+    let matches = head == localFileHeaderMagic || head == endOfCentralDirMagic
     return matches ? nil : .notAZipArchive
 }
 
@@ -156,14 +156,14 @@ private func pathTraversalReason(_ name: String) -> MalformedReason? {
 private func hasAllowedName(_ name: String) -> Bool {
     // The PKCS#7 signature file ("signature") is the only PKPASS member with no extension. Allow
     // it only at the archive root; a nested `nested/signature` is a disallowed-extension entry.
-    if name == SIGNATURE_FILE_NAME { return true }
+    if name == signatureFileName { return true }
     let baseName = name.split(separator: "/", omittingEmptySubsequences: false).last.map(String.init) ?? name
     guard let lastDot = baseName.lastIndex(of: ".") else { return false }
     let ext = baseName[baseName.index(after: lastDot)...].lowercased()
-    return ALLOWED_EXTENSIONS.contains(ext)
+    return allowedExtensions.contains(ext)
 }
 
-private let MAGIC_PREFIX_LENGTH = 4
-private let LOCAL_FILE_HEADER_MAGIC: [UInt8] = [0x50, 0x4B, 0x03, 0x04]
-private let END_OF_CENTRAL_DIR_MAGIC: [UInt8] = [0x50, 0x4B, 0x05, 0x06]
-private let ALLOWED_EXTENSIONS: Set<String> = ["json", "png", "strings"]
+private let magicPrefixLength = 4
+private let localFileHeaderMagic: [UInt8] = [0x50, 0x4B, 0x03, 0x04]
+private let endOfCentralDirMagic: [UInt8] = [0x50, 0x4B, 0x05, 0x06]
+private let allowedExtensions: Set<String> = ["json", "png", "strings"]

@@ -1,6 +1,6 @@
-import SwiftUI
 import PassesCore
 import PassesUICore
+import SwiftUI
 
 /// Full-screen surface for scanning a `ScannableCard`. Wraps `ScannableCardView`
 /// with minimal chrome: user-controlled label up top (FSI/PDI isolated), barcode

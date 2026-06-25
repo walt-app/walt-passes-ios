@@ -28,12 +28,16 @@ public struct ExpiredOverlay: View {
         ZStack {
             Color.black.opacity(Double(scrimAlpha) / 255.0)
             Text(stateLabel)
-                .foregroundColor((style?.pillForeground ?? UnverifiedArtifactStyle.placeholder.captionForeground).swiftUIColor)
+                .foregroundColor(
+                    (style?.pillForeground ?? UnverifiedArtifactStyle.placeholder.captionForeground).swiftUIColor
+                )
                 .padding(.horizontal, 24)
                 .padding(.vertical, 8)
                 .background(
                     RoundedRectangle(cornerRadius: 100)
-                        .fill((style?.pillBackground ?? UnverifiedArtifactStyle.placeholder.captionBackground).swiftUIColor)
+                        .fill(
+                            (style?.pillBackground ?? UnverifiedArtifactStyle.placeholder.captionBackground)
+                                .swiftUIColor)
                 )
         }
     }
@@ -47,8 +51,8 @@ public struct ExpiredOverlay: View {
     }
 }
 
-private extension Comparable {
-    func clamped(to range: ClosedRange<Self>) -> Self {
+extension Comparable {
+    fileprivate func clamped(to range: ClosedRange<Self>) -> Self {
         min(max(self, range.lowerBound), range.upperBound)
     }
 }

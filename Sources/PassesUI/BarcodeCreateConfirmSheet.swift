@@ -1,6 +1,6 @@
-import SwiftUI
 import PassesCore
 import PassesUICore
+import SwiftUI
 
 /// Create-time URI-scheme confirmation gate for a QR `ScannableCard`. Inverts
 /// the button prominence relative to `B3UrlConfirmSheet`: Cancel is the focused
@@ -176,10 +176,10 @@ private struct BarcodeCreateBody: View {
     }
 }
 
-public extension QrPayloadKind {
+extension QrPayloadKind {
     /// Whether `BarcodeCreateConfirmSheet` should be invoked. Returns false
     /// only for `plainText`.
-    var requiresCreateConfirmation: Bool {
+    public var requiresCreateConfirmation: Bool {
         if case .plainText = self { return false }
         return true
     }

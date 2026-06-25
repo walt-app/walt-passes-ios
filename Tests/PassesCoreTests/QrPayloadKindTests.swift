@@ -44,7 +44,7 @@ struct QrPayloadKindTests {
         // Drift detector: if a future change adds a password field to the wifi arm, the
         // associated-value count changes and this constructor call breaks compilation.
         let kind: QrPayloadKind = .wifi(ssid: "home")
-        if case let .wifi(ssid) = kind {
+        if case .wifi(let ssid) = kind {
             #expect(ssid == "home")
         } else {
             Issue.record("expected .wifi arm")

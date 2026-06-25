@@ -1,6 +1,6 @@
-import SwiftUI
 import PassesPDFCore
 import PassesUICore
+import SwiftUI
 
 /// A single document entry in the Documents lane. Visually distinct from
 /// `PassFront` by its smaller corner radius and its persistent "Document"

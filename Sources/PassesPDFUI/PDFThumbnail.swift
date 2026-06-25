@@ -1,7 +1,7 @@
 import Foundation
-import SwiftUI
 import PassesPDF
 import PassesPDFCore
+import SwiftUI
 
 /// Outcome of a thumbnail render. Drives consumer placeholder / image /
 /// error chrome from a single closed set. The shape is narrow by design:
@@ -65,6 +65,39 @@ public final class PDFThumbnailCache: @unchecked Sendable {
     }
 }
 
+/// Which page to render and at what pixel size. Groups the geometry that always
+/// travels together through the render pipeline.
+public struct ThumbnailRenderTarget: Sendable, Equatable {
+    public let page: Int
+    public let widthPx: Int
+    public let heightPx: Int
+
+    public init(page: Int, widthPx: Int, heightPx: Int) {
+        self.page = page
+        self.widthPx = widthPx
+        self.heightPx = heightPx
+    }
+}
+
+/// The collaborators a thumbnail render runs against: the binder that does the
+/// work, the telemetry guard it reports failures to, and the optional cache it
+/// reads from / writes to. Grouped so the view-model entry points stay small.
+public struct ThumbnailRenderContext: Sendable {
+    public let renderer: PDFRendererBinder
+    public let telemetry: DocumentTelemetryGuard
+    public let cache: PDFThumbnailCache?
+
+    public init(
+        renderer: PDFRendererBinder,
+        telemetry: DocumentTelemetryGuard = DocumentTelemetryGuardNoOp.shared,
+        cache: PDFThumbnailCache? = nil
+    ) {
+        self.renderer = renderer
+        self.telemetry = telemetry
+        self.cache = cache
+    }
+}
+
 /// SwiftUI-friendly facade over `PDFRendererBinder` for a single-page
 /// thumbnail. The view model owns the render task lifetime so consuming
 /// rows do not have to reimplement cancellation, cache discipline, or
@@ -88,30 +121,17 @@ public final class PDFThumbnailViewModel {
     /// Kick off a render. Cancelling any prior render in flight first so a
     /// rapid `start(...)` -> `start(...)` rebind does not retain two tasks.
     public func start(
-        document: PDFDocument,
-        pdfData: Data,
-        renderer: PDFRendererBinder,
-        page: Int,
-        targetWidthPx: Int,
-        targetHeightPx: Int,
-        telemetry: DocumentTelemetryGuard = DocumentTelemetryGuardNoOp.shared,
-        cache: PDFThumbnailCache? = nil
+        document: PDFDocument, pdfData: Data, target: ThumbnailRenderTarget, context: ThumbnailRenderContext
     ) {
         let documentId = document.id
-        let widthPx = max(targetWidthPx, 1)
-        let heightPx = max(targetHeightPx, 1)
+        let clamped = ThumbnailRenderTarget(
+            page: target.page,
+            widthPx: max(target.widthPx, 1),
+            heightPx: max(target.heightPx, 1)
+        )
         renderTask?.cancel()
         renderTask = Task { [weak self] in
-            await self?.run(
-                documentId: documentId,
-                pdfData: pdfData,
-                renderer: renderer,
-                page: page,
-                widthPx: widthPx,
-                heightPx: heightPx,
-                telemetry: telemetry,
-                cache: cache
-            )
+            await self?.run(documentId: documentId, pdfData: pdfData, target: clamped, context: context)
         }
     }
 
@@ -123,16 +143,9 @@ public final class PDFThumbnailViewModel {
     }
 
     private func run(
-        documentId: PDFDocumentId,
-        pdfData: Data,
-        renderer: PDFRendererBinder,
-        page: Int,
-        widthPx: Int,
-        heightPx: Int,
-        telemetry: DocumentTelemetryGuard,
-        cache: PDFThumbnailCache?
+        documentId: PDFDocumentId, pdfData: Data, target: ThumbnailRenderTarget, context: ThumbnailRenderContext
     ) async {
-        if let cached = cache?.get(documentId: documentId, page: page) {
+        if let cached = context.cache?.get(documentId: documentId, page: target.page) {
             state = .rendered(
                 image: PageImageHandle(pageImage: cached),
                 pageAspect: cached.pageAspect
@@ -140,11 +153,9 @@ public final class PDFThumbnailViewModel {
             return
         }
         let result = await renderOrDiscard(
-            renderer: renderer,
+            renderer: context.renderer,
             pdf: pdfData,
-            page: page,
-            widthPx: widthPx,
-            heightPx: heightPx,
+            target: target,
             sourceRect: .fullPage,
             isStillWanted: { !Task.isCancelled }
         )
@@ -164,11 +175,11 @@ public final class PDFThumbnailViewModel {
                 pageAspect: ok.pageAspect
             )
             guard let pageImage = decodePageImage(from: decoded) else {
-                telemetry.onConsumerRenderFailed(reason: .dimensionMismatch)
+                context.telemetry.onConsumerRenderFailed(reason: .dimensionMismatch)
                 state = .failed(kind: .rendererFailed)
                 return
             }
-            cache?.put(documentId: documentId, page: page, value: pageImage)
+            context.cache?.put(documentId: documentId, page: target.page, value: pageImage)
             state = .rendered(
                 image: PageImageHandle(pageImage: pageImage),
                 pageAspect: pageImage.pageAspect

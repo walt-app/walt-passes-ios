@@ -42,7 +42,7 @@ internal enum ManifestFailure: Equatable {
 /// `extraEntry` when both could fire.
 internal func verifyManifest(_ entries: [(name: String, bytes: [UInt8])]) -> ManifestVerifyResult {
     let byName = Dictionary(entries.map { ($0.name, $0.bytes) }, uniquingKeysWith: { first, _ in first })
-    guard let manifestBytes = byName[MANIFEST_FILE_NAME] else {
+    guard let manifestBytes = byName[manifestFileName] else {
         return .failed(.missing)
     }
     let failure: ManifestFailure?
@@ -112,7 +112,7 @@ private func validateAllEntries(
 }
 
 private func perEntryFailure(name: String, hexHash: String, byName: [String: [UInt8]]) -> ManifestFailure? {
-    if name == SIGNATURE_FILE_NAME { return .selfReferentialEntry }
+    if name == signatureFileName { return .selfReferentialEntry }
     guard let expected = decodeSha1Hex(hexHash) else {
         return .invalidHashFormat(entryName: name)
     }
@@ -125,7 +125,7 @@ private func perEntryFailure(name: String, hexHash: String, byName: [String: [UI
 
 private func findExtraEntry(declared: Set<String>, entries: [(name: String, bytes: [UInt8])]) -> ManifestFailure? {
     for entry in entries
-    where !declared.contains(entry.name) && entry.name != SIGNATURE_FILE_NAME && entry.name != MANIFEST_FILE_NAME {
+    where !declared.contains(entry.name) && entry.name != signatureFileName && entry.name != manifestFileName {
         return .extraEntry(entryName: entry.name)
     }
     return nil
@@ -135,10 +135,10 @@ private func findExtraEntry(declared: Set<String>, entries: [(name: String, byte
 /// `nil` (not a throw) so the caller maps to `invalidHashFormat` without try/catch at each site.
 private func decodeSha1Hex(_ hex: String) -> [UInt8]? {
     let chars = Array(hex)
-    guard chars.count == SHA1_HEX_LENGTH else { return nil }
-    var out = [UInt8](repeating: 0, count: SHA1_HEX_LENGTH / 2)
+    guard chars.count == sha1HexLength else { return nil }
+    var out = [UInt8](repeating: 0, count: sha1HexLength / 2)
     var i = 0
-    while i < SHA1_HEX_LENGTH {
+    while i < sha1HexLength {
         guard let hi = chars[i].hexDigitValue, let lo = chars[i + 1].hexDigitValue else { return nil }
         out[i / 2] = UInt8((hi << 4) | lo)
         i += 2
@@ -156,4 +156,4 @@ private func constantTimeEqual(_ a: [UInt8], _ b: [UInt8]) -> Bool {
     return diff == 0
 }
 
-private let SHA1_HEX_LENGTH = 40
+private let sha1HexLength = 40

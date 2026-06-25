@@ -1,5 +1,5 @@
-import SwiftUI
 import PassesUICore
+import SwiftUI
 
 /// SwiftUI environment key carrying the host-supplied `PassesSemantics`.
 /// Reading this outside a `passesTheme(_:)` scope returns a hard-coded fail
@@ -8,18 +8,18 @@ public struct PassesSemanticsKey: EnvironmentKey {
     public static let defaultValue: PassesSemantics? = nil
 }
 
-public extension EnvironmentValues {
-    var passesSemantics: PassesSemantics? {
+extension EnvironmentValues {
+    public var passesSemantics: PassesSemantics? {
         get { self[PassesSemanticsKey.self] }
         set { self[PassesSemanticsKey.self] = newValue }
     }
 }
 
-public extension View {
+extension View {
     /// The host's entry point into PassesUI. Wraps `content` so every PassesUI view
     /// can read `\.passesSemantics`. Mirror of Android's `PassesTheme` composable
     /// and `LocalPassesSemantics` CompositionLocal.
-    func passesTheme(_ semantics: PassesSemantics) -> some View {
+    public func passesTheme(_ semantics: PassesSemantics) -> some View {
         environment(\.passesSemantics, semantics)
     }
 }

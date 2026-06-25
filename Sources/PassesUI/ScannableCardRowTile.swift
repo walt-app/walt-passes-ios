@@ -1,6 +1,6 @@
-import SwiftUI
 import PassesCore
 import PassesUICore
+import SwiftUI
 
 /// Wallet-row register for a `ScannableCard`. Sibling to `ScannableCardTile`;
 /// intended for consumers that interleave scannable cards with passes / PDFs in
@@ -62,8 +62,8 @@ public struct ScannableCardRowTile<LeadingSlot: View>: View {
     }
 }
 
-public extension ScannableCardRowTile where LeadingSlot == EmptyView {
-    init(card: ScannableCard, onTap: @escaping () -> Void) {
+extension ScannableCardRowTile where LeadingSlot == EmptyView {
+    public init(card: ScannableCard, onTap: @escaping () -> Void) {
         self.init(card: card, onTap: onTap, leadingSlot: { EmptyView() })
     }
 }

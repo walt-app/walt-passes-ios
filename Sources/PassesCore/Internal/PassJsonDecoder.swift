@@ -35,9 +35,12 @@ internal enum PassJsonFailure: Equatable {
 /// `personalizationToken` are intentionally not surfaced on `Pass`: parsed (so they cannot trip
 /// a parse failure) but discarded (no field exists to render or transmit them). The "parsed and
 /// dropped" shape is structural - there are simply no fields on `Pass` for them.
-internal func decodePassJson(_ entries: [(name: String, bytes: [UInt8])], config: ParserConfig) -> PassJsonDecodeResult {
+internal func decodePassJson(
+    _ entries: [(name: String, bytes: [UInt8])],
+    config: ParserConfig
+) -> PassJsonDecodeResult {
     let byName = Dictionary(entries.map { ($0.name, $0.bytes) }, uniquingKeysWith: { first, _ in first })
-    guard let bytes = byName[PASS_JSON_FILE_NAME] else {
+    guard let bytes = byName[passJsonFileName] else {
         return .failed(.missing)
     }
     if let limitFailure = enforceJsonLimits(bytes, config: config) {
@@ -58,8 +61,8 @@ private func parseAndMap(_ bytes: [UInt8]) -> PassJsonDecodeResult {
 }
 
 private func checkVersion(_ root: [String: Any]) -> PassJsonFailure? {
-    let version = (root[FIELD_FORMAT_VERSION] as? NSNumber).flatMap { intExact($0) }
-    return version == PKPASS_FORMAT_VERSION ? nil : .unknownFormatVersion(version: version ?? 0)
+    let version = (root[fieldFormatVersion] as? NSNumber).flatMap { intExact($0) }
+    return version == pkpassFormatVersion ? nil : .unknownFormatVersion(version: version ?? 0)
 }
 
 private func resolveAndAssemble(_ root: [String: Any], orderedKeys: [String]) -> PassJsonDecodeResult {
@@ -77,7 +80,7 @@ private func resolveAndAssemble(_ root: [String: Any], orderedKeys: [String]) ->
 }
 
 private func assemblePass(_ root: [String: Any], type: PassType, node: [String: Any]) -> Pass? {
-    let expiration = parseExpiration(root[FIELD_EXPIRATION_DATE])
+    let expiration = parseExpiration(root[fieldExpirationDate])
     guard let requireds = readRequiredFields(root), expiration != .malformed else { return nil }
     let instant: PassInstant?
     if case .ok(let value) = expiration { instant = value } else { instant = nil }
@@ -87,19 +90,19 @@ private func assemblePass(_ root: [String: Any], type: PassType, node: [String: 
         description: requireds.description,
         organizationName: requireds.organization,
         expirationDate: instant,
-        voided: (root[FIELD_VOIDED] as? NSNumber)?.boolValue ?? false,
+        voided: (root[fieldVoided] as? NSNumber)?.boolValue ?? false,
         colors: PassColors(
-            foreground: parseColor(stringField(root, FIELD_FOREGROUND_COLOR)),
-            background: parseColor(stringField(root, FIELD_BACKGROUND_COLOR)),
-            label: parseColor(stringField(root, FIELD_LABEL_COLOR))
+            foreground: parseColor(stringField(root, fieldForegroundColor)),
+            background: parseColor(stringField(root, fieldBackgroundColor)),
+            label: parseColor(stringField(root, fieldLabelColor))
         ),
         frontFields: PassFields(
-            header: parseFieldList(node[FIELD_HEADER_FIELDS]),
-            primary: parseFieldList(node[FIELD_PRIMARY_FIELDS]),
-            secondary: parseFieldList(node[FIELD_SECONDARY_FIELDS]),
-            auxiliary: parseFieldList(node[FIELD_AUXILIARY_FIELDS])
+            header: parseFieldList(node[fieldHeaderFields]),
+            primary: parseFieldList(node[fieldPrimaryFields]),
+            secondary: parseFieldList(node[fieldSecondaryFields]),
+            auxiliary: parseFieldList(node[fieldAuxiliaryFields])
         ),
-        backFields: parseFieldList(node[FIELD_BACK_FIELDS]),
+        backFields: parseFieldList(node[fieldBackFields]),
         barcode: parseBarcode(root),
         images: [:],
         locales: [:]
@@ -113,9 +116,9 @@ private struct RequiredFields {
 }
 
 private func readRequiredFields(_ root: [String: Any]) -> RequiredFields? {
-    guard let serial = stringField(root, FIELD_SERIAL_NUMBER),
-        let description = stringField(root, FIELD_DESCRIPTION),
-        let organization = stringField(root, FIELD_ORGANIZATION_NAME)
+    guard let serial = stringField(root, fieldSerialNumber),
+        let description = stringField(root, fieldDescription),
+        let organization = stringField(root, fieldOrganizationName)
     else { return nil }
     return RequiredFields(serial: serial, description: description, organization: organization)
 }
@@ -130,10 +133,11 @@ private enum StyleResolution {
 /// branch the first object-valued top-level key not on the known-style or known-non-style
 /// allowlist is the unknown-style hint, in source-key order for stable reporting.
 private func resolveStyle(_ root: [String: Any], orderedKeys: [String]) -> StyleResolution {
-    let present = STYLE_KEYS_IN_ORDER.filter { root[$0.key] is [String: Any] }
+    let present = styleKeysInOrder.compactMap { entry in
+        (root[entry.key] as? [String: Any]).map { (descriptor: entry, node: $0) }
+    }
     if present.count == 1 {
-        let entry = present[0]
-        return .found(type: entry.value, node: root[entry.key] as! [String: Any])
+        return .found(type: present[0].descriptor.value, node: present[0].node)
     }
     if present.count > 1 {
         return .multiple
@@ -141,8 +145,8 @@ private func resolveStyle(_ root: [String: Any], orderedKeys: [String]) -> Style
     for key in orderedKeys {
         let isStyleCandidate =
             root[key] is [String: Any]
-            && STYLE_KEY_TO_TYPE[key] == nil
-            && !KNOWN_NON_STYLE_OBJECT_KEYS.contains(key)
+            && styleKeyToType[key] == nil
+            && !knownNonStyleObjectKeys.contains(key)
         if isStyleCandidate { return .unknown(raw: key) }
     }
     return .unknown(raw: "")
@@ -192,22 +196,22 @@ private func parseColor(_ text: String?) -> ColorValue? {
 }
 
 private func matchRgb(_ text: String) -> ColorValue? {
-    guard let match = RGB_REGEX.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+    guard let match = rgbRegex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
         match.range.length == text.utf16.count
     else { return nil }
     func component(_ i: Int) -> Int? {
         guard let range = Range(match.range(at: i), in: text) else { return nil }
-        return Int(text[range]).flatMap { (0...MAX_COLOR_COMPONENT).contains($0) ? $0 : nil }
+        return Int(text[range]).flatMap { (0...maxColorComponent).contains($0) ? $0 : nil }
     }
     guard let r = component(1), let g = component(2), let b = component(3) else { return nil }
-    return ColorValue(rgb: Int32((r << RED_SHIFT) | (g << GREEN_SHIFT) | b))
+    return ColorValue(rgb: Int32((r << redShift) | (g << greenShift) | b))
 }
 
 private func matchHex(_ text: String) -> ColorValue? {
-    guard let match = HEX_REGEX.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+    guard let match = hexRegex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
         match.range.length == text.utf16.count,
         let range = Range(match.range(at: 1), in: text),
-        let value = Int(text[range], radix: HEX_RADIX)
+        let value = Int(text[range], radix: hexRadix)
     else { return nil }
     return ColorValue(rgb: Int32(value))
 }
@@ -216,11 +220,11 @@ private func parseFieldList(_ node: Any?) -> [PassField] {
     guard let array = node as? [Any] else { return [] }
     return array.compactMap { element -> PassField? in
         guard let obj = element as? [String: Any],
-            let key = stringField(obj, FIELD_KEY),
-            let value = primitiveString(obj[FIELD_VALUE])
+            let key = stringField(obj, fieldKey),
+            let value = primitiveString(obj[fieldValue])
         else { return nil }
-        let alignment = stringField(obj, FIELD_TEXT_ALIGNMENT).flatMap { TEXT_ALIGNMENT_MAP[$0] } ?? .natural
-        return PassField(key: key, label: stringField(obj, FIELD_LABEL), value: value, textAlignment: alignment)
+        let alignment = stringField(obj, fieldTextAlignment).flatMap { textAlignmentMap[$0] } ?? .natural
+        return PassField(key: key, label: stringField(obj, fieldLabel), value: value, textAlignment: alignment)
     }
 }
 
@@ -228,25 +232,26 @@ private func parseFieldList(_ node: Any?) -> [PassField] {
 /// to map is dropped so a single bad entry does not kill the pass; the legacy scalar is the
 /// fallback. If neither resolves, `barcode = nil`.
 private func parseBarcode(_ root: [String: Any]) -> Barcode? {
-    if let array = root[FIELD_BARCODES] as? [Any] {
+    if let array = root[fieldBarcodes] as? [Any] {
         for element in array {
             if let obj = element as? [String: Any], let barcode = parseBarcodeNode(obj) {
                 return barcode
             }
         }
     }
-    if let obj = root[FIELD_BARCODE] as? [String: Any] {
+    if let obj = root[fieldBarcode] as? [String: Any] {
         return parseBarcodeNode(obj)
     }
     return nil
 }
 
 private func parseBarcodeNode(_ node: [String: Any]) -> Barcode? {
-    guard let format = stringField(node, FIELD_FORMAT).flatMap({ BARCODE_FORMAT_MAP[$0] }),
-        let message = stringField(node, FIELD_MESSAGE),
-        let encoding = stringField(node, FIELD_MESSAGE_ENCODING)
+    guard let format = stringField(node, fieldFormat).flatMap({ barcodeFormatMap[$0] }),
+        let message = stringField(node, fieldMessage),
+        let encoding = stringField(node, fieldMessageEncoding)
     else { return nil }
-    return Barcode(format: format, message: message, messageEncoding: encoding, altText: stringField(node, FIELD_ALT_TEXT))
+    return Barcode(
+        format: format, message: message, messageEncoding: encoding, altText: stringField(node, fieldAltText))
 }
 
 /// String-valued field, `nil` if absent or non-string. JSONSerialization decodes a JSON bool as
@@ -278,7 +283,8 @@ private func intExact(_ number: NSNumber) -> Int? {
 /// reporting. Falls back to the dict's keys if scanning misses any.
 private func orderedTopLevelJsonKeys(_ bytes: [UInt8], fallback: [String]) -> [String] {
     guard let text = String(bytes: bytes, encoding: .utf8) else { return fallback }
-    return fallback
+    return
+        fallback
         .map { key -> (key: String, pos: Int) in
             if let range = text.range(of: "\"\(key)\"") {
                 return (key, text.distance(from: text.startIndex, to: range.lowerBound))
@@ -289,7 +295,7 @@ private func orderedTopLevelJsonKeys(_ bytes: [UInt8], fallback: [String]) -> [S
         .map(\.key)
 }
 
-private let STYLE_KEY_TO_TYPE: [String: PassType] = [
+private let styleKeyToType: [String: PassType] = [
     "boardingPass": .boardingPass,
     "eventTicket": .eventTicket,
     "coupon": .coupon,
@@ -297,7 +303,7 @@ private let STYLE_KEY_TO_TYPE: [String: PassType] = [
     "generic": .generic,
 ]
 
-private let STYLE_KEYS_IN_ORDER: [(key: String, value: PassType)] = [
+private let styleKeysInOrder: [(key: String, value: PassType)] = [
     ("boardingPass", .boardingPass),
     ("eventTicket", .eventTicket),
     ("coupon", .coupon),
@@ -305,18 +311,18 @@ private let STYLE_KEYS_IN_ORDER: [(key: String, value: PassType)] = [
     ("generic", .generic),
 ]
 
-private let KNOWN_NON_STYLE_OBJECT_KEYS: Set<String> = [
+private let knownNonStyleObjectKeys: Set<String> = [
     "nfc", "personalization", "personalizationToken", "userInfo", "semantics", "barcode",
 ]
 
-private let BARCODE_FORMAT_MAP: [String: BarcodeFormat] = [
+private let barcodeFormatMap: [String: BarcodeFormat] = [
     "PKBarcodeFormatQR": .qr,
     "PKBarcodeFormatPDF417": .pdf417,
     "PKBarcodeFormatAztec": .aztec,
     "PKBarcodeFormatCode128": .code128,
 ]
 
-private let TEXT_ALIGNMENT_MAP: [String: TextAlignment] = [
+private let textAlignmentMap: [String: TextAlignment] = [
     "PKTextAlignmentLeft": .left,
     "PKTextAlignmentCenter": .center,
     "PKTextAlignmentRight": .right,
@@ -324,37 +330,37 @@ private let TEXT_ALIGNMENT_MAP: [String: TextAlignment] = [
 ]
 
 // swiftlint:disable:next force_try
-private let RGB_REGEX = try! NSRegularExpression(pattern: #"rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)"#)
+private let rgbRegex = try! NSRegularExpression(pattern: #"rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)"#)
 // swiftlint:disable:next force_try
-private let HEX_REGEX = try! NSRegularExpression(pattern: "#([0-9a-fA-F]{6})")
+private let hexRegex = try! NSRegularExpression(pattern: "#([0-9a-fA-F]{6})")
 
-private let PKPASS_FORMAT_VERSION = 1
-private let MAX_COLOR_COMPONENT = 255
-private let RED_SHIFT = 16
-private let GREEN_SHIFT = 8
-private let HEX_RADIX = 16
+private let pkpassFormatVersion = 1
+private let maxColorComponent = 255
+private let redShift = 16
+private let greenShift = 8
+private let hexRadix = 16
 
-private let FIELD_FORMAT_VERSION = "formatVersion"
-private let FIELD_SERIAL_NUMBER = "serialNumber"
-private let FIELD_DESCRIPTION = "description"
-private let FIELD_ORGANIZATION_NAME = "organizationName"
-private let FIELD_EXPIRATION_DATE = "expirationDate"
-private let FIELD_VOIDED = "voided"
-private let FIELD_FOREGROUND_COLOR = "foregroundColor"
-private let FIELD_BACKGROUND_COLOR = "backgroundColor"
-private let FIELD_LABEL_COLOR = "labelColor"
-private let FIELD_HEADER_FIELDS = "headerFields"
-private let FIELD_PRIMARY_FIELDS = "primaryFields"
-private let FIELD_SECONDARY_FIELDS = "secondaryFields"
-private let FIELD_AUXILIARY_FIELDS = "auxiliaryFields"
-private let FIELD_BACK_FIELDS = "backFields"
-private let FIELD_KEY = "key"
-private let FIELD_VALUE = "value"
-private let FIELD_LABEL = "label"
-private let FIELD_TEXT_ALIGNMENT = "textAlignment"
-private let FIELD_BARCODE = "barcode"
-private let FIELD_BARCODES = "barcodes"
-private let FIELD_FORMAT = "format"
-private let FIELD_MESSAGE = "message"
-private let FIELD_MESSAGE_ENCODING = "messageEncoding"
-private let FIELD_ALT_TEXT = "altText"
+private let fieldFormatVersion = "formatVersion"
+private let fieldSerialNumber = "serialNumber"
+private let fieldDescription = "description"
+private let fieldOrganizationName = "organizationName"
+private let fieldExpirationDate = "expirationDate"
+private let fieldVoided = "voided"
+private let fieldForegroundColor = "foregroundColor"
+private let fieldBackgroundColor = "backgroundColor"
+private let fieldLabelColor = "labelColor"
+private let fieldHeaderFields = "headerFields"
+private let fieldPrimaryFields = "primaryFields"
+private let fieldSecondaryFields = "secondaryFields"
+private let fieldAuxiliaryFields = "auxiliaryFields"
+private let fieldBackFields = "backFields"
+private let fieldKey = "key"
+private let fieldValue = "value"
+private let fieldLabel = "label"
+private let fieldTextAlignment = "textAlignment"
+private let fieldBarcode = "barcode"
+private let fieldBarcodes = "barcodes"
+private let fieldFormat = "format"
+private let fieldMessage = "message"
+private let fieldMessageEncoding = "messageEncoding"
+private let fieldAltText = "altText"

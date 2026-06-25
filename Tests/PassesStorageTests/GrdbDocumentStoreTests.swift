@@ -20,19 +20,26 @@ struct GrdbDocumentStoreTests {
     }
 
     private let pdf = Data([0x25, 0x50, 0x44, 0x46, 0x2D])  // %PDF-
-    private let thumb = Data([0x89, 0x50, 0x4E, 0x47])      // PNG magic
+    private let thumb = Data([0x89, 0x50, 0x4E, 0x47])  // PNG magic
 
     @Test func insertThenLoadRoundTripsBytes() async throws {
         let repo = try makeRepository()
-        guard case .success(let id) = await repo.insertDocument(
-            label: "Boarding", pdfBytes: pdf, pageCount: 2, thumbnailBytes: thumb
-        ) else { Issue.record("insert failed"); return }
+        guard
+            case .success(let id) = await repo.insertDocument(
+                label: "Boarding", pdfBytes: pdf, pageCount: 2, thumbnailBytes: thumb
+            )
+        else {
+            Issue.record("insert failed")
+            return
+        }
 
         guard case .success(let bytes) = await repo.loadDocumentBytes(id: id) else {
-            Issue.record("load bytes failed"); return
+            Issue.record("load bytes failed")
+            return
         }
         guard case .success(let thumbBytes) = await repo.loadDocumentThumbnail(id: id) else {
-            Issue.record("load thumb failed"); return
+            Issue.record("load thumb failed")
+            return
         }
         #expect(bytes == pdf)
         #expect(thumbBytes == thumb)
@@ -64,17 +71,24 @@ struct GrdbDocumentStoreTests {
 
     @Test func deleteRemovesDocumentAndAbsentIdIsIntegrityViolation() async throws {
         let repo = try makeRepository()
-        guard case .success(let id) = await repo.insertDocument(
-            label: "X", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb
-        ) else { Issue.record("insert failed"); return }
+        guard
+            case .success(let id) = await repo.insertDocument(
+                label: "X", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb
+            )
+        else {
+            Issue.record("insert failed")
+            return
+        }
         guard case .success = await repo.deleteDocument(id: id) else {
-            Issue.record("delete failed"); return
+            Issue.record("delete failed")
+            return
         }
         let bytes = await repo.loadDocumentBytes(id: id)
         #expect(bytes == .failure(error: .integrityViolation(recordId: .document(id))))
 
         guard case .failure(let error) = await repo.deleteDocument(id: id) else {
-            Issue.record("expected failure"); return
+            Issue.record("expected failure")
+            return
         }
         #expect(error == .integrityViolation(recordId: .document(id)))
     }
@@ -116,11 +130,17 @@ struct GrdbDocumentStoreTests {
 
     @Test func updateDocumentLabelChangesDisplayLabel() async throws {
         let repo = try makeRepository()
-        guard case .success(let id) = await repo.insertDocument(
-            label: "A", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb
-        ) else { Issue.record("insert failed"); return }
+        guard
+            case .success(let id) = await repo.insertDocument(
+                label: "A", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb
+            )
+        else {
+            Issue.record("insert failed")
+            return
+        }
         guard case .success = await repo.updateDocumentLabel(id: id, label: "B") else {
-            Issue.record("update failed"); return
+            Issue.record("update failed")
+            return
         }
         var iterator = repo.observeDocuments().makeAsyncIterator()
         let rows = await iterator.next() ?? []
@@ -129,16 +149,23 @@ struct GrdbDocumentStoreTests {
 
     @Test func updateDocumentLabelAtCapAcceptedOverCapRejected() async throws {
         let repo = try makeRepository()
-        guard case .success(let id) = await repo.insertDocument(
-            label: "A", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb
-        ) else { Issue.record("insert failed"); return }
+        guard
+            case .success(let id) = await repo.insertDocument(
+                label: "A", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb
+            )
+        else {
+            Issue.record("insert failed")
+            return
+        }
         let atCap = String(repeating: "x", count: DocumentBounds.maxLabelChars)
         guard case .success = await repo.updateDocumentLabel(id: id, label: atCap) else {
-            Issue.record("at-cap label should be accepted"); return
+            Issue.record("at-cap label should be accepted")
+            return
         }
         let overCap = String(repeating: "x", count: DocumentBounds.maxLabelChars + 1)
         guard case .failure(let error) = await repo.updateDocumentLabel(id: id, label: overCap) else {
-            Issue.record("expected over-cap rejection"); return
+            Issue.record("expected over-cap rejection")
+            return
         }
         #expect(error == .documentRejected(kind: .labelTooLongAtStorage))
     }
@@ -147,8 +174,10 @@ struct GrdbDocumentStoreTests {
         let repo = try makeRepository()
         let overCap = String(repeating: "x", count: DocumentBounds.maxLabelChars + 1)
         // Cap is checked before the row lookup: too-long on an unknown id is documentRejected.
-        guard case .failure(let error) = await repo.updateDocumentLabel(id: DocumentRecordId(404), label: overCap) else {
-            Issue.record("expected cap rejection"); return
+        guard case .failure(let error) = await repo.updateDocumentLabel(id: DocumentRecordId(404), label: overCap)
+        else {
+            Issue.record("expected cap rejection")
+            return
         }
         #expect(error == .documentRejected(kind: .labelTooLongAtStorage))
     }
@@ -156,7 +185,8 @@ struct GrdbDocumentStoreTests {
     @Test func updateDocumentLabelUnknownIdIsIntegrityViolation() async throws {
         let repo = try makeRepository()
         guard case .failure(let error) = await repo.updateDocumentLabel(id: DocumentRecordId(404), label: "x") else {
-            Issue.record("expected integrity violation"); return
+            Issue.record("expected integrity violation")
+            return
         }
         #expect(error == .integrityViolation(recordId: .document(DocumentRecordId(404))))
     }
@@ -166,7 +196,17 @@ struct GrdbDocumentStoreTests {
         private let lock = NSLock()
         private var value: Int64
         init(_ value: Int64) { self.value = value }
-        func set(_ value: Int64) { lock.lock(); self.value = value; lock.unlock() }
-        var now: @Sendable () -> Int64 { { [self] in lock.lock(); defer { lock.unlock() }; return value } }
+        func set(_ value: Int64) {
+            lock.lock()
+            self.value = value
+            lock.unlock()
+        }
+        var now: @Sendable () -> Int64 {
+            { [self] in
+                lock.lock()
+                defer { lock.unlock() }
+                return value
+            }
+        }
     }
 }

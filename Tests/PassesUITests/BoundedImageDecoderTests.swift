@@ -1,9 +1,9 @@
-import Foundation
-import ImageIO
-import UniformTypeIdentifiers
-import Testing
 import CoreGraphics
 import CoreImage
+import Foundation
+import ImageIO
+import Testing
+import UniformTypeIdentifiers
 
 @testable import PassesUI
 

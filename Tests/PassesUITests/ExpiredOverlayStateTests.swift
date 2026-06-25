@@ -1,5 +1,5 @@
-import Testing
 import PassesCore
+import Testing
 
 @testable import PassesUI
 
@@ -29,7 +29,8 @@ struct ExpiredOverlayStateTests {
 
     @Test func passWithoutExpirationOrVoidedIsNone() {
         let state = ExpiredOverlayState.from(pass: makePass(), nowEpochMillis: 1_000)
-        if case .none = state {} else {
+        if case .none = state {
+        } else {
             Issue.record("expected .none")
         }
     }

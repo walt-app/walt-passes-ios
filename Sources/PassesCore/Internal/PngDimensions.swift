@@ -25,27 +25,27 @@ internal struct PngDimensions: Equatable {
 /// IHDR-only read pulls 24 bytes regardless of declared dimensions.
 internal func readPngDimensions(_ bytes: [UInt8]) -> PngDimensions? {
     let structurallyAPng =
-        bytes.count >= PNG_HEADER_PLUS_IHDR_LENGTH
+        bytes.count >= pngHeaderPlusIhdrLength
         && hasPngSignature(bytes)
         && isIhdrChunkType(bytes)
     guard structurallyAPng else { return nil }
-    let width = readU32BigEndian(bytes, IHDR_WIDTH_OFFSET)
-    let height = readU32BigEndian(bytes, IHDR_HEIGHT_OFFSET)
+    let width = readU32BigEndian(bytes, ihdrWidthOffset)
+    let height = readU32BigEndian(bytes, ihdrHeightOffset)
     return (width <= 0 || height <= 0) ? nil : PngDimensions(width: width, height: height)
 }
 
 private func hasPngSignature(_ bytes: [UInt8]) -> Bool {
-    for i in PNG_SIGNATURE.indices where bytes[i] != PNG_SIGNATURE[i] {
+    for i in pngSignature.indices where bytes[i] != pngSignature[i] {
         return false
     }
     return true
 }
 
 private func isIhdrChunkType(_ bytes: [UInt8]) -> Bool {
-    bytes[IHDR_TYPE_OFFSET] == UInt8(ascii: "I")
-        && bytes[IHDR_TYPE_OFFSET + 1] == UInt8(ascii: "H")
-        && bytes[IHDR_TYPE_OFFSET + 2] == UInt8(ascii: "D")
-        && bytes[IHDR_TYPE_OFFSET + 3] == UInt8(ascii: "R")
+    bytes[ihdrTypeOffset] == UInt8(ascii: "I")
+        && bytes[ihdrTypeOffset + 1] == UInt8(ascii: "H")
+        && bytes[ihdrTypeOffset + 2] == UInt8(ascii: "D")
+        && bytes[ihdrTypeOffset + 3] == UInt8(ascii: "R")
 }
 
 private func readU32BigEndian(_ b: [UInt8], _ off: Int) -> Int64 {
@@ -56,8 +56,8 @@ private func readU32BigEndian(_ b: [UInt8], _ off: Int) -> Int64 {
     return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3
 }
 
-private let PNG_SIGNATURE: [UInt8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
-private let IHDR_TYPE_OFFSET = 12
-private let IHDR_WIDTH_OFFSET = 16
-private let IHDR_HEIGHT_OFFSET = 20
-private let PNG_HEADER_PLUS_IHDR_LENGTH = 24
+private let pngSignature: [UInt8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+private let ihdrTypeOffset = 12
+private let ihdrWidthOffset = 16
+private let ihdrHeightOffset = 20
+private let pngHeaderPlusIhdrLength = 24

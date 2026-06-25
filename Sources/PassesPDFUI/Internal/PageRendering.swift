@@ -49,7 +49,7 @@ struct RenderOk {
 }
 
 func renderOkFrom(_ result: RenderResult) -> RenderOk? {
-    if case let .ok(pixels, widthPx, heightPx, pageAspect) = result {
+    if case .ok(let pixels, let widthPx, let heightPx, let pageAspect) = result {
         return RenderOk(pixels: pixels, widthPx: widthPx, heightPx: heightPx, pageAspect: pageAspect)
     }
     return nil
@@ -64,9 +64,7 @@ func renderOkFrom(_ result: RenderResult) -> RenderOk? {
 func renderOrDiscard(
     renderer: PDFRendererBinder,
     pdf: Data,
-    page: Int,
-    widthPx: Int,
-    heightPx: Int,
+    target: ThumbnailRenderTarget,
     sourceRect: RenderSourceRect,
     isStillWanted: @Sendable () -> Bool
 ) async -> RenderResult? {
@@ -75,9 +73,9 @@ func renderOrDiscard(
     // gets a result it can either accept or discard via `isStillWanted`.
     let result = await renderer.render(
         pdf: pdf,
-        page: page,
-        widthPx: widthPx,
-        heightPx: heightPx,
+        page: target.page,
+        widthPx: target.widthPx,
+        heightPx: target.heightPx,
         sourceRect: sourceRect
     )
     return isStillWanted() ? result : nil

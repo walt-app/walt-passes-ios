@@ -1,5 +1,5 @@
-import SwiftUI
 import PassesCore
+import SwiftUI
 
 /// Renders the back of a pass: the list of `Pass.backFields`, with detected
 /// URLs, phone numbers, and email addresses rendered as tappable affordances.
@@ -111,19 +111,22 @@ private struct BackFieldClickableText: View {
 
     var body: some View {
         Text(attributed)
-            .environment(\.openURL, OpenURLAction { url in
-                guard url.scheme == "x-walt-passes-ui",
-                      let idx = Int(url.host ?? ""),
-                      idx >= 0, idx < spans.count else {
-                    return .systemAction
-                }
-                switch spans[idx].intent {
-                case .url(let i): onUrlIntent(i)
-                case .phone(let i): onPhoneIntent(i)
-                case .email(let i): onEmailIntent(i)
-                }
-                return .handled
-            })
+            .environment(
+                \.openURL,
+                OpenURLAction { url in
+                    guard url.scheme == "x-walt-passes-ui",
+                        let idx = Int(url.host ?? ""),
+                        idx >= 0, idx < spans.count
+                    else {
+                        return .systemAction
+                    }
+                    switch spans[idx].intent {
+                    case .url(let i): onUrlIntent(i)
+                    case .phone(let i): onPhoneIntent(i)
+                    case .email(let i): onEmailIntent(i)
+                    }
+                    return .handled
+                })
     }
 
     private var attributed: AttributedString {

@@ -1,6 +1,6 @@
 import Foundation
-import Testing
 import PassesPDFCore
+import Testing
 
 @testable import PassesPDF
 
@@ -21,15 +21,21 @@ import PassesPDFCore
 @Suite("PublicApiSurface")
 struct PublicApiSurfaceTests {
 
+    // The full signatures live in these aliases so the witnesses below stay short; a
+    // signature change to `probe`/`render` still fails to compile against the alias.
+    private typealias ProbeFactory = (any PDFRendererBinder) -> (Data) async -> ProbeResult
+    private typealias RenderFactory =
+        (any PDFRendererBinder) -> (Data, Int, Int, Int, RenderSourceRect) async -> RenderResult
+
     @Test func binderHasExactlyProbeAndRender() {
         // Compile-time witness: each existential is bound only if the type
         // declares the exact suspend signature. If a future contributor
         // changes the signature (renaming, reordering, adding a parameter
         // without a default), this stops compiling.
-        let probe: (any PDFRendererBinder) -> (Data) async -> ProbeResult = { binder in
+        let probe: ProbeFactory = { binder in
             { data in await binder.probe(pdf: data) }
         }
-        let render: (any PDFRendererBinder) -> (Data, Int, Int, Int, RenderSourceRect) async -> RenderResult = { binder in
+        let render: RenderFactory = { binder in
             { data, page, w, h, rect in
                 await binder.render(pdf: data, page: page, widthPx: w, heightPx: h, sourceRect: rect)
             }
@@ -40,12 +46,14 @@ struct PublicApiSurfaceTests {
 
     @Test func importerSurfaceHasOnlyImport() {
         // Compile-time witness for the importer's single method.
-        let importer: (any PDFImporter)
-            -> (PDFImportSource, String, @Sendable (String, Data, Int, Data) async throws -> Void) async throws -> PDFImportResult = { i in
-                { source, label, persist in
-                    try await i.import(source: source, displayLabel: label, persist: persist)
+        let importer:
+            (any PDFImporter)
+                -> (PDFImportSource, String, @Sendable (String, Data, Int, Data) async throws -> Void) async throws ->
+                PDFImportResult = { i in
+                    { source, label, persist in
+                        try await i.import(source: source, displayLabel: label, persist: persist)
+                    }
                 }
-            }
         _ = importer
     }
 
@@ -56,13 +64,13 @@ struct PublicApiSurfaceTests {
         for kind in DocumentRejectedKind.allCases {
             switch kind {
             case .oversizedAtImport,
-                 .notAPdf,
-                 .encrypted,
-                 .tooManyPages,
-                 .rendererFailed,
-                 .unsupportedAndroidVersion,
-                 .encoderFailed,
-                 .storageHandoffFailed:
+                .notAPdf,
+                .encrypted,
+                .tooManyPages,
+                .rendererFailed,
+                .unsupportedAndroidVersion,
+                .encoderFailed,
+                .storageHandoffFailed:
                 continue
             }
         }

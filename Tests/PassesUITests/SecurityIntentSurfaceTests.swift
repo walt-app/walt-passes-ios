@@ -1,5 +1,5 @@
-import Testing
 import PassesCore
+import Testing
 
 @testable import PassesUI
 
@@ -18,7 +18,7 @@ struct SecurityIntentSurfaceTests {
         let intents: [SecurityIntent] = [
             .url(B3UrlIntent(url: "https://example.com", sourceField: source)),
             .phone(PhoneIntent(phoneNumber: "+15551234567", sourceField: source)),
-            .email(EmailIntent(emailAddress: "support@example.com", sourceField: source))
+            .email(EmailIntent(emailAddress: "support@example.com", sourceField: source)),
         ]
         let labels = intents.map { intent -> String in
             switch intent {
@@ -27,11 +27,12 @@ struct SecurityIntentSurfaceTests {
             case .email(let i): return "email:\(i.emailAddress)"
             }
         }
-        #expect(labels == [
-            "url:https://example.com",
-            "phone:+15551234567",
-            "email:support@example.com"
-        ])
+        #expect(
+            labels == [
+                "url:https://example.com",
+                "phone:+15551234567",
+                "email:support@example.com",
+            ])
     }
 
     @Test func b3UrlIntentRegistrableDomainDefaultsToNil() {
@@ -57,7 +58,7 @@ struct SecurityIntentSurfaceTests {
             (.unsigned, .untrusted),
             (.selfSigned, .selfSigned),
             (.appleVerified, .appleVerified),
-            (.certChainIncomplete, .incomplete)
+            (.certChainIncomplete, .incomplete),
         ]
         for (status, expected) in pairs {
             #expect(status.band == expected)

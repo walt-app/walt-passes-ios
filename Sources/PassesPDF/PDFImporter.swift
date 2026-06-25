@@ -49,7 +49,8 @@ public protocol PDFImporter: Sendable {
     func `import`(
         source: PDFImportSource,
         displayLabel: String,
-        persist: @Sendable (_ label: String, _ pdfBytes: Data, _ pageCount: Int, _ thumbnailBytes: Data) async throws -> Void
+        persist:
+            @Sendable (_ label: String, _ pdfBytes: Data, _ pageCount: Int, _ thumbnailBytes: Data) async throws -> Void
     ) async throws -> PDFImportResult
 }
 

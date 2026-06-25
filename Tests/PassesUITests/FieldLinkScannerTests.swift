@@ -31,7 +31,8 @@ struct FieldLinkScannerTests {
 
     @Test func detectsHttpUrl() {
         let spans = FieldLinkScanner.scan("http://example.com/x", source: source)
-        if case .url = spans.first?.intent {} else {
+        if case .url = spans.first?.intent {
+        } else {
             Issue.record("expected url")
         }
     }
@@ -213,20 +214,20 @@ struct FieldLinkScannerTests {
 
     @Test func containsRenderingHazardCoversFormatAndControlCategories() {
         let hazards: [String] = [
-            "\u{202E}", // RLO
-            "\u{202D}", // LRO
-            "\u{2066}", // LRI
-            "\u{2067}", // RLI
-            "\u{2068}", // FSI
-            "\u{2069}", // PDI
-            "\u{200B}", // ZWSP
-            "\u{200E}", // LRM
-            "\u{200F}", // RLM
-            "\u{061C}", // ALM
-            "\u{FEFF}", // ZWNBSP / BOM
-            "\u{0000}", // NUL
-            "\u{0007}", // BEL
-            "\u{001B}"  // ESC
+            "\u{202E}",  // RLO
+            "\u{202D}",  // LRO
+            "\u{2066}",  // LRI
+            "\u{2067}",  // RLI
+            "\u{2068}",  // FSI
+            "\u{2069}",  // PDI
+            "\u{200B}",  // ZWSP
+            "\u{200E}",  // LRM
+            "\u{200F}",  // RLM
+            "\u{061C}",  // ALM
+            "\u{FEFF}",  // ZWNBSP / BOM
+            "\u{0000}",  // NUL
+            "\u{0007}",  // BEL
+            "\u{001B}",  // ESC
         ]
         for hazard in hazards {
             #expect(
@@ -241,7 +242,7 @@ struct FieldLinkScannerTests {
     }
 
     @Test func phoneScanCompletesQuicklyOnPathologicalInput() {
-        let pathological = String(repeating: "0123456789", count: 410) // ~4096
+        let pathological = String(repeating: "0123456789", count: 410)  // ~4096
         let start = Date()
         _ = FieldLinkScanner.scan(pathological, source: source)
         let elapsed = Date().timeIntervalSince(start) * 1000

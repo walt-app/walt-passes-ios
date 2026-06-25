@@ -1,5 +1,5 @@
-import Testing
 import PassesUICore
+import Testing
 
 @testable import PassesPDFUI
 

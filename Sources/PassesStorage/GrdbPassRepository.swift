@@ -168,8 +168,11 @@ public final class GrdbPassRepository: PassRepository, @unchecked Sendable {
         do {
             let id = try await dbQueue.write { db in
                 try GrdbDocumentStore.insert(
-                    label: label, pdfBytes: pdfBytes, pageCount: pageCount,
-                    thumbnailBytes: thumbnailBytes, nowEpochMs: now, db
+                    GrdbDocumentStore.Insert(
+                        label: label, pdfBytes: pdfBytes, pageCount: pageCount,
+                        thumbnailBytes: thumbnailBytes, nowEpochMs: now
+                    ),
+                    db
                 )
             }
             await refreshDocuments()
@@ -259,9 +262,10 @@ public final class GrdbPassRepository: PassRepository, @unchecked Sendable {
             createdAt: PassInstant(epochMillis: now)
         )
         guard case .success(let validated) = validation else {
-            return .failure(error: .scannableCardRejected(
-                reason: validation.storageRejectionReason ?? .invalidPayload(reason: .empty)
-            ))
+            return .failure(
+                error: .scannableCardRejected(
+                    reason: validation.storageRejectionReason ?? .invalidPayload(reason: .empty)
+                ))
         }
         do {
             // Persist the validator's trimmed, normalized values, not the raw input.
@@ -292,9 +296,10 @@ public final class GrdbPassRepository: PassRepository, @unchecked Sendable {
             createdAt: PassInstant(epochMillis: now)
         )
         guard case .success(let validated) = validation else {
-            return .failure(error: .scannableCardRejected(
-                reason: validation.storageRejectionReason ?? .invalidPayload(reason: .empty)
-            ))
+            return .failure(
+                error: .scannableCardRejected(
+                    reason: validation.storageRejectionReason ?? .invalidPayload(reason: .empty)
+                ))
         }
         do {
             let matched = try await dbQueue.write { db in

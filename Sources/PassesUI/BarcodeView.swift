@@ -1,7 +1,7 @@
-import SwiftUI
 import CoreImage
 import CoreImage.CIFilterBuiltins
 import PassesCore
+import SwiftUI
 
 /// Renders a PKPASS-pass `Barcode` using CoreImage native generators. Enforces
 /// a minimum on-screen size so the barcode is reliably scannable at gate

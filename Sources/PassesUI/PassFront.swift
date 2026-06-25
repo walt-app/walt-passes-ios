@@ -1,6 +1,6 @@
-import SwiftUI
 import PassesCore
 import PassesUICore
+import SwiftUI
 
 /// Renders the front of a pass. Layout switches on `Pass.type` (boarding pass,
 /// event ticket, generic/coupon/store-card). Mirror of Android's
@@ -315,7 +315,7 @@ private struct SignatureTrustBadge: View {
     }
 }
 
-internal extension Optional where Wrapped == ColorValue {
+extension Optional where Wrapped == ColorValue {
     func swiftUIColorOrDefault(_ fallback: Color) -> Color {
         guard let v = self else { return fallback }
         let packed = UInt32(bitPattern: v.rgb) & 0xFFFFFF

@@ -1,6 +1,6 @@
-import SwiftUI
 import PassesPDF
 import PassesPDFCore
+import SwiftUI
 
 /// Presentation of a `PDFDocument` — a non-suppressible trust caption
 /// above a swipeable pager of rasterised pages. `DocumentView` fills the
@@ -138,12 +138,12 @@ private struct DocumentPage: View {
                     viewModel.start(
                         document: document,
                         pdfData: pdfData,
-                        renderer: renderer,
-                        page: pageIndex,
-                        targetWidthPx: max(widthPx, Self.targetPageWidthPx),
-                        targetHeightPx: max(heightPx, Self.targetPageHeightPx),
-                        telemetry: telemetry,
-                        cache: cache
+                        target: ThumbnailRenderTarget(
+                            page: pageIndex,
+                            widthPx: max(widthPx, Self.targetPageWidthPx),
+                            heightPx: max(heightPx, Self.targetPageHeightPx)
+                        ),
+                        context: ThumbnailRenderContext(renderer: renderer, telemetry: telemetry, cache: cache)
                     )
                 }
                 .onDisappear { viewModel.stop() }
