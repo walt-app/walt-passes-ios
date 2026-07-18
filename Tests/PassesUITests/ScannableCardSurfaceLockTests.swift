@@ -47,9 +47,10 @@ struct ScannableCardSurfaceLockTests {
         _ = ScannableCardScreen(card: card, showLabel: false)
     }
 
-    @Test func screenQuietZoneIsVisualSixteenPoints() {
-        // The scan quiet zone is baked into the raster; this margin is the
-        // white card's visual breathing room (wpass-1wu.2).
+    @Test func screenQuietZoneIsSixteenPoints() {
+        // On iOS this white margin doubles as the scan quiet zone (CoreImage
+        // bakes little margin into the raster) — shrinking it risks
+        // scannability, not just looks (wpass-1wu.2).
         #expect(ScannableCardScreen.codeQuietZone == 16)
     }
 }

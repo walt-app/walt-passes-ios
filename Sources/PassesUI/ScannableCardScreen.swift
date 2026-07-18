@@ -8,9 +8,9 @@ import SwiftUI
 /// non-suppressible `ScannableCardTrustCaption` docked at the bottom (C2 in
 /// SCANNABLE_CARD_THREAT_MODEL.md).
 ///
-/// The white backing is sized to the code plus a quiet-zone margin, not to the
-/// whole screen (wpass-1wu.2): the rest of the surface is transparent so the
-/// host's background shows through. The card is fixed white rather than Android's
+/// The white backing is sized to the code plus the quiet-zone margin, not to
+/// the whole screen (wpass-1wu.2): the rest of the surface is transparent so
+/// the host's background shows through. The card is fixed white rather than Android's
 /// adaptive `colorScheme.surface`: the CoreImage raster bakes an opaque white
 /// background, so an adaptive dark card would leave a white seam around the code
 /// in dark mode. Content on the card is forced light-scheme so the payload
@@ -58,7 +58,8 @@ public struct ScannableCardScreen: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// White-card padding around the code. The scan quiet zone is baked into
-    /// the raster; this margin is visual.
+    /// White-card padding around the code. Unlike Android's ZXing, CoreImage
+    /// bakes little margin into the raster, so on iOS this white margin doubles
+    /// as the scan quiet zone as well as visual breathing room.
     static let codeQuietZone: CGFloat = 16
 }
