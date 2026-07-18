@@ -2,9 +2,8 @@ name: Full CI (macOS)
 
 # FULL tier (10x macOS): safety net, never a pre-merge gate — the kernel can't
 # compile on the cheap Linux runners. Runs on weekly cron, manual dispatch, push
-# to main, and the `full-ci` label. The label RUNS this for a signal but does NOT
-# block merge (auto-merge fires on lint first); to actually gate, keep the PR a
-# draft until this is green, or make it a required check via branch protection.
+# to main, and the `full-ci` label. The label RUNS this for a signal; merges are
+# manual (ci.yml is check-only), so hold the merge until this is green to gate.
 on:
   schedule:
     - cron: "0 6 * * 1" # Mondays 06:00 UTC — main safety-net sweep
