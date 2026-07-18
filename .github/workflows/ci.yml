@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v4
 
       # Pin to 6.2 to match the toolchain the tree was formatted with.
-      - uses: swift-actions/setup-swift@v2
+      - uses: swift-actions/setup-swift@v3
         with:
           swift-version: "6.2"
 
