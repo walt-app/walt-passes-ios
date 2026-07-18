@@ -7,19 +7,20 @@ This is the iOS counterpart of
 consumed by [`walt-app/iOS`](https://github.com/walt-app/iOS) as a Swift
 Package dependency.
 
-## Status
-
-**Repo standup only.** The targets in this package are protocol scaffolds —
-the production implementations (PDF importer, encrypted storage, renderer)
-land with the Passes feature epic in `walt-app/iOS` (`ios-382.11`).
-
 ## Modules
 
-| Target | Mirrors | Purpose |
-|---|---|---|
-| `PassesCore` | `passes-core` | Domain types and the `PassParser` trust-claim surface |
-| `PassesPDF` | `passes-pdf` | PDF import and bounded rendering |
-| `PassesStorage` | `passes-storage` | Encrypted, device-only persistence |
+Pure-logic targets are split from their SwiftUI counterparts (`*Core` vs. the
+UI target) so the logic stays testable without a UI host.
+
+| Target | Purpose |
+|---|---|
+| `PassesCore` | Domain types, the `PassParser` trust-claim surface, and pkpass signature verification (swift-certificates) |
+| `PassesPDFCore` | Pure PDF parsing and validation |
+| `PassesPDF` | PDF import and bounded rendering |
+| `PassesPDFUI` | SwiftUI document views |
+| `PassesStorage` | GRDB-backed, device-only encrypted persistence (iOS Data Protection) |
+| `PassesUICore` | UI identity primitives and pass-display logic |
+| `PassesUI` | SwiftUI pass / scannable-card views |
 
 ## Security
 

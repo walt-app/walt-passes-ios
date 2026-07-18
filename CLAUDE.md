@@ -49,21 +49,13 @@ bd close <id>         # Complete work
 - If push fails, resolve and retry until it succeeds
 <!-- END BEADS INTEGRATION -->
 
-
 ## Build & Test
 
-_Add your build and test commands here_
-
 ```bash
-# Example:
-# npm install
-# npm test
+swift build
+swift test          # Linux builds only non-Apple-framework targets; full suite runs via xcodebuild on an iOS simulator
 ```
 
-## Architecture Overview
+## Architecture
 
-_Add a brief overview of your project architecture_
-
-## Conventions & Patterns
-
-_Add your project-specific conventions here_
+Walt Passes kernel: PDF/pkpass parsing, device-only encrypted storage, and secure rendering, consumed by `walt-app/iOS` as an SPM dependency. Mirrors `walt-passes-android`. See `README.md` for the target map and `SECURITY.md` for the trust-claim surface every implementation must uphold.
