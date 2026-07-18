@@ -11,24 +11,12 @@ import Vision
 /// roster. ONE decode implementation, ONE roster — the live path does not fork (ADR
 /// `barcode-decode-1`).
 ///
-/// ## Boundary type: `CVPixelBuffer`, not Android's `ByteArray` + geometry (ADR `barcode-decode-1`)
-/// Android hands the kernel a raw Y-plane `ByteArray` plus `rowStride`/`pixelStride` because ZXing's
-/// `PlanarYUVLuminanceSource` consumes exactly that, and the shape keeps the module KMP-clean. iOS
-/// deviates: **Vision ingests a `CVPixelBuffer` natively** (including the camera's biplanar YUV
-/// formats), so a `decodeYPlane`-shaped byte entry would force this module to *rebuild* a pixel
-/// buffer from the bytes — touching CoreVideo anyway and discarding Vision's own plane handling.
-/// `CVPixelBuffer` is **CoreVideo**, not AVFoundation/CoreMedia: the capture-pipeline glue
-/// (`AVCaptureVideoDataOutput` → `CMSampleBuffer` → `CMSampleBufferGetImageBuffer`) stays entirely
-/// app-side; the kernel receives a bare frame snapshot.
-///
-/// ## `orientation` is provided for correctness/parity, not required for the symbol to decode
-/// `orientation` (an `ImageIO` `CGImagePropertyOrientation`) is the honest analogue of Android's
-/// `reverseHorizontal` mirror flag and can express both mirroring and device rotation — the app
-/// passes its true capture orientation. Unlike ZXing (whose 1D reader needs `reverseHorizontal`),
-/// **`VNDetectBarcodesRequest` is largely orientation-invariant**: it internally tries rotations and
-/// mirrorings, so a rotated or front-camera-mirrored roster symbol decodes even at `.up`. The
-/// parameter is therefore carried for a correct request handler (it orients observation geometry)
-/// and API parity, not because the payload decode depends on it.
+/// The kernel boundary is a `CVPixelBuffer` (CoreVideo), not Android's Y-plane `ByteArray` +
+/// geometry: Vision ingests pixel buffers natively, and the capture glue (`CMSampleBuffer` etc.)
+/// stays app-side. `orientation` (`CGImagePropertyOrientation`) is Android's `reverseHorizontal`
+/// analogue but is **not** load-bearing — `VNDetectBarcodesRequest` is orientation-invariant, so it
+/// is carried for a correct handler and parity only. Full rationale: ADR `barcode-decode-1`,
+/// Deviation 4.
 ///
 /// The payload is returned FAITHFULLY: nothing here interprets, classifies, or validates the bytes
 /// (that stays downstream in the consumer's `QrPayloadKind` / `ScannableCardInputValidator`).
@@ -86,12 +74,8 @@ public struct VisionBarcodeFrameDecoder: BarcodeFrameDecoder {
     }
 }
 
-/// `@unchecked Sendable` box carrying the `CVPixelBuffer` across the ``withDecodeTimeout`` detached
-/// task boundary. A CoreVideo pixel buffer is an immutable frame snapshot the app has already handed
-/// off — only the single detached decode task reads it, and Vision reads it once — so there is no
-/// concurrent access to guard. The box is this type's ADR per the repo's `@unchecked Sendable`
-/// policy (`decisions-and-learnings.md`): the boundary crossing is explicit and the safety argument
-/// is documented at the site.
+/// `@unchecked Sendable` box handing the `CVPixelBuffer` to the ``withDecodeTimeout`` detached task:
+/// a single reader over an immutable frame snapshot, no concurrent access (repo @unchecked policy).
 private struct FrameBox: @unchecked Sendable {
     let buffer: CVPixelBuffer
 }
