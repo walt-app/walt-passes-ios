@@ -30,9 +30,11 @@ enum BarcodeImageFactory {
         return png(from: filter.outputImage, scale: scale)
     }
 
-    /// Build a valid PNG of exactly `width` x `height` filled solid white — a decodable container
-    /// that carries no symbol, and a header-cap fixture when sized past the dimension limits.
-    static func blankPNG(width: Int, height: Int) -> Data {
+    /// Build a valid solid-white image of exactly `width` x `height` in `type` — a decodable
+    /// container carrying no symbol. Doubles as a header-cap fixture (size it past the dimension
+    /// limits) and, with a `type` outside the still-image roster (e.g. `.gif`), as the
+    /// allowlist-rejection fixture.
+    static func blank(width: Int, height: Int, type: UTType = .png) -> Data {
         let context = CGContext(
             data: nil,
             width: width,
@@ -44,20 +46,25 @@ enum BarcodeImageFactory {
         )!
         context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
         context.fill(CGRect(x: 0, y: 0, width: width, height: height))
-        return encodePNG(context.makeImage()!)
+        return encode(context.makeImage()!, as: type)
+    }
+
+    /// Convenience for the common white-PNG fixture.
+    static func blankPNG(width: Int, height: Int) -> Data {
+        blank(width: width, height: height, type: .png)
     }
 
     private static func png(from ciImage: CIImage?, scale: CGFloat) -> Data {
         let scaled = ciImage!.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
         let context = CIContext()
         let cgImage = context.createCGImage(scaled, from: scaled.extent)!
-        return encodePNG(cgImage)
+        return encode(cgImage, as: .png)
     }
 
-    private static func encodePNG(_ cgImage: CGImage) -> Data {
+    private static func encode(_ cgImage: CGImage, as type: UTType) -> Data {
         let data = NSMutableData()
         let destination = CGImageDestinationCreateWithData(
-            data, UTType.png.identifier as CFString, 1, nil
+            data, type.identifier as CFString, 1, nil
         )!
         CGImageDestinationAddImage(destination, cgImage, nil)
         CGImageDestinationFinalize(destination)

@@ -2,20 +2,12 @@ import Foundation
 import UniformTypeIdentifiers
 
 /// Defensive caps for the bounded still-image decode (mirror of Android `BarcodeDecodeConfig`).
-/// The image-codec step is the dominant RCE surface (CVE-2023-4863 libwebp class) and the
-/// decompression-bomb DoS surface, so every limit here is enforced *before* `CGImageSource`
-/// allocates a full-size bitmap — the header is inspected via `CGImageSourceCopyPropertiesAtIndex`
-/// and the caps are checked against the advertised pixel dimensions before `CGImageSourceCreateImageAtIndex`
-/// is ever called.
+/// The image-codec step is the dominant RCE (CVE-2023-4863 libwebp class) and decompression-bomb
+/// surface, so every cap here is enforced from the image *header* — before `CGImageSource`
+/// allocates a bitmap. Per-cap specifics are on each property.
 ///
-/// Layered the way Android's config is: ``maxBytes`` bounds the compressed bytes read off the
-/// source before any decode; ``maxDimensionPx`` / ``maxAreaPx`` are checked from the decoded
-/// *header* before the backing bitmap is allocated; ``allowedContentTypes`` rejects containers
-/// outside the still-image roster at the same header step; ``decodeTimeout`` is the watchdog budget
-/// that bounds a slow/hung Vision decode (the app-level analogue of Android's `ProcessKiller`).
-///
-/// Defaults are exposed as `static` constants so tests and the decoder refer to the same numbers
-/// and changing a default is a deliberate, test-breaking edit.
+/// Defaults are `static` constants so tests and the decoder share the numbers and changing one is a
+/// deliberate, test-breaking edit.
 public struct BarcodeDecodeConfig: Sendable {
     /// Max compressed bytes read off the source before any decode.
     public var maxBytes: Int

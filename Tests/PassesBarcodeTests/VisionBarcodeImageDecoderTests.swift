@@ -1,6 +1,7 @@
 import Foundation
 import PassesCore
 import Testing
+import UniformTypeIdentifiers
 
 @testable import PassesBarcode
 
@@ -29,6 +30,15 @@ struct VisionBarcodeImageDecoderTests {
     @Test func nonImageDataFailsDecode() async {
         let junk = Data("this is not an image".utf8)
         #expect(await decoder.decode(source: .data(junk)) == .decodeFailed(reason: .imageDecodeFailed))
+    }
+
+    @Test func decodableContainerOutsideRosterIsRejected() async {
+        // A valid, fully decodable GIF — but GIF is outside the still-image allowlist, so the
+        // container gate must refuse it before Vision, narrowing the codec attack surface. This
+        // exercises `isAllowedContainer`, which `nonImageDataFailsDecode` cannot: that junk fails
+        // earlier, at image-source creation / type identification.
+        let gif = BarcodeImageFactory.blank(width: 200, height: 200, type: .gif)
+        #expect(await decoder.decode(source: .data(gif)) == .decodeFailed(reason: .imageDecodeFailed))
     }
 
     @Test func missingFileIsSourceUnreadable() async {
