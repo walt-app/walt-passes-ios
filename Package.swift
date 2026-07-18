@@ -21,6 +21,7 @@ let package = Package(
     ],
     products: [
         .library(name: "PassesCore", targets: ["PassesCore"]),
+        .library(name: "PassesBarcode", targets: ["PassesBarcode"]),
         .library(name: "PassesPDFCore", targets: ["PassesPDFCore"]),
         .library(name: "PassesPDF", targets: ["PassesPDF"]),
         .library(name: "PassesPDFUI", targets: ["PassesPDFUI"]),
@@ -52,6 +53,11 @@ let package = Package(
                 // passes-core/resources/.../certs). Loaded at parse time; never fetched.
                 .copy("Resources/certs"),
             ]
+        ),
+        .target(
+            name: "PassesBarcode",
+            dependencies: ["PassesCore"],
+            path: "Sources/PassesBarcode"
         ),
         .target(
             name: "PassesPDFCore",
@@ -102,6 +108,11 @@ let package = Package(
                 // verbatim from the Android side. Regression guard for walt-passes-ios#31.
                 .copy("Fixtures"),
             ]
+        ),
+        .testTarget(
+            name: "PassesBarcodeTests",
+            dependencies: ["PassesBarcode", "PassesCore"],
+            path: "Tests/PassesBarcodeTests"
         ),
         .testTarget(
             name: "PassesPDFCoreTests",
