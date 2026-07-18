@@ -44,13 +44,25 @@ required — a separate, re-escalatable §7 decision, not a default.
    mean the hostile image had already entered the main-process heap, defeating its isolation. iOS
    drops that containment premise (Deviation 2), so a `.data` arm is acceptable — the app's
    `PHPicker` path naturally yields either in-memory `Data` or a temporary file `URL`.
+4. **Live-frame boundary is a `CVPixelBuffer`, not Android's `ByteArray` + Y-plane geometry (K12).**
+   Android's `decodeYPlane` takes raw Y-plane bytes plus `rowStride`/`pixelStride`/`reverseHorizontal`
+   because ZXing's `PlanarYUVLuminanceSource` consumes exactly that and the shape stays KMP-clean.
+   iOS deviates: **Vision ingests a `CVPixelBuffer` natively** (including the camera's biplanar YUV
+   formats), so a byte-shaped entry would force the module to *rebuild* a pixel buffer from the bytes
+   — touching CoreVideo anyway and discarding Vision's own plane handling. `CVPixelBuffer` is
+   **CoreVideo**, not AVFoundation/CoreMedia: the capture glue (`AVCaptureVideoDataOutput` →
+   `CMSampleBuffer` → `CMSampleBufferGetImageBuffer`) stays app-side (A8); the kernel receives a bare
+   frame snapshot plus a `CGImagePropertyOrientation` (ImageIO), which subsumes Android's
+   `reverseHorizontal` mirror flag and also carries rotation. Both paths share ONE Vision core
+   (`VisionSymbolDecode`) and ONE roster — the live path does not fork. The live path skips the
+   bounded still-image decode (a frame is already-decoded, app-owned pixels, not an untrusted file);
+   the roster clamp, faithful-payload posture, and `withDecodeTimeout` wait bound carry over.
 
 ## Consequences
 
-Unblocks kernel live-frame decode (K12, Vision on `CMSampleBuffer`) and the app-side decode
-routing / camera / image-import / share beads, which reuse this roster clamp and result mapping.
-The app-side camera privacy string and Share-Extension entitlement remain separate §7 sign-offs,
-not resolved here.
+Unblocks the app-side decode routing / camera / image-import / share beads, which reuse this roster
+clamp and result mapping. The app-side camera privacy string and Share-Extension entitlement remain
+separate §7 sign-offs, not resolved here.
 
 Android source: `passes-android-main/passes-barcode/`,
 `passes-android-main/passes-barcode-core/src/main/kotlin/is/walt/passes/barcode/BarcodeSymbolDecode.kt`.

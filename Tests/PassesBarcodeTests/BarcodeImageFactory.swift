@@ -15,19 +15,30 @@ import UniformTypeIdentifiers
 enum BarcodeImageFactory {
     /// Encode `payload` as a QR symbol (byte mode, UTF-8) and return PNG bytes.
     static func qrPNG(_ payload: String, scale: CGFloat = 12) -> Data {
-        let filter = CIFilter.qrCodeGenerator()
-        filter.message = Data(payload.utf8)
-        filter.correctionLevel = "M"
-        return png(from: filter.outputImage, scale: scale)
+        encode(qrCGImage(payload, scale: scale), as: .png)
     }
 
     /// Encode `payload` as a Code128 symbol and return PNG bytes. Code128's generator accepts only
     /// Latin-1; callers keep these payloads ASCII.
     static func code128PNG(_ payload: String, scale: CGFloat = 3) -> Data {
+        encode(code128CGImage(payload, scale: scale), as: .png)
+    }
+
+    /// The QR symbol as a `CGImage` — the shared root of both the PNG (still-image path) and the
+    /// `CVPixelBuffer` (live-frame path) fixtures, so both drive the same rendered symbol.
+    static func qrCGImage(_ payload: String, scale: CGFloat = 12) -> CGImage {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(payload.utf8)
+        filter.correctionLevel = "M"
+        return cgImage(from: filter.outputImage, scale: scale)
+    }
+
+    /// The Code128 symbol as a `CGImage`. Code128's generator accepts only Latin-1; keep ASCII.
+    static func code128CGImage(_ payload: String, scale: CGFloat = 3) -> CGImage {
         let filter = CIFilter.code128BarcodeGenerator()
         filter.message = Data(payload.utf8)
         filter.quietSpace = 10
-        return png(from: filter.outputImage, scale: scale)
+        return cgImage(from: filter.outputImage, scale: scale)
     }
 
     /// Build a valid solid-white image of exactly `width` x `height` in `type` — a decodable
@@ -54,11 +65,10 @@ enum BarcodeImageFactory {
         blank(width: width, height: height, type: .png)
     }
 
-    private static func png(from ciImage: CIImage?, scale: CGFloat) -> Data {
+    private static func cgImage(from ciImage: CIImage?, scale: CGFloat) -> CGImage {
         let scaled = ciImage!.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
         let context = CIContext()
-        let cgImage = context.createCGImage(scaled, from: scaled.extent)!
-        return encode(cgImage, as: .png)
+        return context.createCGImage(scaled, from: scaled.extent)!
     }
 
     private static func encode(_ cgImage: CGImage, as type: UTType) -> Data {

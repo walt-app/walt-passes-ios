@@ -27,9 +27,9 @@ public protocol BarcodeImageDecoder: Sendable {
 /// One decode composes three steps:
 ///  1. ``BoundedImageDecode`` caps compressed size, container format, and canvas dimensions before
 ///     `CGImageSource` allocates a bitmap (decompression-bomb guard).
-///  2. `VNDetectBarcodesRequest`, its `symbologies` pinned to the ``RosterSymbology/requested``
-///     QR + Code128 clamp, reads the symbol — running in Vision's system services, out of Walt's
-///     address space (the iOS analogue of Android's isolated decode process).
+///  2. ``VisionSymbolDecode/detectBarcode(using:)`` — the roster-pinned `VNDetectBarcodesRequest`,
+///     shared verbatim with the live-frame path — reads the symbol in Vision's system services, out
+///     of Walt's address space (the iOS analogue of Android's isolated decode process).
 ///  3. The whole Vision step runs under ``withDecodeTimeout(_:timeoutValue:operation:)`` — the
 ///     app-level `ProcessKiller` analogue — so a hung decode reports `decoderUnavailable` rather
 ///     than blocking the caller.
@@ -52,32 +52,8 @@ public struct VisionBarcodeImageDecoder: BarcodeImageDecoder {
                 config.decodeTimeout,
                 timeoutValue: .decodeFailed(reason: .decoderUnavailable)
             ) {
-                Self.detectBarcode(in: cgImage)
+                VisionSymbolDecode.detectBarcode(using: VNImageRequestHandler(cgImage: cgImage, options: [:]))
             }
         }
-    }
-
-    /// The synchronous Vision decode. Runs the roster-pinned request and folds the observations
-    /// onto a ``BarcodeDecodeResult``: the first observation carrying a payload string wins (Android
-    /// "first barcode found"); a symbology outside the clamp is the defensive
-    /// ``DecodeFailureReason/unsupportedBarcodeFormat`` guard (unreachable while the request is
-    /// pinned); a Vision `perform` failure is ``DecodeFailureReason/decoderUnavailable``.
-    private static func detectBarcode(in cgImage: CGImage) -> BarcodeDecodeResult {
-        let request = VNDetectBarcodesRequest()
-        request.symbologies = RosterSymbology.requested
-        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-        do {
-            try handler.perform([request])
-        } catch {
-            return .decodeFailed(reason: .decoderUnavailable)
-        }
-        guard let observation = request.results?.first(where: { $0.payloadStringValue != nil }) else {
-            return .noBarcodeFound
-        }
-        guard let format = RosterSymbology.scannableFormat(for: observation.symbology) else {
-            return .decodeFailed(reason: .unsupportedBarcodeFormat)
-        }
-        // Force-unwrap is safe: the `first(where:)` predicate already required a non-nil payload.
-        return .decodedBarcode(payload: observation.payloadStringValue!, format: format)
     }
 }
