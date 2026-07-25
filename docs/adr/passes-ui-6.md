@@ -1,0 +1,18 @@
+# passes-ui-6: Redesigned list-surface posture (ipass-65p.3)
+
+The Walt consumer redesign (consumer epic ios-te9; Android analogue wlt-mx2d) turns the wallet list into a stack of large card faces that render kernel-produced content inline. This ADR ports the reasoning of Android's wpass-tjc.4 amendments (walt-passes-android #187: ADR 0003 D4 addendum, ADR 0005 list-surface addendum, `SCANNABLE_CARD_THREAT_MODEL.md` redesign-context row) onto the iOS kernel surface, and records the trust-presentation boundary the redesign moves. `SCANNABLE_CARD_THREAT_MODEL.md` remains canonical in the Android kernel repo; iOS sources cite it by name and this ADR is the iOS-side anchor for the redesign rows.
+
+## List-surface posture
+
+- **Issuer `pass.json` colors extend to pkpass list-card faces — and only those.** `PassColors` (previously consumed only inside `PassFront`) now also drives the consumer-built pkpass card face, under a consumer-side contrast guard, with a hairline (not tinting) separating white issuer cards from the background. Document and scannable cards keep a neutral surface with the artifact class named in the eyebrow ("PDF" / "QR CODE" / "CODE 128"). Issuer color functions as pass identity, never as the artifact-class signal, and never as trust.
+- **Content-true previews introduce no new render, decode, or extraction surface.** A PDF card's page-0 thumbnail comes from the existing `PDFRendererBinder` raster path (bounded decode; ADR passes-pdf-ui-6); a scannable card's code render comes from the encoder-only `CompactCodeView` path (no decode lane; its contract lives in that view's doc comment). Consumer card faces MUST route all kernel-content rendering through these paths — decoding issuer bytes or user images outside `BoundedImage`-guarded / binder-mediated entry points is a contract violation, not a styling choice. (iOS scope note: image documents and composites do not exist on iOS; their rows in the Android amendments have no iOS analogue yet.)
+- **No list card of any class carries a signature or verified affordance.** The trust ladder (signature status, trust captions, provenance) lives exclusively on detail surfaces. The verified-band confusion class is therefore structurally absent at list scale: there is no verified visual for a user-created card to imitate. The consumer redesign is expected to pin this ("no verified affordance on any card class") in its own list tests, mirroring Android's `WalletListTest` invariant.
+
+## Trust-presentation boundary
+
+The redesigned consumer detail composes kernel primitives (`BarcodeView`) inside a consumer-built ticket card instead of mounting `PassFront`. That moves two signals across the kernel/consumer line, and the boundary is now explicit:
+
+- **Kernel-guaranteed (non-suppressible) only where the kernel view is mounted:** `ExpiredOverlay` inside `PassFront`, and the provenance caption inside `ScannableCardScreen` / `ScannableCardTile`. Consumers that keep mounting these views keep these guarantees for free.
+- **Consumer-owned when composing primitives directly:** a consumer rendering its own pass card owes the equivalent signals itself — a trust caption stating signature status verbatim from the kernel's `SignatureStatus` classification (never a stronger claim than the classification supports; a self-signed pass is signed), and an expired treatment derived from the pass's own dates. The consumer redesign carries these as the Walt-side trust-caption and washed-card components with their own tests; the kernel deliberately does not grow a suppressible variant of its badged views to "help" — a consumer that wants kernel-guaranteed presentation mounts the kernel view.
+
+Android source: `passes-android-main` commit f4c52bd (wpass-tjc.4).
