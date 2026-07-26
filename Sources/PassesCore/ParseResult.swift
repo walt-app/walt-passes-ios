@@ -81,6 +81,5 @@ public enum UnsupportedReason: Sendable, Equatable {
     case encryptedArchive
 }
 
-// `toFailureKind()` / `toFailureReason()` flattenings are deferred: they target
-// `ParseFailureKind` / `ParseFailureReason`, which live in `TelemetryGuard.kt` on the Android
-// side and are not part of this port.
+// `toFailureKind()` lives in `ParseFailureKind.swift`. The finer-grained
+// `toFailureReason()` flattening is deferred with the `TelemetryGuard` port.

@@ -172,4 +172,13 @@ struct ViewConstructionSmokeTests {
         let v = ScannableCardView(card: card, showPayloadCaption: true)
         #expect(type(of: v.body) != Never.self)
     }
+
+    @Test func passImportRejectionSheetConstructs() {
+        let v = PassImportRejectionSheet(
+            kind: .malformed,
+            telemetry: NoopUiTelemetryGuard(),
+            onDismiss: {}
+        )
+        #expect(type(of: v.body) != Never.self)
+    }
 }

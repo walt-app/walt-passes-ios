@@ -13,6 +13,7 @@ public protocol UiTelemetryGuard: Sendable {
     func onSecuritySheetConfirmed(intentKind: SecurityIntentKind, type: PassType)
     func onSecuritySheetDismissed(intentKind: SecurityIntentKind, type: PassType)
     func onImageDecodeRejected(reason: ImageDecodeRejection)
+    func onImportRejected(kind: ParseFailureKind)
     func onImportConfirmShown(type: PassType, signatureBand: SignatureBand)
     func onImportConfirmed(type: PassType, signatureBand: SignatureBand)
     func onImportDismissed(type: PassType, signatureBand: SignatureBand)
@@ -72,6 +73,7 @@ public struct NoopUiTelemetryGuard: UiTelemetryGuard {
     public func onSecuritySheetConfirmed(intentKind: SecurityIntentKind, type: PassType) {}
     public func onSecuritySheetDismissed(intentKind: SecurityIntentKind, type: PassType) {}
     public func onImageDecodeRejected(reason: ImageDecodeRejection) {}
+    public func onImportRejected(kind: ParseFailureKind) {}
     public func onImportConfirmShown(type: PassType, signatureBand: SignatureBand) {}
     public func onImportConfirmed(type: PassType, signatureBand: SignatureBand) {}
     public func onImportDismissed(type: PassType, signatureBand: SignatureBand) {}
