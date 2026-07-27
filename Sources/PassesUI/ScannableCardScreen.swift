@@ -63,12 +63,22 @@ public struct ScannableCardScreen: View {
                 .environment(\.colorScheme, .light)
                 .padding(24)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            if trustCaption == .docked {
+            if rendersKernelCaption {
                 ScannableCardTrustCaption()
                     .frame(maxWidth: .infinity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Exhaustive over the placement (mirror of Android's `when`): a future
+    /// placement case forces a compile-time decision here instead of silently
+    /// omitting the caption — the wrong failure direction on a trust surface.
+    var rendersKernelCaption: Bool {
+        switch trustCaption {
+        case .docked: return true
+        case .hostedTypeRow: return false
+        }
     }
 
     /// White-card padding around the code. Unlike Android's ZXing, CoreImage
