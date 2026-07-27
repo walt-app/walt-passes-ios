@@ -22,19 +22,26 @@ public struct FullScreenDocumentView: View {
     public let renderer: PDFRendererBinder
     public let onClose: () -> Void
     public let telemetry: DocumentTelemetryGuard
+    let closeButton: ((@escaping () -> Void) -> AnyView)?
 
+    /// `closeButton` lets the host swap the close chrome (mirror of Android's
+    /// `closeButton` slot, wlt-d3d); it receives the close handler and MUST wire
+    /// it — the slot changes chrome only, never whether the surface can close.
+    /// nil keeps the kernel default.
     public init(
         doc: PDFDocument,
         pdfData: Data,
         renderer: PDFRendererBinder,
         onClose: @escaping () -> Void,
-        telemetry: DocumentTelemetryGuard = DocumentTelemetryGuardNoOp.shared
+        telemetry: DocumentTelemetryGuard = DocumentTelemetryGuardNoOp.shared,
+        closeButton: ((@escaping () -> Void) -> AnyView)? = nil
     ) {
         self.doc = doc
         self.pdfData = pdfData
         self.renderer = renderer
         self.onClose = onClose
         self.telemetry = telemetry
+        self.closeButton = closeButton
     }
 
     @State private var currentPage: Int = 0
@@ -49,8 +56,14 @@ public struct FullScreenDocumentView: View {
                 pager(style: style)
                 DocumentTrustCaption()
             }
-            CloseFullScreenButton(label: style.closeFullScreenLabel, style: style, action: onClose)
+            if let closeButton {
+                closeButton(onClose)
+            } else {
+                CloseFullScreenButton(
+                    label: style.closeFullScreenLabel, style: style, action: onClose
+                )
                 .padding(12)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(style.laneBackground.swiftUIColor)
