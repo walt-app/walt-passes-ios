@@ -32,19 +32,30 @@ struct ScannableCardSurfaceLockTests {
         _ = ScannableCardTrustCaption()
     }
 
-    @Test func screenExposesExactlyTwoPublicInitialiserParameters() {
-        // (card, showLabel). `showLabel` (wpass-1wu.1) gates ONLY the top label
-        // Text so a host rendering its own title avoids a duplicate; it cannot
-        // omit the barcode, the payload caption, or the bottom-docked
-        // non-suppressible ScannableCardTrustCaption (C2). Android counts three
-        // (the extra is `modifier`). Adding a parameter that could hide the
-        // trust caption would breach C2; review the threat model before
-        // changing this initialiser.
+    @Test func screenExposesExactlyThreePublicInitialiserParameters() {
+        // (card, showLabel, trustCaption). `showLabel` (wpass-1wu.1) gates ONLY
+        // the top label Text; `trustCaption` (wpass-gv6) is the ONE audited way
+        // the kernel caption is omitted — `.hostedTypeRow` shifts the C2 claim
+        // to the host's "Pass type" row, pinned consumer-side in walt-ios.
+        // Android counts four (the extra is `modifier`). Any other parameter
+        // that could hide the trust caption would breach C2; review the threat
+        // model before changing this initialiser.
         guard let card = Self.fixture() else {
             Issue.record("validator should accept fixture input")
             return
         }
-        _ = ScannableCardScreen(card: card, showLabel: false)
+        _ = ScannableCardScreen(card: card, showLabel: false, trustCaption: .hostedTypeRow)
+    }
+
+    @Test func trustCaptionPlacementDefaultsToDocked() {
+        guard let card = Self.fixture() else {
+            Issue.record("validator should accept fixture input")
+            return
+        }
+        // Compile-level pin: omitting the argument keeps the docked caption, so
+        // every pre-placement caller is unchanged.
+        let screen = ScannableCardScreen(card: card)
+        #expect(screen.trustCaption == .docked)
     }
 
     @Test func screenQuietZoneIsSixteenPoints() {
