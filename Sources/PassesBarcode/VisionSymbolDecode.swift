@@ -27,10 +27,13 @@ enum VisionSymbolDecode {
         guard let observation = request.results?.first(where: { $0.payloadStringValue != nil }) else {
             return .noBarcodeFound
         }
-        guard let format = RosterSymbology.scannableFormat(for: observation.symbology) else {
+        // Force-unwrap is safe: the `first(where:)` predicate already required a non-nil payload.
+        guard
+            let folded = RosterSymbology.fold(
+                symbology: observation.symbology, payload: observation.payloadStringValue!)
+        else {
             return .decodeFailed(reason: .unsupportedBarcodeFormat)
         }
-        // Force-unwrap is safe: the `first(where:)` predicate already required a non-nil payload.
-        return .decodedBarcode(payload: observation.payloadStringValue!, format: format)
+        return .decodedBarcode(payload: folded.payload, format: folded.format)
     }
 }

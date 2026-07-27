@@ -14,3 +14,18 @@ placeholder below remains purely as a defensive fallback for an externally-sourc
 one of these symbologies; it is no longer a "follow-up bead will hand-roll a 1D writer" promise.
 If the three formats are wanted later, that reopens as a fresh decision (porting a matrix writer
 into `BarcodeMatrix` is the no-new-dependency path).
+
+## Update 2026-07-27 (ipass-dq2 / ios-sjf.26): hand-rolled 1D encoders land, placeholder demoted
+
+The fresh decision was taken (human-approved 2026-07-27, recorded on ios-sjf.26: full expansion).
+`PassesCore.OneDimensionalBarcodeEncoder` now encodes EAN-13, UPC-A, and Code39 into single-row
+`BarcodeMatrix` values from the GS1 / AIM module patterns — no new dependency, the
+no-new-dependency path this ADR anticipated. Shape matches what Android's ZXing renders
+(Code39 wide:narrow 2:1; UPC-A as the leading-zero EAN-13 symbol; quiet zones included in the
+matrix). `BarcodeRenderer` rasterizes the row (nearest-neighbor upscale keeps modules crisp);
+`CompactCodeView`'s 1D arm routes through the same encoder. The encoder re-validates structure
+(charset / exact length / check digit via `ScannableFormatConstraints`) and returns `nil` on
+failure — the grey placeholder survives only as the detail surfaces' render-failure fallback,
+and the compact path keeps its white failure tile. Correctness is pinned by structural table
+tests plus a Vision decode round-trip per symbology (`OneDimensionalBarcodeEncoderTests`,
+`OneDRoundTripTests`). The create picker ships all five formats (consumer bead ios-sjf.26).

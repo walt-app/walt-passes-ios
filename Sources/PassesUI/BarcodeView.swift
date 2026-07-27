@@ -62,10 +62,11 @@ internal enum BarcodeRenderer {
     }
 
     static func cgImage(payload: String, format: ScannableFormat) -> CGImage? {
-        // 1D symbologies that Apple ships generators for: Code128. EAN-13,
-        // UPC-A, and Code39 have no first-party CoreImage filter; render as a
-        // grey placeholder rectangle so the surface composes without crashing.
-        // See `docs/adr/passes-ui-2.md`.
+        // QR + Code128 use Apple's CoreImage generators; EAN-13, UPC-A, and
+        // Code39 have no first-party filter and render through the kernel's
+        // hand-rolled `OneDimensionalBarcodeEncoder` (ADR `passes-ui-2`,
+        // revised). A structurally invalid payload for the hand-rolled trio
+        // degrades to the grey placeholder — never a wrong-scanning symbol.
         let data = Data(payload.utf8)
         switch format {
         case .qr:
@@ -78,11 +79,34 @@ internal enum BarcodeRenderer {
             filter?.setValue(data, forKey: "inputMessage")
             return filter?.outputImage.flatMap { CIContext().createCGImage($0, from: $0.extent) }
         case .code39, .ean13, .upcA:
-            // No first-party generator; surface a placeholder so the call
-            // site composes. Real rendering is the implementation bead's
-            // follow-up (likely a hand-rolled 1D writer).
-            return placeholderCGImage()
+            guard let matrix = OneDimensionalBarcodeEncoder.encode(payload: payload, format: format)
+            else { return placeholderCGImage() }
+            return cgImage(matrix: matrix)
         }
+    }
+
+    /// Rasterize a single-row module matrix into a 1-pixel-per-module bitmap
+    /// (the view scales it up with `.interpolation(.none)`, so modules stay
+    /// crisp). Height is a fixed 1D bar band; the matrix carries no vertical
+    /// information.
+    private static let oneDBarHeightPixels = 30
+
+    static func cgImage(matrix: BarcodeMatrix) -> CGImage? {
+        let width = matrix.width
+        let height = oneDBarHeightPixels
+        guard
+            let context = CGContext(
+                data: nil, width: width, height: height, bitsPerComponent: 8,
+                bytesPerRow: width, space: CGColorSpaceCreateDeviceGray(),
+                bitmapInfo: CGImageAlphaInfo.none.rawValue)
+        else { return nil }
+        context.setFillColor(gray: 1, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        context.setFillColor(gray: 0, alpha: 1)
+        for x in 0..<width where matrix.isSet(x: x, y: 0) {
+            context.fill(CGRect(x: x, y: 0, width: 1, height: height))
+        }
+        return context.makeImage()
     }
 
     private static func ciFilter(for format: BarcodeFormat) -> CIFilter? {

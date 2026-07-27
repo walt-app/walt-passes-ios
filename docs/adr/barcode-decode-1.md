@@ -67,3 +67,17 @@ separate §7 sign-offs, not resolved here.
 Android source: `passes-android-main/passes-barcode/`,
 `passes-android-main/passes-barcode-core/src/main/kotlin/is/walt/passes/barcode/BarcodeSymbolDecode.kt`.
 Extends the iOS encode surface in `passes-ui-1`.
+
+## Update 2026-07-27 (ipass-dq2 / ios-sjf.26): roster expanded to Android symbol parity
+
+The "Flip … only if Android symbol parity is later required" clause fired: the re-escalatable §7
+decision was taken (human-approved 2026-07-27, recorded on ios-sjf.26 — full expansion). The
+answer is NOT a ZXing port — decode stays on Vision; `RosterSymbology.requested` grows to
+`[.qr, .code128, .ean13, .code39]`, still an allowlist and still the only place the roster is
+defined. UPC-A has no `VNBarcodeSymbology`: Vision reports it as EAN-13 with a leading zero, and
+`RosterSymbology.fold` maps that back to `.upcA` with the 12-digit payload — the same
+classification ZXing produces on Android, so cross-platform scans of one physical card agree.
+Every compensating control from the original decision (bounded still-image decode, decode
+timeout, faithful-payload posture, label-never-autofilled) carries over unchanged; the roster
+clamp now matches Android's `POSSIBLE_FORMATS` pin exactly. Encode-side parity lands in the same
+change (`passes-ui-2`, revised).

@@ -23,9 +23,8 @@ import SwiftUI
 ///    module tall and carries no data on the vertical axis.
 ///
 /// Sizing is the caller's: frame the view externally (the small minimum floor
-/// only guards against a collapsed, unscannable render). Encoder failures — and
-/// the symbologies `BarcodeRenderer` cannot encode natively (EAN-13, UPC-A,
-/// Code 39; ADR `passes-ui-2`) — render as a same-sized white tile with a
+/// only guards against a collapsed, unscannable render). Encoder failures
+/// render as a same-sized white tile with a
 /// VoiceOver-readable "Barcode failed to render" label instead of throwing or
 /// painting the detail surfaces' grey placeholder: a list face must never show
 /// a grey blob that could be mistaken for a real code. Encoding runs in body,
@@ -90,15 +89,20 @@ public struct CompactCodeView: View {
         .modifier(CompactCodeAccessibility(contentDescription: contentDescription))
     }
 
-    /// Encoder entry for the compact path. Unlike the detail surfaces, the
-    /// symbologies without a native generator return nil (failure tile), never
-    /// the grey placeholder — internal so tests pin the routing.
+    /// Encoder entry for the compact path. Unlike the detail surfaces, an
+    /// encode failure returns nil (failure tile), never the grey placeholder —
+    /// internal so tests pin the routing. The 1D trio goes straight to the
+    /// kernel encoder so an invalid payload cannot surface the placeholder.
     internal static func renderImage(payload: String, format: ScannableFormat) -> CGImage? {
         switch format {
         case .qr, .code128:
             return BarcodeRenderer.cgImage(payload: payload, format: format)
         case .ean13, .upcA, .code39:
-            return nil
+            // No closure here: a closure formed in this View-isolated context
+            // inherits @MainActor and traps when a caller invokes off-main.
+            guard let matrix = OneDimensionalBarcodeEncoder.encode(payload: payload, format: format)
+            else { return nil }
+            return BarcodeRenderer.cgImage(matrix: matrix)
         }
     }
 }
