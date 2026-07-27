@@ -161,6 +161,10 @@ public final class GrdbPassRepository: PassRepository, @unchecked Sendable {
         thumbnailBytes: Data
     ) async -> StorageResult<DocumentRecordId> {
         guard ensureOpen() else { return .failure(error: .databaseLocked) }
+        // Same label normalization as updateDocumentLabel, so both paths writing
+        // display_label agree (an all-whitespace label cannot land at import either).
+        // Mirror of Android SqlCipherPassRepository.insertDocument.
+        let label = label.trimmingCharacters(in: .whitespacesAndNewlines)
         if let kind = GrdbDocumentStore.rejection(pdfBytes: pdfBytes, pageCount: pageCount, label: label) {
             return .failure(error: .documentRejected(kind: kind))
         }
@@ -184,14 +188,17 @@ public final class GrdbPassRepository: PassRepository, @unchecked Sendable {
 
     public func updateDocumentLabel(id: DocumentRecordId, label: String) async -> StorageResult<Void> {
         guard ensureOpen() else { return .failure(error: .databaseLocked) }
+        // Normalize like updatePassUserLabel: trim, measure the cap against the trimmed
+        // value (mirror of Android). Blank folds to "" — empty labels are allowed here.
         // Cap checked before the row lookup, so a too-long label on an unknown id surfaces
-        // as `.documentRejected`, not `.integrityViolation`. Empty/blank labels are allowed.
-        if label.count > DocumentBounds.maxLabelChars {
+        // as `.documentRejected`, not `.integrityViolation`.
+        let normalized = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalized.count > DocumentBounds.maxLabelChars {
             return .failure(error: .documentRejected(kind: .labelTooLongAtStorage))
         }
         do {
             let matched = try await dbQueue.write { db in
-                try GrdbDocumentStore.updateLabel(id: id, label: label, db)
+                try GrdbDocumentStore.updateLabel(id: id, label: normalized, db)
             }
             guard matched else { return .failure(error: .integrityViolation(recordId: .document(id))) }
             await refreshDocuments()
