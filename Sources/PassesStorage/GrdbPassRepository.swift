@@ -163,7 +163,6 @@ public final class GrdbPassRepository: PassRepository, @unchecked Sendable {
         guard ensureOpen() else { return .failure(error: .databaseLocked) }
         // Same label normalization as updateDocumentLabel, so both paths writing
         // display_label agree (an all-whitespace label cannot land at import either).
-        // Mirror of Android SqlCipherPassRepository.insertDocument.
         let label = label.trimmingCharacters(in: .whitespacesAndNewlines)
         if let kind = GrdbDocumentStore.rejection(pdfBytes: pdfBytes, pageCount: pageCount, label: label) {
             return .failure(error: .documentRejected(kind: kind))
