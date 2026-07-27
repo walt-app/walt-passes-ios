@@ -57,9 +57,9 @@ struct QrPayloadClassifierTests {
 
     @Test func httpsUrlWithMixedScriptHostnameClassifiesWithoutCrash() {
         // Mixed-script hostname (Cyrillic er + Greek gamma in a Latin-looking name). The
-        // classifier must NOT homoglyph-detect or normalize; downstream UI renders `raw`
-        // verbatim. Host is platform-parser-defined (Android's JDK yields null here; iOS
-        // URLComponents may yield the literal) and is deliberately unasserted.
+        // classifier must NOT homoglyph-detect; downstream UI renders `raw` verbatim.
+        // Host is platform-parser-defined (Android's JDK yields null; iOS URLComponents
+        // IDNA-encodes to Punycode, which fail-safely reveals homoglyphs) — unasserted.
         let raw = "https://паγpal.com/"
         guard case .url(let scheme, _, let rawOut) = QrPayloadClassifier.classify(raw) else {
             Issue.record("expected url kind")
@@ -144,6 +144,26 @@ struct QrPayloadClassifierTests {
         let kind = QrPayloadClassifier.classify(#"WIFI:T:WPA;P:my\;S:secret;S:realnet;;"#)
         #expect(kind == .wifi(ssid: "realnet"))
         #expect(!String(describing: kind).contains("my"))
+    }
+
+    @Test func combiningMarkAfterSchemeColonStillClassifies() {
+        // A combining mark following the `:` must not fuse the delimiter into a
+        // non-matching grapheme cluster and silently downgrade the warning arm.
+        #expect(
+            QrPayloadClassifier.classify("tel:\u{0301}+19005551234")
+                == .phone(number: "\u{0301}+19005551234"))
+    }
+
+    @Test func combiningMarkAfterFieldSemicolonCannotLeakWifiPassword() {
+        // A combining mark after the SSID's terminating `;` must not fuse it and let
+        // the password ride into the surfaced SSID.
+        let kind = QrPayloadClassifier.classify("WIFI:S:evil;\u{0301}P:hunter2;;")
+        #expect(kind == .wifi(ssid: "evil"))
+        #expect(!String(describing: kind).contains("hunter2"))
+    }
+
+    @Test func lowercaseWifiFieldKeyMatches() {
+        #expect(QrPayloadClassifier.classify("WIFI:s:lower;;") == .wifi(ssid: "lower"))
     }
 
     @Test func bitcoinUriStripsAmountTail() {

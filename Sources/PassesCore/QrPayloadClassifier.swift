@@ -11,7 +11,11 @@ import Foundation
 /// than guessing.
 ///
 /// Scheme matching is case-insensitive per RFC 3986; the matched scheme is normalized to
-/// lowercase before dispatch. Mirror of Android's `QrPayloadClassifier`.
+/// lowercase before dispatch. All delimiter scanning walks unicode SCALARS, not Swift
+/// `Character`s: a combining mark after `:`/`;`/`?` must not fuse the delimiter into a
+/// non-matching grapheme cluster (Kotlin walks code units, and a hostile payload could
+/// otherwise smuggle a WIFI password past the field walker). Mirror of Android's
+/// `QrPayloadClassifier`.
 public enum QrPayloadClassifier {
 
     public static func classify(_ payload: String) -> QrPayloadKind {
@@ -52,13 +56,19 @@ public enum QrPayloadClassifier {
     /// Returns (lowercased scheme, remainder after the `:`) when the payload starts with
     /// an RFC 3986 scheme, else nil. Equivalent to Android's anchored scheme regex: the
     /// allowed character set excludes `:`, so the prefix up to the first colon is the
-    /// candidate and any disallowed character in it (including newlines) rejects.
+    /// candidate and any disallowed scalar in it (including newlines) rejects.
     private static func splitScheme(_ payload: String) -> (String, String)? {
-        guard let colon = payload.firstIndex(of: ":"), colon != payload.startIndex else { return nil }
-        let candidate = payload[..<colon]
-        guard let first = candidate.unicodeScalars.first, isAlpha(first) else { return nil }
-        guard candidate.unicodeScalars.dropFirst().allSatisfy(isSchemeChar) else { return nil }
-        return (candidate.lowercased(), String(payload[payload.index(after: colon)...]))
+        let scalars = payload.unicodeScalars
+        guard let colon = scalars.firstIndex(of: ":"), colon != scalars.startIndex else {
+            return nil
+        }
+        let candidate = scalars[..<colon]
+        guard let first = candidate.first, isAlpha(first) else { return nil }
+        guard candidate.dropFirst().allSatisfy(isSchemeChar) else { return nil }
+        return (
+            String(String.UnicodeScalarView(candidate)).lowercased(),
+            String(String.UnicodeScalarView(scalars[scalars.index(after: colon)...]))
+        )
     }
 
     private static func isAlpha(_ scalar: Unicode.Scalar) -> Bool {
@@ -70,10 +80,9 @@ public enum QrPayloadClassifier {
             || scalar == "."
     }
 
-    /// Mirror of Android's `substringBefore("?")`.
+    /// Mirror of Android's `substringBefore("?")`, scanning scalars.
     private static func beforeQuery(_ value: String) -> String {
-        guard let mark = value.firstIndex(of: "?") else { return value }
-        return String(value[..<mark])
+        String(String.UnicodeScalarView(value.unicodeScalars.prefix(while: { $0 != "?" })))
     }
 
     private static func classifyHttp(scheme: String, payload: String) -> QrPayloadKind {
@@ -83,10 +92,14 @@ public enum QrPayloadClassifier {
         guard let components = URLComponents(string: payload) else {
             return .unknownScheme(scheme: scheme, raw: payload)
         }
-        // `encodedHost`, not `host`: the decoded accessor IDN-converts Punycode
-        // (xn--… → Unicode), which is exactly the normalization this classifier
-        // promises not to do — the preview must show what the scanner receives.
-        return .url(scheme: scheme, host: components.encodedHost, raw: payload)
+        // `encodedHost`, not `host`: the decoded accessor IDN-converts Punycode input
+        // (xn--… → Unicode). Note the parser itself IDNA-encodes Unicode hosts to
+        // Punycode at parse time (Android's JDK yields host = null there instead) —
+        // accepted as fail-safe: punycoding reveals homoglyph spoofs, and the verbatim
+        // promise attaches to `raw`, which is preserved untouched. Empty host (e.g.
+        // "http://") folds to nil per the QrPayloadKind doc.
+        let host = components.encodedHost.flatMap { $0.isEmpty ? nil : $0 }
+        return .url(scheme: scheme, host: host, raw: payload)
     }
 
     // WIFI:T:<auth>;S:<ssid>;P:<password>;H:<hidden>;;
@@ -95,26 +108,29 @@ public enum QrPayloadClassifier {
     // uses, so an escaped `\;` inside (say) a password value cannot be mistaken for a real
     // field separator and cause an `S:` substring inside the password to surface as the SSID.
     private static func classifyWifi(body: String) -> QrPayloadKind {
-        guard let ssidStart = findFieldStart(body: Array(body), key: "S:") else {
+        let scalars = Array(body.unicodeScalars)
+        guard let ssidStart = findFieldStart(body: scalars, key: "s:") else {
             return .wifi(ssid: nil)
         }
-        return .wifi(ssid: readUntilUnescapedSemicolon(body: Array(body), start: ssidStart))
+        return .wifi(ssid: readUntilUnescapedSemicolon(body: scalars, start: ssidStart))
     }
 
-    private static func findFieldStart(body: [Character], key: String) -> Int? {
+    private static func findFieldStart(body: [Unicode.Scalar], key: String) -> Int? {
         // Walk the body honoring backslash escapes so a `;` is only treated as a field
         // boundary when it wasn't itself escaped. Without this, an SSID-key substring
         // inside an escaped value (e.g. `P:my\;S:secret;S:realnet;;`) would match and
         // surface the wrong network name in the preview.
-        let key = Array(key.lowercased())
+        let key = Array(key.unicodeScalars)
         var i = 0
         var prevWasUnescapedSemicolon = false
         while i < body.count {
             let atBoundary = i == 0 || prevWasUnescapedSemicolon
             let fits = i + key.count <= body.count
             if atBoundary && fits {
-                let region = body[i..<(i + key.count)].map { Character($0.lowercased()) }
-                if region == key { return i + key.count }
+                let matches = (0..<key.count).allSatisfy { offset in
+                    asciiLowercased(body[i + offset]) == key[offset]
+                }
+                if matches { return i + key.count }
             }
             if body[i] == "\\" && i + 1 < body.count {
                 prevWasUnescapedSemicolon = false
@@ -127,8 +143,13 @@ public enum QrPayloadClassifier {
         return nil
     }
 
-    private static func readUntilUnescapedSemicolon(body: [Character], start: Int) -> String {
-        var out = ""
+    private static func asciiLowercased(_ scalar: Unicode.Scalar) -> Unicode.Scalar {
+        guard ("A"..."Z").contains(scalar) else { return scalar }
+        return Unicode.Scalar(scalar.value + 32) ?? scalar
+    }
+
+    private static func readUntilUnescapedSemicolon(body: [Unicode.Scalar], start: Int) -> String {
+        var out = String.UnicodeScalarView()
         var i = start
         while i < body.count {
             let c = body[i]
@@ -137,10 +158,10 @@ public enum QrPayloadClassifier {
                 i += 2
                 continue
             }
-            if c == ";" { return out }
+            if c == ";" { return String(out) }
             out.append(c)
             i += 1
         }
-        return out
+        return String(out)
     }
 }
