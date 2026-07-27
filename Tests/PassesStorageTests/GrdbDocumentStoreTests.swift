@@ -147,6 +147,83 @@ struct GrdbDocumentStoreTests {
         #expect(rows.first(where: { $0.id == id })?.displayLabel == "B")
     }
 
+    /// Mirror of Android `updateLabelTrimsEdgesAndFoldsBlankToEmpty` (wpass-tjc.1).
+    @Test func updateDocumentLabelTrimsEdgesAndFoldsBlankToEmpty() async throws {
+        let repo = try makeRepository()
+        guard
+            case .success(let id) = await repo.insertDocument(
+                label: "seed", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb
+            )
+        else {
+            Issue.record("insert failed")
+            return
+        }
+
+        // Edges trimmed, internal whitespace preserved (mirrors updatePassUserLabel).
+        guard case .success = await repo.updateDocumentLabel(id: id, label: "  My Boarding Pass  ")
+        else {
+            Issue.record("update failed")
+            return
+        }
+        #expect(await currentLabel(repo, id: id) == "My Boarding Pass")
+
+        // Blank-after-trim folds to "" — the non-null column's cleared state.
+        _ = await repo.updateDocumentLabel(id: id, label: "   ")
+        #expect(await currentLabel(repo, id: id) == "")
+    }
+
+    /// Mirror of Android `updateLabelMeasuresCapAgainstTrimmedValue` (wpass-tjc.1).
+    @Test func updateDocumentLabelMeasuresCapAgainstTrimmedValue() async throws {
+        let repo = try makeRepository()
+        guard
+            case .success(let id) = await repo.insertDocument(
+                label: "seed", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb
+            )
+        else {
+            Issue.record("insert failed")
+            return
+        }
+
+        let maxLabel = String(repeating: "a", count: DocumentBounds.maxLabelChars)
+        let padded = "  " + maxLabel + "  "
+        #expect(padded.count > DocumentBounds.maxLabelChars)
+        guard case .success = await repo.updateDocumentLabel(id: id, label: padded) else {
+            Issue.record("padded at-cap label should be accepted after trim")
+            return
+        }
+        #expect(await currentLabel(repo, id: id) == maxLabel)
+    }
+
+    /// Mirror of Android `insertTrimsLabelAndFoldsBlankToEmptyMatchingUpdate` (wpass-tjc.1):
+    /// both paths writing display_label agree.
+    @Test func insertDocumentTrimsLabelAndFoldsBlankToEmpty() async throws {
+        let repo = try makeRepository()
+        guard
+            case .success(let trimmedId) = await repo.insertDocument(
+                label: "  boarding pass  ", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb
+            )
+        else {
+            Issue.record("insert failed")
+            return
+        }
+        guard
+            case .success(let blankId) = await repo.insertDocument(
+                label: "   ", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb
+            )
+        else {
+            Issue.record("blank insert failed")
+            return
+        }
+        #expect(await currentLabel(repo, id: trimmedId) == "boarding pass")
+        #expect(await currentLabel(repo, id: blankId) == "")
+    }
+
+    private func currentLabel(_ repo: GrdbPassRepository, id: DocumentRecordId) async -> String? {
+        var iterator = repo.observeDocuments().makeAsyncIterator()
+        let rows = await iterator.next() ?? []
+        return rows.first(where: { $0.id == id })?.displayLabel
+    }
+
     @Test func updateDocumentLabelAtCapAcceptedOverCapRejected() async throws {
         let repo = try makeRepository()
         guard

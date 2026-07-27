@@ -79,7 +79,10 @@ public protocol PassRepository: Sendable {
     /// page counts exceeding `DocumentBounds.maxPages` with
     /// `DocumentStorageRejectedKind.tooManyPagesAtStorage`, and labels longer than
     /// `DocumentBounds.maxLabelChars` with
-    /// `DocumentStorageRejectedKind.labelTooLongAtStorage`. The renderer service in
+    /// `DocumentStorageRejectedKind.labelTooLongAtStorage`. The label is trimmed of
+    /// leading/trailing whitespace before the cap check and before storage; a
+    /// blank-after-trim label stores the empty string (same normalization as
+    /// `updateDocumentLabel`). The renderer service in
     /// `PassesPDFCore` already enforces the size and page caps; storage carries them
     /// again so a future caller bug cannot land an oversized row. The label cap exists
     /// only at this layer.
@@ -117,8 +120,10 @@ public protocol PassRepository: Sendable {
     /// `onDocumentDeleted` is emitted.
     func deleteDocument(id: DocumentRecordId) async -> StorageResult<Void>
 
-    /// Overwrites the `display_label` of an existing document row. Empty and blank labels
-    /// are accepted (mirrors the create path). A label longer than `DocumentBounds.maxLabelChars`
+    /// Overwrites the `display_label` of an existing document row. The label is trimmed
+    /// of leading/trailing whitespace before the cap check and before storage; empty and
+    /// blank-after-trim labels are accepted and store the empty string (mirrors the create
+    /// path). A trimmed label longer than `DocumentBounds.maxLabelChars`
     /// is rejected with `StorageError.documentRejected(.labelTooLongAtStorage)` and no row is
     /// touched — the cap is checked before the row lookup, so a too-long label on an unknown
     /// id surfaces as `documentRejected`, not `integrityViolation`. Returns `integrityViolation`
