@@ -69,17 +69,21 @@ struct DocumentSurfaceLockTests {
         )
     }
 
-    @Test func fullScreenDocumentViewExposesExactlyFivePublicInitialiserParameters() {
-        // (doc, pdfData, renderer, onClose, telemetry). Required
+    @Test func fullScreenDocumentViewExposesExactlySixPublicInitialiserParameters() {
+        // (doc, pdfData, renderer, onClose, telemetry, closeButton). Required
         // onClose forces the host to provide a back path — there is no
-        // "stuck in full-screen" state.
-        _ = FullScreenDocumentView(
-            doc: Self.doc,
-            pdfData: Self.pdfData,
-            renderer: Self.renderer,
-            onClose: {},
-            telemetry: DocumentTelemetryGuardNoOp.shared
-        )
+        // "stuck in full-screen" state. `closeButton` (wlt-d3d slot) swaps the
+        // close CHROME only: it receives the handler and must wire it; it
+        // cannot suppress the trust caption or the close path. The exact-arity
+        // function reference fails to compile if any parameter is added,
+        // removed, renamed, or retyped — even a defaulted addition.
+        typealias LockedInit = (
+            PDFDocument, Data, PDFRendererBinder, @escaping () -> Void,
+            DocumentTelemetryGuard, ((@escaping () -> Void) -> AnyView)?
+        ) -> FullScreenDocumentView
+        let lockedInit: LockedInit = FullScreenDocumentView
+            .init(doc:pdfData:renderer:onClose:telemetry:closeButton:)
+        _ = lockedInit
     }
 
     @Test func documentViewConsumesPDFRendererBinderProtocolNotConcreteRenderer() {
