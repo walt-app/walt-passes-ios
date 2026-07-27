@@ -33,11 +33,7 @@ public struct ScannableCardView: View {
         VStack(spacing: 12) {
             Group {
                 if let cgImage = BarcodeRenderer.cgImage(payload: card.payload, format: card.format) {
-                    Image(decorative: cgImage, scale: 1, orientation: .up)
-                        .interpolation(.none)
-                        .resizable()
-                        .aspectRatio(contentMode: card.format.contentMode)
-                        .frame(minWidth: minWidth, minHeight: minHeight)
+                    codeImage(cgImage)
                         .accessibilityLabel(Text(card.label))
                         // With the caption on, hide the image from VoiceOver so the payload
                         // caption (the announce-worthy fallback) is not double-announced.
@@ -56,9 +52,52 @@ public struct ScannableCardView: View {
             }
         }
     }
+
+    /// Applies the format's render policy. 1D symbols are stretched to the
+    /// available width at a fixed bar height rather than aspect-scaled: their
+    /// bars carry no vertical information, and preserving the raster's aspect
+    /// either overflows the viewport (`.fill`, ipass-… / ios-ra9) or collapses
+    /// the bars below scanning height (`.fit`). Same treatment `CompactCodeView`
+    /// already uses on the list surface.
+    @ViewBuilder
+    private func codeImage(_ cgImage: CGImage) -> some View {
+        let image = Image(decorative: cgImage, scale: 1, orientation: .up)
+            .interpolation(.none)
+            .resizable()
+        switch card.format.renderPolicy {
+        case .fitSquare(let minSide):
+            image
+                .aspectRatio(contentMode: .fit)
+                .frame(minWidth: minSide, minHeight: minSide)
+        case .stretchToWidth(let barHeight):
+            image
+                .frame(maxWidth: .infinity)
+                .frame(height: barHeight)
+        }
+    }
+}
+
+/// How a symbology's raster is sized on the detail surfaces.
+enum CodeRenderPolicy: Equatable {
+    /// Square symbol: preserve aspect, never smaller than `minSide`.
+    case fitSquare(minSide: CGFloat)
+    /// 1D symbol: fill the available width, fixed `barHeight`. Never wider
+    /// than its parent, so the surrounding layout cannot be dragged
+    /// off-screen (ios-ra9).
+    case stretchToWidth(barHeight: CGFloat)
 }
 
 extension ScannableFormat {
+    /// Derived from `minRenderSize` so the pinned gate-distance numbers stay
+    /// the single source of truth.
+    var renderPolicy: CodeRenderPolicy {
+        switch self {
+        case .qr: return .fitSquare(minSide: minRenderSize.0)
+        case .code128, .ean13, .upcA, .code39:
+            return .stretchToWidth(barHeight: minRenderSize.1)
+        }
+    }
+
     var minRenderSize: (CGFloat, CGFloat) {
         switch self {
         case .qr: return (240, 240)
@@ -66,10 +105,4 @@ extension ScannableFormat {
         }
     }
 
-    var contentMode: ContentMode {
-        switch self {
-        case .qr: return .fit
-        case .code128, .ean13, .upcA, .code39: return .fill
-        }
-    }
 }
