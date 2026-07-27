@@ -28,23 +28,49 @@ struct ScannableCardSurfaceLockTests {
 
     @Test func trustCaptionExposesOnlyTheZeroArityInitialiser() {
         // C2 in SCANNABLE_CARD_THREAT_MODEL.md: no `enabled`, no theme
-        // suppression flag, no overload that hides the caption.
-        _ = ScannableCardTrustCaption()
+        // suppression flag, no overload that hides the caption. The exact-arity
+        // function reference fails to compile if ANY parameter is added, even a
+        // defaulted one (a plain call would still compile through defaults).
+        let lockedInit: () -> ScannableCardTrustCaption = ScannableCardTrustCaption.init
+        _ = lockedInit()
     }
 
-    @Test func screenExposesExactlyTwoPublicInitialiserParameters() {
-        // (card, showLabel). `showLabel` (wpass-1wu.1) gates ONLY the top label
-        // Text so a host rendering its own title avoids a duplicate; it cannot
-        // omit the barcode, the payload caption, or the bottom-docked
-        // non-suppressible ScannableCardTrustCaption (C2). Android counts three
-        // (the extra is `modifier`). Adding a parameter that could hide the
-        // trust caption would breach C2; review the threat model before
+    @Test func screenExposesExactlyThreePublicInitialiserParameters() {
+        // (card, showLabel, trustCaption). `showLabel` (wpass-1wu.1) gates ONLY
+        // the top label Text; `trustCaption` (wpass-gv6) is the ONE audited way
+        // the kernel caption is omitted — `.hostedTypeRow` shifts the C2 claim
+        // to the host's "Pass type" row, pinned consumer-side in walt-ios.
+        // Android counts four (the extra is `modifier`). The exact-arity
+        // function reference fails to compile if any parameter is added,
+        // removed, renamed, or retyped — even a defaulted addition, which a
+        // plain call would let through; review the threat model before
         // changing this initialiser.
+        let lockedInit: (ScannableCard, Bool, TrustCaptionPlacement) -> ScannableCardScreen =
+            ScannableCardScreen.init(card:showLabel:trustCaption:)
+        _ = lockedInit
+    }
+
+    @Test func trustCaptionPlacementDefaultsToDocked() {
         guard let card = Self.fixture() else {
             Issue.record("validator should accept fixture input")
             return
         }
-        _ = ScannableCardScreen(card: card, showLabel: false)
+        // Omitting the argument keeps the docked caption, so every
+        // pre-placement caller is unchanged.
+        let screen = ScannableCardScreen(card: card)
+        #expect(screen.trustCaption == .docked)
+        #expect(screen.rendersKernelCaption)
+    }
+
+    @Test func hostedTypeRowOmitsTheKernelCaption() {
+        guard let card = Self.fixture() else {
+            Issue.record("validator should accept fixture input")
+            return
+        }
+        // The body renders the caption iff this seam says so (the seam is the
+        // exhaustive switch over the placement).
+        let screen = ScannableCardScreen(card: card, trustCaption: .hostedTypeRow)
+        #expect(!screen.rendersKernelCaption)
     }
 
     @Test func screenQuietZoneIsSixteenPoints() {

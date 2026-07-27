@@ -25,10 +25,21 @@ import SwiftUI
 public struct ScannableCardScreen: View {
     let card: ScannableCard
     let showLabel: Bool
+    let trustCaption: TrustCaptionPlacement
 
-    public init(card: ScannableCard, showLabel: Bool = true) {
+    /// `trustCaption` selects how the provenance signal is carried: `.docked`
+    /// (default) composes the verbatim caption at the bottom; `.hostedTypeRow`
+    /// renders no kernel caption because the host carries the claim via its own
+    /// "Pass type" row — the audited C2 concession (see `TrustCaptionPlacement`
+    /// and SCANNABLE_CARD_THREAT_MODEL.md).
+    public init(
+        card: ScannableCard,
+        showLabel: Bool = true,
+        trustCaption: TrustCaptionPlacement = .docked
+    ) {
         self.card = card
         self.showLabel = showLabel
+        self.trustCaption = trustCaption
     }
 
     public var body: some View {
@@ -52,10 +63,22 @@ public struct ScannableCardScreen: View {
                 .environment(\.colorScheme, .light)
                 .padding(24)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            ScannableCardTrustCaption()
-                .frame(maxWidth: .infinity)
+            if rendersKernelCaption {
+                ScannableCardTrustCaption()
+                    .frame(maxWidth: .infinity)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Exhaustive over the placement (mirror of Android's `when`): a future
+    /// placement case forces a compile-time decision here instead of silently
+    /// omitting the caption — the wrong failure direction on a trust surface.
+    var rendersKernelCaption: Bool {
+        switch trustCaption {
+        case .docked: return true
+        case .hostedTypeRow: return false
+        }
     }
 
     /// White-card padding around the code. Unlike Android's ZXing, CoreImage
