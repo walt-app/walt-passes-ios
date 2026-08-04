@@ -89,7 +89,17 @@ both targeted structurally at the sole SignerInfo so certificates are never touc
 On (2): both real SHA-1 pkpasses inspected encode `SEQUENCE { sha1, NULL }` at both the
 SignedData and SignerInfo levels, which is the shape the library already accepts, so this
 is a legal-encoding gap rather than an observed failure. Apple encodes SHA-256 with
-parameters absent, which is why the asymmetry only bites SHA-1. Rewriting the SignerInfo's
+parameters absent, which is why the asymmetry only bites SHA-1.
+
+Android is no guide to whether the gap matters, because it cannot exhibit it. BouncyCastle's
+`DefaultCMSSignatureAlgorithmNameGenerator.getSignatureName` resolves the algorithm from the
+two OIDs alone and never reads `getParameters()` (verified by `javap` against bcpkix-jdk18on
+1.84), so both encodings work there. An absent-parameters SHA-1 pass would therefore have
+verified on Android and read `Tampered` on iOS - a parity divergence, not merely a
+theoretical one, which is why the rewrite is worth carrying despite no observed pass needing
+it.
+
+Rewriting the SignerInfo's
 `digestAlgorithm` requires rewriting the SignedData-level `digestAlgorithms` SET in the
 same pass, because `CMS.isValidSignature` checks
 `signedData.digestAlgorithms.contains(signer.digestAlgorithm)`. That rewrite is limited to
