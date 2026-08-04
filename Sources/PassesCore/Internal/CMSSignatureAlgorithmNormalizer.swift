@@ -30,6 +30,7 @@ internal enum CMSOID {
     static let sha384: ASN1ObjectIdentifier = "2.16.840.1.101.3.4.2.2"
     static let sha512: ASN1ObjectIdentifier = "2.16.840.1.101.3.4.2.3"
     static let sha1WithRSA: ASN1ObjectIdentifier = "1.2.840.113549.1.1.5"
+    static let messageDigest: ASN1ObjectIdentifier = "1.2.840.113549.1.9.4"
     static let sha256WithRSA: ASN1ObjectIdentifier = "1.2.840.113549.1.1.11"
     static let sha384WithRSA: ASN1ObjectIdentifier = "1.2.840.113549.1.1.12"
     static let sha512WithRSA: ASN1ObjectIdentifier = "1.2.840.113549.1.1.13"

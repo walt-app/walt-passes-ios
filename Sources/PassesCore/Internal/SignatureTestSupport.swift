@@ -160,6 +160,129 @@ internal enum SignatureTestSupport {
         return try rewriteToBareRSA(combined)
     }
 
+    /// How a wire-order fixture's `signedAttrs` SET should deviate from sorted DER order.
+    internal enum SignedAttrsShape {
+        /// Elements reversed out of DER order and signed in that order - the real-world bug.
+        case reversed
+        /// Reversed, and with the `messageDigest` attribute duplicated, so the fallback cannot treat
+        /// any one of them as *the* digest the signature commits to.
+        case reversedWithDuplicateMessageDigest
+        /// Reversed, with the sole SignerInfo duplicated so the envelope carries two signers. Both
+        /// signatures are genuine; the envelope must still be refused.
+        case reversedWithTwoSigners
+    }
+
+    /// CMS-signs `manifestBytes` the way an issuer whose tooling emits `signedAttrs` in wire order
+    /// does: `CMS.sign` is used to obtain a well-formed envelope, then its `signedAttrs` elements are
+    /// re-ordered per `shape` and the SET-tagged encoding of THAT order is re-signed with the
+    /// signer's key. The result is cryptographically sound and rejected by stock swift-certificates,
+    /// which is exactly the reported bug (ipass-10g, Android wpass-x70).
+    static func signWithWireOrderSignedAttrs(
+        manifestBytes: [UInt8],
+        signer: Issued,
+        shape: SignedAttrsShape = .reversed
+    ) throws -> [UInt8] {
+        let sorted = try CMS.sign(
+            manifestBytes,
+            signatureAlgorithm: .ecdsaWithSHA256,
+            certificate: signer.certificate,
+            privateKey: signer.privateKey,
+            signingTime: Date(timeIntervalSince1970: 1_750_000_000),
+            detached: true
+        )
+        return try reorderSignedAttrs(sorted, signer: signer, shape: shape)
+    }
+
+    private static func reorderSignedAttrs(
+        _ signatureBytes: [UInt8],
+        signer: Issued,
+        shape: SignedAttrsShape
+    ) throws -> [UInt8] {
+        let contentInfo = try children(of: try DER.parse(signatureBytes))
+        let explicitContent = contentInfo[1]
+        let signedData = try children(of: try children(of: explicitContent)[0])
+        let signerInfo = try children(of: try children(of: signedData.last!)[0])
+
+        var attributes = Array(try children(of: signerInfo[SIGNED_ATTRS_INDEX]).reversed())
+        if shape == .reversedWithDuplicateMessageDigest {
+            attributes.append(attributes.first { isMessageDigestAttribute($0) }!)
+        }
+
+        // Sign the SET-tagged encoding of the re-ordered elements: the signature must cover the
+        // bytes in wire order, otherwise the fixture is just a corrupt pass.
+        var attributeCoder = DER.Serializer()
+        attributeCoder.appendConstructedNode(identifier: .set) { set in
+            for attribute in attributes { set.serialize(attribute) }
+        }
+        let signature = try signatureNode(over: attributeCoder.serializedBytes, signer: signer)
+
+        let signerCount = shape == .reversedWithTwoSigners ? 2 : 1
+        var serializer = DER.Serializer()
+        serializer.appendConstructedNode(identifier: .sequence) { outer in
+            outer.serialize(contentInfo[0])
+            outer.appendConstructedNode(identifier: explicitContent.identifier) { explicit in
+                explicit.appendConstructedNode(identifier: .sequence) { data in
+                    for field in signedData.dropLast() { data.serialize(field) }
+                    data.appendConstructedNode(identifier: .set) { signerInfos in
+                        for _ in 0..<signerCount {
+                            signerInfos.appendConstructedNode(identifier: .sequence) { info in
+                                for (index, field) in signerInfo.enumerated() {
+                                    switch index {
+                                    case SIGNED_ATTRS_INDEX:
+                                        info.appendConstructedNode(identifier: field.identifier) { attrs in
+                                            for attribute in attributes { attrs.serialize(attribute) }
+                                        }
+                                    case signerInfo.count - 1:
+                                        info.serialize(signature)
+                                    default:
+                                        info.serialize(field)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return serializer.serializedBytes
+    }
+
+    /// The signature OCTET STRING covering `bytes` under `signer`'s key, lifted out of a throwaway
+    /// `CMS.sign` envelope. Going through `CMS.sign` avoids needing `ASN1OctetString`'s internal
+    /// initializer from `Certificate.Signature`; without a `signingTime` the envelope carries no
+    /// `signedAttrs`, so its signature covers `bytes` directly and its final SignerInfo field is
+    /// exactly the node needed.
+    private static func signatureNode(over bytes: [UInt8], signer: Issued) throws -> ASN1Node {
+        let envelope = try CMS.sign(
+            bytes,
+            signatureAlgorithm: .ecdsaWithSHA256,
+            certificate: signer.certificate,
+            privateKey: signer.privateKey,
+            detached: true
+        )
+        let contentInfo = try children(of: try DER.parse(envelope))
+        let signedData = try children(of: try children(of: contentInfo[1])[0])
+        let signerInfo = try children(of: try children(of: signedData.last!)[0])
+        guard let signature = signerInfo.last, signature.identifier == .octetString else {
+            throw TestSupportError.unexpectedShape
+        }
+        return signature
+    }
+
+    private static func children(of node: ASN1Node) throws -> [ASN1Node] {
+        guard case .constructed(let collection) = node.content else {
+            throw TestSupportError.unexpectedShape
+        }
+        return Array(collection)
+    }
+
+    private static func isMessageDigestAttribute(_ node: ASN1Node) -> Bool {
+        leadingOID(of: node) == CMSOID.messageDigest
+    }
+
+    /// `SignerInfo ::= SEQUENCE { version, sid, digestAlgorithm, [0] signedAttrs, ... }`.
+    private static let SIGNED_ATTRS_INDEX = 3
+
     /// Inverse of `normalizeCMSSignatureAlgorithm`: rewrites the `SignerInfo.signatureAlgorithm`
     /// SEQUENCE - the `AlgorithmIdentifier` immediately followed by the signature OCTET STRING -
     /// to bare `rsaEncryption`, leaving `digestAlgorithm` and everything else untouched.
@@ -210,6 +333,7 @@ internal enum SignatureTestSupport {
 
     internal enum TestSupportError: Error {
         case noSignerInfoAlgorithmToRewrite
+        case unexpectedShape
     }
 
     /// Drives the test-only verifier seam so a synthesized chain can reach a stand-in root.

@@ -24,10 +24,20 @@ internal enum SignatureVerifyResult: Equatable {
 ///    honors `acceptSelfSignedCertificates`. If false -> `.tampered(.signatureCryptoFailure)`.
 ///    If true: a self-issued signer (issuer == subject) -> `.selfSigned`, else
 ///    `.certChainIncomplete`.
-///  - `.failure(.invalidCMSBlock(reason))` -> `.tampered`: a no-/zero-signer or missing
+///  - `.failure(.invalidCMSBlock(reason))`: the wire-order fallback in `wireOrderFallbackVerdict`
+///    gets a chance first, and if it declines -> `.tampered`: a no-/zero-signer or missing
 ///    signing-certificate reason -> `.signerCertificateMissing`; a signature/digest mismatch ->
 ///    `.manifestSignatureMismatch`; anything else -> `.signatureCryptoFailure`.
 /// Everything is wrapped so verify NEVER throws out - any thrown error -> `.signatureCryptoFailure`.
+///
+/// **Wire-order signedAttrs.** Some issuers sign the `signedAttrs` SET in the element order their
+/// tooling emitted rather than sorted DER order, which swift-asn1 refuses to parse. Those passes are
+/// cryptographically sound - Apple Wallet and OpenSSL accept them - so `wireOrderFallbackVerdict`
+/// recovers them by re-establishing the `messageDigest` binding itself and handing the attribute
+/// bytes as received back to `CMS.isValidSignature` for the signature and chain work. It can only
+/// accept a pass the strict path rejected, never change how a rejection is reported. See
+/// `WireOrderSignedAttrs.swift` for the full argument and the fail-closed floor; mirrors Android's
+/// `wpass-x70`.
 ///
 /// **Permissive policy.** The policy always meets policy (ignores expiry / revocation), mirroring
 /// Android's `isRevocationEnabled = false`. This is slightly more lenient than Android's
@@ -94,32 +104,111 @@ private func classify(
     anchors: [Certificate],
     intermediates: [Certificate]
 ) async -> SignatureVerifyResult {
-    // Apple PassKit emits `SignerInfo.signatureAlgorithm` as bare `rsaEncryption`; swift-
-    // certificates only knows the combined `shaNNNWithRSAEncryption` OIDs. Normalize first so a
-    // valid Apple pass is not misread as tampered (walt-passes-ios#31). No-op for any other shape.
-    let normalizedSignatureBytes = normalizeCMSSignatureAlgorithm(signatureBytes)
-    let result = await CMS.isValidSignature(
+    let result = await verifyCMS(
         dataBytes: manifestBytes,
-        signatureBytes: normalizedSignatureBytes,
-        additionalIntermediateCertificates: intermediates,
-        trustRoots: CertificateStore(anchors),
-        diagnosticCallback: nil
-    ) {
-        PermissivePolicy()
-    }
+        signatureBytes: signatureBytes,
+        anchors: anchors,
+        intermediates: intermediates
+    )
 
     switch result {
     case .success:
         return .ok(.appleVerified)
     case .failure(.unableToValidateSigner(let failure)):
         // Signature math is valid but the chain did not reach a bundled Apple root.
-        if !config.acceptSelfSignedCertificates {
-            return .failed(.signatureCryptoFailure)
-        }
-        return isSelfIssued(failure.signer) ? .ok(.selfSigned) : .ok(.certChainIncomplete)
+        return chainVerdict(signer: failure.signer, config: config)
     case .failure(.invalidCMSBlock(let block)):
-        return .failed(classifyInvalidBlock(block.reason))
+        // The blob is structurally unacceptable to swift-certificates. One real cause is a
+        // `signedAttrs` SET signed in wire rather than DER order, which fails at parse; the
+        // fallback recovers exactly that case and returns nil for everything else.
+        let recovered = await wireOrderFallbackVerdict(
+            signatureBytes: signatureBytes,
+            manifestBytes: manifestBytes,
+            config: config,
+            anchors: anchors,
+            intermediates: intermediates
+        )
+        return recovered ?? .failed(classifyInvalidBlock(block.reason))
     }
+}
+
+/// Verifies a pass whose `signedAttrs` were signed in the order they appear on the wire rather than
+/// in sorted DER order, or returns `nil` to leave the strict path's verdict standing.
+///
+/// `prepareWireOrderFallback` re-establishes the half of the CMS binding that stripping
+/// `signedAttrs` removes - `messageDigest` must equal the digest of `manifestBytes` - and hands back
+/// the attribute bytes as received plus a blob without them. swift-certificates then does everything
+/// else it does on the strict path: locate the signer certificate, cross-check the digest and
+/// signature algorithms, verify the signature under the leaf's key over those exact bytes, and build
+/// the chain under the same anchors and `PermissivePolicy`. The verdict goes through the same
+/// `chainVerdict` mapping, so the four-arm trust UI cannot drift between the two paths.
+///
+/// **Confirm-only.** A `.invalidCMSBlock` from the fallback returns `nil` rather than its own
+/// `TamperReason`, so the fallback can only ever accept a pass the strict path rejected - never
+/// relabel that rejection. Nothing here throws: `prepareWireOrderFallback` folds every structural
+/// surprise to `nil`.
+private func wireOrderFallbackVerdict(
+    signatureBytes: [UInt8],
+    manifestBytes: [UInt8],
+    config: ParserConfig,
+    anchors: [Certificate],
+    intermediates: [Certificate]
+) async -> SignatureVerifyResult? {
+    guard
+        let wire = prepareWireOrderFallback(
+            signatureBytes: signatureBytes,
+            manifestBytes: manifestBytes
+        )
+    else {
+        return nil
+    }
+    let result = await verifyCMS(
+        dataBytes: wire.attributeBytes,
+        signatureBytes: wire.strippedSignatureBytes,
+        anchors: anchors,
+        intermediates: intermediates
+    )
+    switch result {
+    case .success:
+        return .ok(.appleVerified)
+    case .failure(.unableToValidateSigner(let failure)):
+        return chainVerdict(signer: failure.signer, config: config)
+    case .failure(.invalidCMSBlock):
+        return nil
+    }
+}
+
+/// The single `CMS.isValidSignature` call site, so the strict path and the wire-order fallback
+/// cannot diverge in anchors, intermediates, policy, or the bare-`rsaEncryption` pre-pass.
+///
+/// Apple PassKit emits `SignerInfo.signatureAlgorithm` as bare `rsaEncryption`; swift-certificates
+/// only knows the combined `shaNNNWithRSAEncryption` OIDs. Normalizing first stops a valid Apple
+/// pass being misread as tampered (walt-passes-ios#31, and ipass-c8p for the SHA-1 shape). No-op for
+/// any other shape.
+private func verifyCMS(
+    dataBytes: [UInt8],
+    signatureBytes: [UInt8],
+    anchors: [Certificate],
+    intermediates: [Certificate]
+) async -> CMS.SignatureVerificationResult {
+    await CMS.isValidSignature(
+        dataBytes: dataBytes,
+        signatureBytes: normalizeCMSSignatureAlgorithm(signatureBytes),
+        additionalIntermediateCertificates: intermediates,
+        trustRoots: CertificateStore(anchors),
+        diagnosticCallback: nil
+    ) {
+        PermissivePolicy()
+    }
+}
+
+/// Maps a signer whose signature verified but whose chain did not reach a bundled Apple root onto
+/// the config-gated trust arms. Shared by the strict path and the wire-order fallback.
+private func chainVerdict(signer: Certificate, config: ParserConfig) -> SignatureVerifyResult {
+    if !config.acceptSelfSignedCertificates {
+        return .failed(.signatureCryptoFailure)
+    }
+    return isSelfIssued(signer) ? .ok(.selfSigned) : .ok(.certChainIncomplete)
 }
 
 /// Maps swift-certificates' free-text `invalidCMSBlock` reason onto a `TamperReason`. The reason
