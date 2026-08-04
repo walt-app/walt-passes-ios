@@ -15,7 +15,7 @@ import Testing
 /// production decoder — the same pixel→symbol path the consumer's per-frame analyzer runs, minus
 /// the `CMSampleBuffer` capture glue the app strips before calling in.
 ///
-/// The timeout / ``DecodeFailureReason/decoderUnavailable`` branch is the shared
+/// The timeout / ``DecodeFailureReason/decodeTimedOut`` branch is the shared
 /// ``withDecodeTimeout(_:timeoutValue:operation:)``, covered deterministically by
 /// ``DecodeTimeoutTests``; it is not re-tested here because forcing the frame decoder's internal
 /// Vision decode to overrun a near-zero budget races the decode and flakes under load.

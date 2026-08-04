@@ -81,3 +81,46 @@ Every compensating control from the original decision (bounded still-image decod
 timeout, faithful-payload posture, label-never-autofilled) carries over unchanged; the roster
 clamp now matches Android's `POSSIBLE_FORMATS` pin exactly. Encode-side parity lands in the same
 change (`passes-ui-2`, revised).
+
+## Update 2026-08-04 (ipass-f8p): the decode timeout runs on lanes this module owns
+
+The `Task` timeout above did not hold the property it claimed. It scheduled the decode with
+`Task.detached`, which runs on the shared Swift **cooperative pool** — a fixed-width pool that
+does not grow — while the deadline was a `Task.sleep` **timer** that fires on wall-clock time
+regardless. The two racers were not on equal footing: a caller that parks the pool's threads (the
+in-repo example is `SignatureVerifier.runBlocking`'s `semaphore.wait()`, whose own comment names
+this hazard) could keep the decode from ever *starting*, while the deadline fired on schedule and
+won by default.
+
+The guard therefore reported a timeout for decodes that had not run. It measured thread
+availability, not decode duration. `full-ci` surfaced it unambiguously: a test whose entire
+operation is `{ "REAL" }` — microseconds of CPU — lost a **5 second** race. Reproduced locally at
+100% under a parked pool.
+
+**Change (human-approved §7, 2026-08-04, recorded on ipass-f8p).** `withDecodeTimeout` submits the
+decode to a bank of dedicated serial `DispatchQueue`s that `PassesBarcode` owns, and schedules the
+deadline on a separate owned lane. Measured with the pool parked: work submitted via
+`Task.detached`, a *concurrent* `DispatchQueue`, or `DispatchQueue.global` had not begun after 20s;
+a dedicated serial queue began in 0.1ms. Concurrent and global queues draw from the same thread
+pool the cooperative pool exhausts, so only dedicated lanes are immune — this is why the bank is
+serial queues rather than one concurrent queue. A bank rather than a single lane because the
+still-image and live-frame paths decode concurrently, and one lane would trade starvation-by-pool
+for starvation-by-queue (measured: 12 concurrent 0.3s decodes took 3.6s of a 5s budget on one
+lane, 0.6s across a bank).
+
+What does NOT change: the timeout still bounds only the caller's *wait*; Vision `perform` remains
+synchronous and non-cancellable, so a hung decode is still orphaned rather than killed, and its
+result is still discarded. The roster clamp, bounded still-image decode, faithful-payload posture,
+and label-never-autofilled guard are untouched.
+
+**`DecodeFailureReason.decodeTimedOut` added**, splitting the timeout out of `decoderUnavailable`.
+The two called for opposite responses while sharing one value: an unavailable decoder will not
+succeed on retry, a timed-out one is a load signal and the same input may decode fine later.
+Conflating them also cost a real misdiagnosis — a run of timeouts was read as an absent Vision
+framework (ipass-42i) — because no value could distinguish the two. Public enum change on
+`BarcodeDecodeResult`; `decoderUnavailable` keeps its original meaning, a Vision `perform` failure.
+
+Honest residual: this fixes which *executor* the decode runs on, not the fact that resuming the
+caller still needs the caller's own executor. If the caller's pool is blocked, it observes the
+result late — the guard bounds the wait it controls, and cannot bound delivery into a blocked
+caller. `DecodeTimeoutTests.decodeRunsOnAnOwnedLaneNotTheCooperativePool` pins the lane invariant.

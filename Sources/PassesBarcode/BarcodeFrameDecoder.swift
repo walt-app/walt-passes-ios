@@ -24,8 +24,9 @@ public protocol BarcodeFrameDecoder: Sendable {
     /// Decode the first roster barcode found in `frame`, interpreting the pixels under
     /// `orientation`. Returns ``BarcodeDecodeResult/decodedBarcode(payload:format:)`` on success,
     /// ``BarcodeDecodeResult/noBarcodeFound`` when the frame carried no recognizable roster symbol,
-    /// or ``BarcodeDecodeResult/decodeFailed(reason:)`` (``DecodeFailureReason/decoderUnavailable``)
-    /// when Vision failed or the decode overran its budget.
+    /// or ``BarcodeDecodeResult/decodeFailed(reason:)`` — ``DecodeFailureReason/decoderUnavailable``
+    /// when Vision itself failed, ``DecodeFailureReason/decodeTimedOut`` when the decode overran its
+    /// budget.
     func decode(frame: CVPixelBuffer, orientation: CGImagePropertyOrientation) async -> BarcodeDecodeResult
 }
 
@@ -62,7 +63,7 @@ public struct VisionBarcodeFrameDecoder: BarcodeFrameDecoder {
         let frame = FrameBox(buffer: frame)
         return await withDecodeTimeout(
             decodeTimeout,
-            timeoutValue: .decodeFailed(reason: .decoderUnavailable)
+            timeoutValue: .decodeFailed(reason: .decodeTimedOut)
         ) {
             let handler = VNImageRequestHandler(
                 cvPixelBuffer: frame.buffer,
