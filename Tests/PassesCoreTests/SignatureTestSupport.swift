@@ -1,8 +1,8 @@
 import Crypto
 import Foundation
 import SwiftASN1
-import _CryptoExtras
 @_spi(CMS) import X509
+import _CryptoExtras
 
 @testable import PassesCore
 
