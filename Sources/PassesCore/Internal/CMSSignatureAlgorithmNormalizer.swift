@@ -5,7 +5,7 @@ import SwiftASN1
 /// `shaNNNWithRSAEncryption` OID implied by its `digestAlgorithm`, so swift-certificates 1.19.x
 /// (which only knows the combined OIDs) can verify passes Apple PassKit signs this way; otherwise
 /// a valid pass is misread as `.tampered(.manifestSignatureMismatch)` (walt-passes-ios#31).
-/// Mirrors Android's BouncyCastle path.
+/// Mirrors Android's BouncyCastle path. SHA-1, SHA-256, SHA-384 and SHA-512 digests are covered.
 ///
 /// Safe because the signature is over `signedAttrs`, not the `signatureAlgorithm` field, so the
 /// rewrite cannot make a tampered pass verify; `digestAlgorithm` is left intact so swift-
@@ -23,24 +23,34 @@ func normalizeCMSSignatureAlgorithm(_ signatureBytes: [UInt8]) -> [UInt8] {
     }
 }
 
-private enum CMSOID {
+internal enum CMSOID {
     static let rsaEncryption: ASN1ObjectIdentifier = "1.2.840.113549.1.1.1"
+    static let sha1: ASN1ObjectIdentifier = "1.3.14.3.2.26"
     static let sha256: ASN1ObjectIdentifier = "2.16.840.1.101.3.4.2.1"
     static let sha384: ASN1ObjectIdentifier = "2.16.840.1.101.3.4.2.2"
     static let sha512: ASN1ObjectIdentifier = "2.16.840.1.101.3.4.2.3"
+    static let sha1WithRSA: ASN1ObjectIdentifier = "1.2.840.113549.1.1.5"
     static let sha256WithRSA: ASN1ObjectIdentifier = "1.2.840.113549.1.1.11"
     static let sha384WithRSA: ASN1ObjectIdentifier = "1.2.840.113549.1.1.12"
     static let sha512WithRSA: ASN1ObjectIdentifier = "1.2.840.113549.1.1.13"
 
     /// The `shaNNNWithRSAEncryption` OID implied by an RSA signer whose digest is `digest`.
+    /// SHA-1 is included because Apple PassKit still ships SHA-1 signers (ipass-c8p) and
+    /// swift-certificates verifies `.sha1WithRSAEncryption`; the digest strength is the issuer's
+    /// choice either way, and refusing to rewrite only turned a SHA-1 pass into a false `.tampered`.
     static func combinedRSA(forDigest digest: ASN1ObjectIdentifier) -> ASN1ObjectIdentifier? {
         switch digest {
+        case sha1: return sha1WithRSA
         case sha256: return sha256WithRSA
         case sha384: return sha384WithRSA
         case sha512: return sha512WithRSA
         default: return nil
         }
     }
+
+    /// Digest OIDs `combinedRSA(forDigest:)` can map, i.e. the shapes a `SignerInfo`'s
+    /// `digestAlgorithm` may take for the rewrite to fire.
+    static let knownDigests: [ASN1ObjectIdentifier] = [sha1, sha256, sha384, sha512]
 }
 
 /// Re-serializes `node` into `serializer`, rewriting any `SignerInfo.signatureAlgorithm` that
@@ -108,7 +118,7 @@ private func isBareRSAAlgorithmIdentifier(_ node: ASN1Node) -> Bool {
 private func digestOID(amongSiblingsBefore index: Int, in children: [ASN1Node]) -> ASN1ObjectIdentifier? {
     for sibling in children[..<index] {
         guard let oid = leadingOID(of: sibling) else { continue }
-        if oid == CMSOID.sha256 || oid == CMSOID.sha384 || oid == CMSOID.sha512 {
+        if CMSOID.knownDigests.contains(oid) {
             return oid
         }
     }

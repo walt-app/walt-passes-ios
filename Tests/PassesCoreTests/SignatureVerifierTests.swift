@@ -150,6 +150,50 @@ struct SignatureVerifierTests {
         #expect(normalizeCMSSignatureAlgorithm(fixture.signature) != fixture.signature)
     }
 
+    @Test func sha1BareRSASignerIsAppleVerified() throws {
+        // Regression guard for ipass-c8p. A SignerInfo carrying digestAlgorithm=SHA-1 with the bare
+        // `rsaEncryption` signatureAlgorithm - the shape Apple PassKit ships and the shape of the
+        // pass reported in walt-app/walt-passes-android#176 - was left unrewritten by the
+        // normalizer, so `AlgorithmIdentifier(digestAlgorithmFor:)` threw and the pass read
+        // Tampered. Red before the SHA-1 arm in `combinedRSA(forDigest:)`, green after.
+        let root = try SignatureTestSupport.makeRSARoot(commonName: "RSA Root")
+        let leaf = try SignatureTestSupport.makeRSALeaf(commonName: "RSA Leaf", issuer: root)
+        let signature = try SignatureTestSupport.signSHA1BareRSA(manifestBytes: manifest, signer: leaf)
+        let result = SignatureTestSupport.verify(
+            signatureBytes: signature,
+            manifestBytes: manifest,
+            config: ParserConfig(),
+            trustAnchors: [root.certificate],
+            knownIntermediates: []
+        )
+        #expect(result == .ok(.appleVerified))
+    }
+
+    @Test func sha1BareRSAWithTamperedManifestStillFails() throws {
+        // The security half of ipass-c8p: rewriting the algorithm OID must not let a mutated
+        // manifest verify. The signed messageDigest no longer matches the manifest's SHA-1.
+        let root = try SignatureTestSupport.makeRSARoot(commonName: "RSA Root")
+        let leaf = try SignatureTestSupport.makeRSALeaf(commonName: "RSA Leaf", issuer: root)
+        let signature = try SignatureTestSupport.signSHA1BareRSA(manifestBytes: manifest, signer: leaf)
+        let result = SignatureTestSupport.verify(
+            signatureBytes: signature,
+            manifestBytes: [UInt8]("{\"pass.json\":\"DIFFERENT\"}".utf8),
+            config: ParserConfig(),
+            trustAnchors: [root.certificate],
+            knownIntermediates: []
+        )
+        #expect(result == .failed(.manifestSignatureMismatch))
+    }
+
+    @Test func normalizerRewritesSHA1BareRSAToCombinedOID() throws {
+        // Keeps the two tests above from going vacuous: asserts the blob really is the bare-RSA
+        // shape the normalizer must rewrite, rather than one swift-certificates already accepted.
+        let root = try SignatureTestSupport.makeRSARoot(commonName: "RSA Root")
+        let leaf = try SignatureTestSupport.makeRSALeaf(commonName: "RSA Leaf", issuer: root)
+        let signature = try SignatureTestSupport.signSHA1BareRSA(manifestBytes: manifest, signer: leaf)
+        #expect(normalizeCMSSignatureAlgorithm(signature) != signature)
+    }
+
     @Test func garbageSignatureBlobIsCryptoFailure() {
         let result = SignatureTestSupport.verify(
             signatureBytes: [0x00, 0x01, 0x02, 0x03],
