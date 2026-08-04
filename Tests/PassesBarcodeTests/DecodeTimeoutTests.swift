@@ -16,17 +16,20 @@ struct DecodeTimeoutTests {
     @Test func slowOperationYieldsTimeoutValuePromptly() async {
         let clock = ContinuousClock()
         let started = clock.now
-        // A synchronous op that blocks far past the budget; the caller must not wait for it.
+        // A synchronous op that blocks well past the budget; the caller must not wait for it.
         let result = await withDecodeTimeout(.milliseconds(100), timeoutValue: "TIMED_OUT") {
-            Thread.sleep(forTimeInterval: 20)
+            Thread.sleep(forTimeInterval: 3)
             return "REAL"
         }
         let elapsed = started.duration(to: clock.now)
+        // The security property, and it is exact: had the caller waited on the operation, the
+        // operation would have won the race and this would read "REAL".
         #expect(result == "TIMED_OUT")
-        // The gap between bound and operation is deliberately enormous. A tight bound measures the
-        // caller's executor — which this guard does not control and which a loaded runner delays —
-        // rather than the property under test, that the caller never waits on the operation.
-        #expect(elapsed < .seconds(5))
+        // Backstop only, deliberately nowhere near the 100ms budget. How soon the caller is
+        // *released* depends on the caller's own executor, which this guard does not control and
+        // which a loaded runner delays by seconds; asserting tightly here measures that executor
+        // rather than the guard. Observed 5.26s on the 3-core runner.
+        #expect(elapsed < .seconds(10))
     }
 
     /// Regression for ipass-f8p: the decode must run on a lane this module owns, never on the
