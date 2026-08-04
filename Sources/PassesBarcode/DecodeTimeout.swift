@@ -64,8 +64,12 @@ private final class DecodeLanes: @unchecked Sendable {
         shared.submit(work)
     }
 
-    /// One lane per core, floored at 2 so a single-core device still overlaps two decodes.
-    private let lanes: [DispatchQueue] = (0..<max(2, ProcessInfo.processInfo.activeProcessorCount))
+    /// Sized to in-flight decodes rather than to cores: `VNImageRequestHandler.perform` runs the
+    /// decode in Vision's out-of-process service, so a lane spends its time waiting on that service,
+    /// not burning a core. Tying the width to `activeProcessorCount` made 41 concurrent decodes queue
+    /// ~14 deep on a 3-core runner and blow the 5s budget by queueing alone. Queues create their
+    /// threads lazily, so unused lanes cost nothing on a device that only ever decodes one at a time.
+    private let lanes: [DispatchQueue] = (0..<16)
         .map { DispatchQueue(label: "is.walt.passes.barcode.decode.\($0)", qos: .userInitiated) }
     private let cursor = NSLock()
     private var next = 0
