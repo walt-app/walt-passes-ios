@@ -8,10 +8,10 @@ import SwiftASN1
 /// Two rewrites, both driven by `digestAlgorithm`:
 ///  - `signatureAlgorithm` bare `rsaEncryption` -> the implied `shaNNNWithRSAEncryption`. Apple
 ///    PassKit ships the bare OID, which the library does not know.
-///  - a SHA-1 `digestAlgorithm` with absent parameters -> explicit NULL. The library derives the
-///    expected digest identifier from the signature algorithm and compares with `==`; its SHA-1 case
-///    is the only one carrying NULL rather than absent parameters, so an absent-parameters SHA-1
-///    signer fails a comparison SHA-256/384/512 signers pass.
+///  - a SHA-1 `digestAlgorithm` with absent parameters -> explicit NULL, at each of the two levels
+///    that carry one. The library derives the expected digest identifier from the signature algorithm
+///    and compares with `==`; its SHA-1 case is the only one carrying NULL rather than absent
+///    parameters, so an absent-parameters SHA-1 signer fails a comparison other digests pass.
 ///
 /// Neither field is covered by the signature - that is over `signedAttrs` - so no rewrite can make a
 /// tampered pass verify. Both target the sole SignerInfo structurally, so certificates, whose own
@@ -24,24 +24,25 @@ func normalizeCMSSignatureAlgorithm(_ signatureBytes: [UInt8]) -> [UInt8] {
     }
 
     let combinedRSA = combinedRSARewrite(cms, digestOID: digestOID)
-    let needsDigestNULL = needsSHA1NULLParameters(cms, digestOID: digestOID)
-    guard combinedRSA != nil || needsDigestNULL else { return signatureBytes }
+    let sha1Parameters = sha1ParameterRewrite(cms, digestOID: digestOID)
+    guard combinedRSA != nil || sha1Parameters.isNeeded else { return signatureBytes }
 
-    return cms.reserialized(
-        digestAlgorithms: needsDigestNULL
-            ? { serializeAlgorithmIdentifier(CMSOID.sha1, into: &$0) }
+    let normalized = try? cms.reserialized(
+        digestAlgorithms: sha1Parameters.declared
+            ? { try serializeAlgorithmIdentifier(CMSOID.sha1, into: &$0) }
             : nil
     ) { signerInfo in
         for (index, field) in cms.signerInfoFields.enumerated() {
-            if index == CMSStructure.digestAlgorithmIndex, needsDigestNULL {
-                serializeAlgorithmIdentifier(CMSOID.sha1, into: &signerInfo)
+            if index == CMSStructure.digestAlgorithmIndex, sha1Parameters.signerInfo {
+                try serializeAlgorithmIdentifier(CMSOID.sha1, into: &signerInfo)
             } else if index == cms.signatureAlgorithmIndex, let combinedRSA {
-                serializeAlgorithmIdentifier(combinedRSA, into: &signerInfo)
+                try serializeAlgorithmIdentifier(combinedRSA, into: &signerInfo)
             } else {
                 signerInfo.serialize(field)
             }
         }
     }
+    return normalized ?? signatureBytes
 }
 
 /// The combined RSA OID to substitute for a bare `rsaEncryption` `signatureAlgorithm`, or nil if the
@@ -50,25 +51,48 @@ private func combinedRSARewrite(
     _ cms: CMSStructure,
     digestOID: ASN1ObjectIdentifier
 ) -> ASN1ObjectIdentifier? {
-    guard leadingOID(of: cms.signatureAlgorithm) == CMSOID.rsaEncryption else { return nil }
+    guard let signatureAlgorithm = cms.signatureAlgorithm,
+        leadingOID(of: signatureAlgorithm) == CMSOID.rsaEncryption
+    else {
+        return nil
+    }
     return CMSOID.combinedRSA(forDigest: digestOID)
 }
 
-/// Whether this is a SHA-1 signer whose `digestAlgorithm` omits the NULL parameters the library
-/// expects. Restricted to a single-element `digestAlgorithms` SET: the library parses that SET with
-/// `DER.set`, which requires lexicographic order, so re-encoding one member of a larger set could
-/// break the ordering instead.
-private func needsSHA1NULLParameters(
+/// Which of the two levels carrying a SHA-1 `digestAlgorithm` need NULL parameters added. The levels
+/// are independent: nothing stops an issuer encoding `SEQUENCE { sha1 }` at one and
+/// `SEQUENCE { sha1, NULL }` at the other, and all four combinations are legal DER.
+private struct SHA1ParameterRewrite {
+    let signerInfo: Bool
+    let declared: Bool
+
+    static let none = SHA1ParameterRewrite(signerInfo: false, declared: false)
+    var isNeeded: Bool { signerInfo || declared }
+}
+
+/// Both levels must end up carrying NULL, because the library checks them separately: it compares the
+/// SignerInfo's `digestAlgorithm` against the `.sha1` identifier it derives from the signature
+/// algorithm, and it also requires the SignedData `digestAlgorithms` SET to contain that identifier.
+/// Fixing one level alone just trades one false `.tampered` for another.
+///
+/// So no rewrite is attempted unless the SET is a single SHA-1 identifier this can keep in step. The
+/// library parses that SET with `DER.set`, which requires lexicographic order, so re-encoding one
+/// member of a larger set risks breaking the ordering; and a larger set cannot be guaranteed to hold
+/// the rewritten identifier the `contains` check will look for.
+private func sha1ParameterRewrite(
     _ cms: CMSStructure,
     digestOID: ASN1ObjectIdentifier
-) -> Bool {
-    guard digestOID == CMSOID.sha1, parametersAreAbsent(cms.digestAlgorithm),
+) -> SHA1ParameterRewrite {
+    guard digestOID == CMSOID.sha1,
         let declared = cms.declaredDigestAlgorithms, declared.count == 1,
-        leadingOID(of: declared[0]) == CMSOID.sha1, parametersAreAbsent(declared[0])
+        leadingOID(of: declared[0]) == CMSOID.sha1
     else {
-        return false
+        return .none
     }
-    return true
+    return SHA1ParameterRewrite(
+        signerInfo: parametersAreAbsent(cms.digestAlgorithm),
+        declared: parametersAreAbsent(declared[0])
+    )
 }
 
 private func parametersAreAbsent(_ algorithmIdentifier: ASN1Node) -> Bool {

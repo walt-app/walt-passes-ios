@@ -119,10 +119,10 @@ internal struct CMSStructure {
         signedAttrsChildren == nil ? Self.signedAttrsIndex : Self.signedAttrsIndex + 1
     }
 
-    /// The SignerInfo's `signatureAlgorithm`, or the `signedAttrs` node when the blob is too short to
-    /// hold one - in which case no rewrite fires, because its leading OID will not match.
-    var signatureAlgorithm: ASN1Node {
-        signerInfoFields[min(signatureAlgorithmIndex, signerInfoFields.count - 1)]
+    /// The SignerInfo's `signatureAlgorithm`, or nil when the blob is too short to hold one.
+    var signatureAlgorithm: ASN1Node? {
+        let index = signatureAlgorithmIndex
+        return index < signerInfoFields.count ? signerInfoFields[index] : nil
     }
 
     /// The SignedData-level `digestAlgorithms` SET, which the library requires to contain the
@@ -147,26 +147,26 @@ internal struct CMSStructure {
     /// certificates are re-emitted verbatim, and `signedAttrs` is only ever dropped by a caller that
     /// verifies over the original attribute bytes it lifted from this same parse.
     func reserialized(
-        digestAlgorithms: ((inout DER.Serializer) -> Void)? = nil,
-        signerInfo: (inout DER.Serializer) -> Void
-    ) -> [UInt8] {
+        digestAlgorithms: ((inout DER.Serializer) throws -> Void)? = nil,
+        signerInfo: (inout DER.Serializer) throws -> Void
+    ) throws -> [UInt8] {
         var serializer = DER.Serializer()
-        serializer.appendConstructedNode(identifier: contentInfoTag) { contentInfo in
+        try serializer.appendConstructedNode(identifier: contentInfoTag) { contentInfo in
             contentInfo.serialize(contentType)
-            contentInfo.appendConstructedNode(identifier: explicitContentTag) { explicit in
-                explicit.appendConstructedNode(identifier: signedDataTag) { signedData in
+            try contentInfo.appendConstructedNode(identifier: explicitContentTag) { explicit in
+                try explicit.appendConstructedNode(identifier: signedDataTag) { signedData in
                     for (index, field) in signedDataFields.dropLast().enumerated() {
                         if index == Self.digestAlgorithmsIndex, let digestAlgorithms {
-                            signedData.appendConstructedNode(identifier: field.identifier) { set in
-                                digestAlgorithms(&set)
+                            try signedData.appendConstructedNode(identifier: field.identifier) { set in
+                                try digestAlgorithms(&set)
                             }
                         } else {
                             signedData.serialize(field)
                         }
                     }
-                    signedData.appendConstructedNode(identifier: signerInfosTag) { signerInfos in
-                        signerInfos.appendConstructedNode(identifier: signerInfoTag) { info in
-                            signerInfo(&info)
+                    try signedData.appendConstructedNode(identifier: signerInfosTag) { signerInfos in
+                        try signerInfos.appendConstructedNode(identifier: signerInfoTag) { info in
+                            try signerInfo(&info)
                         }
                     }
                 }
@@ -176,14 +176,18 @@ internal struct CMSStructure {
     }
 }
 
-/// Serializes `AlgorithmIdentifier ::= SEQUENCE { algorithm, parameters }` with explicit NULL
-/// parameters.
+/// Serializes `AlgorithmIdentifier ::= SEQUENCE { algorithm, parameters }`. Throws rather than
+/// swallowing, so a caller that cannot re-encode leaves the blob untouched instead of emitting a
+/// malformed SEQUENCE.
 internal func serializeAlgorithmIdentifier(
     _ oid: ASN1ObjectIdentifier,
+    nullParameters: Bool = true,
     into serializer: inout DER.Serializer
-) {
-    serializer.appendConstructedNode(identifier: .sequence) { fields in
-        try? fields.serialize(oid)
-        try? fields.serialize(ASN1Null())
+) throws {
+    try serializer.appendConstructedNode(identifier: .sequence) { fields in
+        try fields.serialize(oid)
+        if nullParameters {
+            try fields.serialize(ASN1Null())
+        }
     }
 }

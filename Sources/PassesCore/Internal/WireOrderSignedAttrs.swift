@@ -30,18 +30,19 @@ internal func prepareWireOrderFallback(
         let digestOID = leadingOID(of: cms.digestAlgorithm),
         let messageDigest = soleMessageDigestValue(attributes),
         let actualDigest = digest(manifestBytes, using: digestOID),
-        constantTimeEqual(messageDigest, actualDigest)
+        constantTimeEqual(messageDigest, actualDigest),
+        let stripped = try? cms.reserialized(signerInfo: { signerInfo in
+            for (index, field) in cms.signerInfoFields.enumerated()
+            where index != CMSStructure.signedAttrsIndex {
+                signerInfo.serialize(field)
+            }
+        })
     else {
         return nil
     }
     return WireOrderSignedAttrs(
         attributeBytes: setTaggedEncoding(of: attributes),
-        strippedSignatureBytes: cms.reserialized { signerInfo in
-            for (index, field) in cms.signerInfoFields.enumerated()
-            where index != CMSStructure.signedAttrsIndex {
-                signerInfo.serialize(field)
-            }
-        }
+        strippedSignatureBytes: stripped
     )
 }
 

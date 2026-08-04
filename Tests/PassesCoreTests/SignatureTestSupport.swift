@@ -140,13 +140,27 @@ internal enum SignatureTestSupport {
         )
     }
 
-    /// How a SHA-1 fixture encodes its `digestAlgorithm` parameters. Both are legal DER, and the two
-    /// real SHA-1 pkpasses checked carry NULL, but the library only accepts NULL for SHA-1.
+    /// How a SHA-1 fixture encodes `digestAlgorithm` parameters at each of the two levels that carry
+    /// one: the SignerInfo, and the SignedData `digestAlgorithms` SET. `SEQUENCE { sha1, NULL }` and
+    /// `SEQUENCE { sha1 }` are both legal, so all four combinations are legal, and nothing requires an
+    /// issuer to use the same encoding at both levels.
     internal enum DigestParameters {
-        /// `SEQUENCE { sha1, NULL }` - what `CMS.sign` and real Apple SHA-1 passes emit.
+        /// NULL at both levels - what `CMS.sign` and the real SHA-1 pkpasses emit.
         case explicitNull
-        /// `SEQUENCE { sha1 }` - how Apple encodes SHA-256, legal for SHA-1 too.
+        /// Absent at both levels.
         case absent
+        /// Absent in the SignerInfo, NULL in the SignedData SET.
+        case absentInSignerInfoOnly
+        /// NULL in the SignerInfo, absent in the SignedData SET.
+        case absentInDeclaredOnly
+
+        var signerInfoAbsent: Bool {
+            self == .absent || self == .absentInSignerInfoOnly
+        }
+
+        var declaredAbsent: Bool {
+            self == .absent || self == .absentInDeclaredOnly
+        }
     }
 
     /// CMS-signs `manifestBytes` with an RSA `signer` using SHA-1, then rewrites
@@ -170,31 +184,30 @@ internal enum SignatureTestSupport {
             detached: true
         )
         let bare = try rewriteToBareRSA(combined)
-        return digestParameters == .absent ? dropSHA1DigestParameters(bare) : bare
+        guard digestParameters != .explicitNull else { return bare }
+        return try dropSHA1DigestParameters(bare, shape: digestParameters)
     }
 
-    /// Strips the NULL parameters from every `SEQUENCE { sha1, NULL }`, giving the absent-parameters
-    /// encoding. A blunt whole-tree walk, which is fine for a fixture: the certificates in these
-    /// synthesized envelopes are SHA-256-signed, so none of them contains a bare sha1 identifier.
-    private static func dropSHA1DigestParameters(_ signatureBytes: [UInt8]) -> [UInt8] {
-        guard let root = try? DER.parse(signatureBytes) else { return signatureBytes }
-        var serializer = DER.Serializer()
-        stripSHA1Null(root, into: &serializer)
-        return serializer.serializedBytes
-    }
-
-    private static func stripSHA1Null(_ node: ASN1Node, into serializer: inout DER.Serializer) {
-        guard let children = constructedChildren(of: node) else {
-            serializer.serialize(node)
-            return
-        }
-        if node.identifier == .sequence, children.count == 2,
-            leadingOID(of: node) == CMSOID.sha1, children[1].identifier == .null {
-            serializer.appendConstructedNode(identifier: .sequence) { $0.serialize(children[0]) }
-            return
-        }
-        serializer.appendConstructedNode(identifier: node.identifier) { inner in
-            for child in children { stripSHA1Null(child, into: &inner) }
+    /// Re-emits the SHA-1 `digestAlgorithm` without its NULL parameters at whichever levels `shape`
+    /// selects. Targeted structurally rather than by a whole-tree walk, so a fixture can carry a
+    /// different encoding at each level.
+    private static func dropSHA1DigestParameters(
+        _ signatureBytes: [UInt8],
+        shape: DigestParameters
+    ) throws -> [UInt8] {
+        let cms = try require(CMSStructure(signatureBytes: signatureBytes))
+        return try cms.reserialized(
+            digestAlgorithms: shape.declaredAbsent
+                ? { try serializeAlgorithmIdentifier(CMSOID.sha1, nullParameters: false, into: &$0) }
+                : nil
+        ) { signerInfo in
+            for (index, field) in cms.signerInfoFields.enumerated() {
+                if index == CMSStructure.digestAlgorithmIndex, shape.signerInfoAbsent {
+                    try serializeAlgorithmIdentifier(CMSOID.sha1, nullParameters: false, into: &signerInfo)
+                } else {
+                    signerInfo.serialize(field)
+                }
+            }
         }
     }
 

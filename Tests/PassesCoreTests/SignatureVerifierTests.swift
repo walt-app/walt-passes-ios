@@ -219,17 +219,68 @@ struct SignatureVerifierTests {
         #expect(result == .failed(.manifestSignatureMismatch))
     }
 
-    @Test func sha1FixtureShapesDifferOnTheWire() throws {
-        // Anti-vacuity: without this the absent-parameters tests could be re-running the NULL case.
+    @Test(arguments: [
+        SignatureTestSupport.DigestParameters.absentInSignerInfoOnly,
+        SignatureTestSupport.DigestParameters.absentInDeclaredOnly,
+    ])
+    func sha1WithMixedDigestParametersIsAppleVerified(
+        shape: SignatureTestSupport.DigestParameters
+    ) throws {
+        // The SignerInfo and the SignedData digestAlgorithms SET each carry their own parameter
+        // encoding, and nothing requires an issuer to use the same one at both levels. The library
+        // checks them separately, so a rewrite has to fix whichever side is absent rather than only
+        // the case where both are.
         let root = try SignatureTestSupport.makeRSARoot(commonName: "RSA Root")
         let leaf = try SignatureTestSupport.makeRSALeaf(commonName: "RSA Leaf", issuer: root)
-        let withNull = try SignatureTestSupport.signSHA1BareRSA(manifestBytes: manifest, signer: leaf)
-        let absent = try SignatureTestSupport.signSHA1BareRSA(
+        let signature = try SignatureTestSupport.signSHA1BareRSA(
             manifestBytes: manifest,
             signer: leaf,
-            digestParameters: .absent
+            digestParameters: shape
         )
-        #expect(withNull != absent)
+        let result = SignatureTestSupport.verify(
+            signatureBytes: signature,
+            manifestBytes: manifest,
+            config: ParserConfig(),
+            trustAnchors: [root.certificate],
+            knownIntermediates: []
+        )
+        #expect(result == .ok(.appleVerified))
+    }
+
+    @Test func sha1WithMixedDigestParametersAndTamperedManifestFails() throws {
+        let root = try SignatureTestSupport.makeRSARoot(commonName: "RSA Root")
+        let leaf = try SignatureTestSupport.makeRSALeaf(commonName: "RSA Leaf", issuer: root)
+        let signature = try SignatureTestSupport.signSHA1BareRSA(
+            manifestBytes: manifest,
+            signer: leaf,
+            digestParameters: .absentInSignerInfoOnly
+        )
+        let result = SignatureTestSupport.verify(
+            signatureBytes: signature,
+            manifestBytes: [UInt8]("{\"pass.json\":\"DIFFERENT\"}".utf8),
+            config: ParserConfig(),
+            trustAnchors: [root.certificate],
+            knownIntermediates: []
+        )
+        #expect(result == .failed(.manifestSignatureMismatch))
+    }
+
+    @Test func sha1FixtureShapesDifferOnTheWire() throws {
+        // Anti-vacuity: all four parameter encodings must be distinct on the wire, otherwise the
+        // absent and mixed tests could be re-running the NULL case.
+        let root = try SignatureTestSupport.makeRSARoot(commonName: "RSA Root")
+        let leaf = try SignatureTestSupport.makeRSALeaf(commonName: "RSA Leaf", issuer: root)
+        let shapes: [SignatureTestSupport.DigestParameters] = [
+            .explicitNull, .absent, .absentInSignerInfoOnly, .absentInDeclaredOnly,
+        ]
+        let encodings = try shapes.map { shape in
+            try SignatureTestSupport.signSHA1BareRSA(
+                manifestBytes: manifest,
+                signer: leaf,
+                digestParameters: shape
+            )
+        }
+        #expect(Set(encodings).count == shapes.count)
     }
 
     @Test func fallbackDeclinesBlobWithoutSignedAttrs() throws {

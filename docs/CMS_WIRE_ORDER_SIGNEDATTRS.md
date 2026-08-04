@@ -99,11 +99,17 @@ verified on Android and read `Tampered` on iOS - a parity divergence, not merely
 theoretical one, which is why the rewrite is worth carrying despite no observed pass needing
 it.
 
-Rewriting the SignerInfo's
-`digestAlgorithm` requires rewriting the SignedData-level `digestAlgorithms` SET in the
-same pass, because `CMS.isValidSignature` checks
-`signedData.digestAlgorithms.contains(signer.digestAlgorithm)`. That rewrite is limited to
-a single-element SET, since the library parses it with `DER.set` and re-encoding one member
-of a larger set could break the required ordering.
+Two levels carry a `digestAlgorithm`: the SignerInfo, and the SignedData-level
+`digestAlgorithms` SET. The library checks them separately - `expectedDigestAlgorithm ==
+signer.digestAlgorithm` for the first, `digestAlgorithms.contains(signer.digestAlgorithm)`
+for the second - so both must end up carrying NULL. Nothing requires an issuer to use the
+same encoding at both levels, and all four combinations are legal, so the two are evaluated
+independently and whichever side omits the parameters is rewritten. Fixing one level alone
+just trades one false `Tampered` for another.
+
+No rewrite is attempted unless the SET is a single SHA-1 identifier that can be kept in
+step: the library parses it with `DER.set`, which requires lexicographic order, so
+re-encoding one member of a larger set risks breaking the ordering, and a larger set cannot
+be guaranteed to hold the rewritten identifier the `contains` check looks for.
 
 Neither field is covered by the signature, so no rewrite can make a tampered pass verify.
