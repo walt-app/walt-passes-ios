@@ -39,6 +39,7 @@ struct CompactCodeViewTests {
         #expect(compactCodeBacking == Color.white)
     }
 
+    @MainActor
     @Test func validPayloadsRenderThroughTheKernelEncoder() {
         // All five symbologies since the 1D expansion (ADR passes-ui-2, revised).
         #expect(CompactCodeView.renderImage(payload: "LOCKER-0042", format: .qr) != nil)
@@ -48,6 +49,7 @@ struct CompactCodeViewTests {
         #expect(CompactCodeView.renderImage(payload: "WALT-1", format: .code39) != nil)
     }
 
+    @MainActor
     @Test func encodeFailuresRouteToFailureTileNotPlaceholder() {
         // A structurally invalid 1D payload must yield nil (failure tile) on
         // the compact path — never the detail surfaces' grey placeholder.
