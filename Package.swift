@@ -97,9 +97,8 @@ let package = Package(
             dependencies: [
                 "PassesCore",
                 // Signature-verifier tests synthesize a test root/leaf and CMS-sign a manifest,
-                // mirroring swift-certificates' own CMSTests. Only the test target links X509;
-                // P256 key generation is reached through a PassesCore test-support shim (which
-                // already links Crypto transitively) so swift-crypto need not be a direct dep.
+                // mirroring swift-certificates' own CMSTests. Key generation and CMS signing live in
+                // SignatureTestSupport.swift here, never in the shipped kernel.
                 .product(name: "X509", package: "swift-certificates"),
             ],
             path: "Tests/PassesCoreTests",

@@ -1,127 +1,76 @@
 import Foundation
 import SwiftASN1
 
-/// Rewrites each CMS `SignerInfo.signatureAlgorithm` from the bare `rsaEncryption` OID to the
-/// `shaNNNWithRSAEncryption` OID implied by its `digestAlgorithm`, so swift-certificates 1.19.x
-/// (which only knows the combined OIDs) can verify passes Apple PassKit signs this way; otherwise
-/// a valid pass is misread as `.tampered(.manifestSignatureMismatch)` (walt-passes-ios#31).
-/// Mirrors Android's BouncyCastle path. SHA-1, SHA-256, SHA-384 and SHA-512 digests are covered.
+/// Rewrites a CMS `SignerInfo`'s algorithm identifiers into the encodings swift-certificates 1.19.x
+/// accepts, so a valid Apple pass is not misread as `.tampered`. Byte-identical output for any shape
+/// needing neither rewrite.
 ///
-/// Safe because the signature is over `signedAttrs`, not the `signatureAlgorithm` field, so the
-/// rewrite cannot make a tampered pass verify; `digestAlgorithm` is left intact so swift-
-/// certificates' `digestAlgorithmFor(signatureAlgorithm) == signer.digestAlgorithm` cross-check
-/// still holds. RSA-only and digest-driven; every other shape returns byte-identical input.
+/// Two rewrites, both driven by `digestAlgorithm`:
+///  - `signatureAlgorithm` bare `rsaEncryption` -> the implied `shaNNNWithRSAEncryption`. Apple
+///    PassKit ships the bare OID, which the library does not know.
+///  - a SHA-1 `digestAlgorithm` with absent parameters -> explicit NULL. The library derives the
+///    expected digest identifier from the signature algorithm and compares with `==`; its SHA-1 case
+///    is the only one carrying NULL rather than absent parameters, so an absent-parameters SHA-1
+///    signer fails a comparison SHA-256/384/512 signers pass.
+///
+/// Neither field is covered by the signature - that is over `signedAttrs` - so no rewrite can make a
+/// tampered pass verify. Both target the sole SignerInfo structurally, so certificates, whose own
+/// signatures DO cover their algorithm identifiers, are never touched.
 func normalizeCMSSignatureAlgorithm(_ signatureBytes: [UInt8]) -> [UInt8] {
-    do {
-        let root = try DER.parse(signatureBytes)
-        var serializer = DER.Serializer()
-        let changed = try rewriteNode(root, into: &serializer)
-        return changed ? serializer.serializedBytes : signatureBytes
-    } catch {
-        // Not parseable as DER, or an unexpected shape: leave it to the verifier unchanged.
+    guard let cms = CMSStructure(signatureBytes: signatureBytes),
+        let digestOID = leadingOID(of: cms.digestAlgorithm)
+    else {
         return signatureBytes
     }
-}
 
-internal enum CMSOID {
-    static let rsaEncryption: ASN1ObjectIdentifier = "1.2.840.113549.1.1.1"
-    static let sha1: ASN1ObjectIdentifier = "1.3.14.3.2.26"
-    static let sha256: ASN1ObjectIdentifier = "2.16.840.1.101.3.4.2.1"
-    static let sha384: ASN1ObjectIdentifier = "2.16.840.1.101.3.4.2.2"
-    static let sha512: ASN1ObjectIdentifier = "2.16.840.1.101.3.4.2.3"
-    static let sha1WithRSA: ASN1ObjectIdentifier = "1.2.840.113549.1.1.5"
-    static let messageDigest: ASN1ObjectIdentifier = "1.2.840.113549.1.9.4"
-    static let sha256WithRSA: ASN1ObjectIdentifier = "1.2.840.113549.1.1.11"
-    static let sha384WithRSA: ASN1ObjectIdentifier = "1.2.840.113549.1.1.12"
-    static let sha512WithRSA: ASN1ObjectIdentifier = "1.2.840.113549.1.1.13"
+    let combinedRSA = combinedRSARewrite(cms, digestOID: digestOID)
+    let needsDigestNULL = needsSHA1NULLParameters(cms, digestOID: digestOID)
+    guard combinedRSA != nil || needsDigestNULL else { return signatureBytes }
 
-    /// The `shaNNNWithRSAEncryption` OID implied by an RSA signer whose digest is `digest`.
-    /// SHA-1 is included because Apple PassKit still ships SHA-1 signers (ipass-c8p) and
-    /// swift-certificates verifies `.sha1WithRSAEncryption`; the digest strength is the issuer's
-    /// choice either way, and refusing to rewrite only turned a SHA-1 pass into a false `.tampered`.
-    static func combinedRSA(forDigest digest: ASN1ObjectIdentifier) -> ASN1ObjectIdentifier? {
-        switch digest {
-        case sha1: return sha1WithRSA
-        case sha256: return sha256WithRSA
-        case sha384: return sha384WithRSA
-        case sha512: return sha512WithRSA
-        default: return nil
-        }
-    }
-
-    /// Digest OIDs `combinedRSA(forDigest:)` can map, i.e. the shapes a `SignerInfo`'s
-    /// `digestAlgorithm` may take for the rewrite to fire.
-    static let knownDigests: [ASN1ObjectIdentifier] = [sha1, sha256, sha384, sha512]
-}
-
-/// Re-serializes `node` into `serializer`, rewriting any `SignerInfo.signatureAlgorithm` that
-/// carries bare `rsaEncryption`. Returns whether anything was rewritten anywhere in the subtree.
-/// Untouched subtrees (certificates, signedAttrs, signatures) round-trip byte-for-byte *because
-/// the input is canonical DER* (gated by `DER.parse`); the rebuild reproduces canonical DER, so
-/// the bytes those signatures cover are unchanged.
-private func rewriteNode(_ node: ASN1Node, into serializer: inout DER.Serializer) throws -> Bool {
-    guard case .constructed(let collection) = node.content else {
-        serializer.serialize(node)  // primitive: verbatim
-        return false
-    }
-
-    let children = Array(collection)
-    // A SignerInfo is the only place a bare-`rsaEncryption` AlgorithmIdentifier is immediately
-    // followed by an OCTET STRING (the signature). An RSA SubjectPublicKeyInfo or a certificate
-    // signatureAlgorithm is followed by a BIT STRING instead, so this never false-matches.
-    let rewriteIndex = children.indices.first { index in
-        index + 1 < children.count
-            && children[index + 1].identifier == .octetString
-            && isBareRSAAlgorithmIdentifier(children[index])
-    }
-
-    let replacement = rewriteIndex.flatMap { index in
-        digestOID(amongSiblingsBefore: index, in: children)
-            .flatMap(CMSOID.combinedRSA(forDigest:))
-    }
-
-    var changed = false
-    try serializer.appendConstructedNode(identifier: node.identifier) { inner in
-        for (index, child) in children.enumerated() {
-            if index == rewriteIndex, let combined = replacement {
-                try inner.appendConstructedNode(identifier: .sequence) { algorithmIdentifier in
-                    try algorithmIdentifier.serialize(combined)
-                    try algorithmIdentifier.serialize(ASN1Null())
-                }
-                changed = true
-            } else if try rewriteNode(child, into: &inner) {
-                changed = true
+    return cms.reserialized(
+        digestAlgorithms: needsDigestNULL
+            ? { serializeAlgorithmIdentifier(CMSOID.sha1, into: &$0) }
+            : nil
+    ) { signerInfo in
+        for (index, field) in cms.signerInfoFields.enumerated() {
+            if index == CMSStructure.digestAlgorithmIndex, needsDigestNULL {
+                serializeAlgorithmIdentifier(CMSOID.sha1, into: &signerInfo)
+            } else if index == cms.signatureAlgorithmIndex, let combinedRSA {
+                serializeAlgorithmIdentifier(combinedRSA, into: &signerInfo)
+            } else {
+                signerInfo.serialize(field)
             }
         }
     }
-    return changed
 }
 
-/// The leading OID of a constructed node - i.e. the `algorithm` field of an `AlgorithmIdentifier`
-/// SEQUENCE. Returns nil for a primitive, an empty SEQUENCE, or a node whose first child is not an
-/// OID (e.g. `issuerAndSerialNumber`, whose first child is a Name). `ASN1NodeCollection` is a
-/// `Sequence`, not a `Collection`, so the first element is read through its iterator.
-private func leadingOID(of node: ASN1Node) -> ASN1ObjectIdentifier? {
-    guard case .constructed(let fields) = node.content else { return nil }
-    var iterator = fields.makeIterator()
-    guard let oidNode = iterator.next() else { return nil }
-    return try? ASN1ObjectIdentifier(derEncoded: oidNode)
+/// The combined RSA OID to substitute for a bare `rsaEncryption` `signatureAlgorithm`, or nil if the
+/// signer does not have that shape.
+private func combinedRSARewrite(
+    _ cms: CMSStructure,
+    digestOID: ASN1ObjectIdentifier
+) -> ASN1ObjectIdentifier? {
+    guard leadingOID(of: cms.signatureAlgorithm) == CMSOID.rsaEncryption else { return nil }
+    return CMSOID.combinedRSA(forDigest: digestOID)
 }
 
-/// True if `node` is an `AlgorithmIdentifier` whose algorithm OID is bare `rsaEncryption` (the
-/// combined `shaNNNWithRSAEncryption` OIDs are intentionally not matched).
-private func isBareRSAAlgorithmIdentifier(_ node: ASN1Node) -> Bool {
-    leadingOID(of: node) == CMSOID.rsaEncryption
-}
-
-/// The digest OID from the `SignerInfo`'s `digestAlgorithm` - the `AlgorithmIdentifier` among the
-/// siblings before `index` whose OID is a known SHA digest.
-private func digestOID(amongSiblingsBefore index: Int, in children: [ASN1Node]) -> ASN1ObjectIdentifier? {
-    for sibling in children[..<index] {
-        guard let oid = leadingOID(of: sibling) else { continue }
-        if CMSOID.knownDigests.contains(oid) {
-            return oid
-        }
+/// Whether this is a SHA-1 signer whose `digestAlgorithm` omits the NULL parameters the library
+/// expects. Restricted to a single-element `digestAlgorithms` SET: the library parses that SET with
+/// `DER.set`, which requires lexicographic order, so re-encoding one member of a larger set could
+/// break the ordering instead.
+private func needsSHA1NULLParameters(
+    _ cms: CMSStructure,
+    digestOID: ASN1ObjectIdentifier
+) -> Bool {
+    guard digestOID == CMSOID.sha1, parametersAreAbsent(cms.digestAlgorithm),
+        let declared = cms.declaredDigestAlgorithms, declared.count == 1,
+        leadingOID(of: declared[0]) == CMSOID.sha1, parametersAreAbsent(declared[0])
+    else {
+        return false
     }
-    return nil
+    return true
+}
+
+private func parametersAreAbsent(_ algorithmIdentifier: ASN1Node) -> Bool {
+    constructedChildren(of: algorithmIdentifier)?.count == 1
 }

@@ -4,11 +4,11 @@ import SwiftASN1
 import _CryptoExtras
 @_spi(CMS) import X509
 
-/// **Test-only support.** Shims P256 key/certificate generation and CMS signing through
-/// PassesCore (which links `Crypto` transitively) so the test target does not need a direct
-/// `swift-crypto` dependency. Not part of the public API; consumed only by `@testable import`
-/// from `PassesCoreTests`. Mirrors the cert-construction pattern in swift-certificates'
-/// `CMSTests.swift`.
+@testable import PassesCore
+
+/// Key/certificate generation and CMS signing for the signature-verifier tests, mirroring the
+/// cert-construction pattern in swift-certificates' own `CMSTests.swift`. Lives in the test target so
+/// no signing helper ships inside the verification kernel.
 internal enum SignatureTestSupport {
     /// Lowercase hex SHA-1 of `bytes`. Used by fixtures to build `manifest.json` hashes; routed
     /// through PassesCore so the test target need not link Crypto directly.
@@ -140,15 +140,27 @@ internal enum SignatureTestSupport {
         )
     }
 
-    /// CMS-signs `manifestBytes` with an RSA `signer` using SHA-1, then rewrites the resulting
-    /// `SignerInfo.signatureAlgorithm` from the combined `sha1WithRSAEncryption` OID back to bare
-    /// `rsaEncryption` - the wire shape Apple PassKit ships and the one reported in
-    /// walt-passes-android#176. `CMS.sign` can only emit the combined OID, so the rewrite is the
-    /// only way to synthesize the shape without a real Apple-signed SHA-1 pass.
+    /// How a SHA-1 fixture encodes its `digestAlgorithm` parameters. Both are legal DER, and the two
+    /// real SHA-1 pkpasses checked carry NULL, but the library only accepts NULL for SHA-1.
+    internal enum DigestParameters {
+        /// `SEQUENCE { sha1, NULL }` - what `CMS.sign` and real Apple SHA-1 passes emit.
+        case explicitNull
+        /// `SEQUENCE { sha1 }` - how Apple encodes SHA-256, legal for SHA-1 too.
+        case absent
+    }
+
+    /// CMS-signs `manifestBytes` with an RSA `signer` using SHA-1, then rewrites
+    /// `SignerInfo.signatureAlgorithm` from the combined OID back to bare `rsaEncryption` - the wire
+    /// shape Apple PassKit ships. `CMS.sign` emits only the combined OID, so the rewrite is the only
+    /// way to synthesize the shape without a real Apple-signed SHA-1 pass.
     ///
-    /// `signingTime` is passed so the envelope carries `signedAttrs`; without it `CMS.sign` emits a
-    /// `SignerInfo` with no attributes at all, and the signature covers `manifestBytes` directly.
-    static func signSHA1BareRSA(manifestBytes: [UInt8], signer: Issued) throws -> [UInt8] {
+    /// `signingTime` is passed so the envelope carries `signedAttrs`; without it `CMS.sign` emits no
+    /// attributes and the signature covers `manifestBytes` directly.
+    static func signSHA1BareRSA(
+        manifestBytes: [UInt8],
+        signer: Issued,
+        digestParameters: DigestParameters = .explicitNull
+    ) throws -> [UInt8] {
         let combined = try CMS.sign(
             manifestBytes,
             signatureAlgorithm: .sha1WithRSAEncryption,
@@ -157,7 +169,33 @@ internal enum SignatureTestSupport {
             signingTime: Date(timeIntervalSince1970: 1_750_000_000),
             detached: true
         )
-        return try rewriteToBareRSA(combined)
+        let bare = try rewriteToBareRSA(combined)
+        return digestParameters == .absent ? dropSHA1DigestParameters(bare) : bare
+    }
+
+    /// Strips the NULL parameters from every `SEQUENCE { sha1, NULL }`, giving the absent-parameters
+    /// encoding. A blunt whole-tree walk, which is fine for a fixture: the certificates in these
+    /// synthesized envelopes are SHA-256-signed, so none of them contains a bare sha1 identifier.
+    private static func dropSHA1DigestParameters(_ signatureBytes: [UInt8]) -> [UInt8] {
+        guard let root = try? DER.parse(signatureBytes) else { return signatureBytes }
+        var serializer = DER.Serializer()
+        stripSHA1Null(root, into: &serializer)
+        return serializer.serializedBytes
+    }
+
+    private static func stripSHA1Null(_ node: ASN1Node, into serializer: inout DER.Serializer) {
+        guard let children = constructedChildren(of: node) else {
+            serializer.serialize(node)
+            return
+        }
+        if node.identifier == .sequence, children.count == 2,
+            leadingOID(of: node) == CMSOID.sha1, children[1].identifier == .null {
+            serializer.appendConstructedNode(identifier: .sequence) { $0.serialize(children[0]) }
+            return
+        }
+        serializer.appendConstructedNode(identifier: node.identifier) { inner in
+            for child in children { stripSHA1Null(child, into: &inner) }
+        }
     }
 
     /// How a wire-order fixture's `signedAttrs` SET should deviate from sorted DER order.
@@ -175,8 +213,8 @@ internal enum SignatureTestSupport {
     /// CMS-signs `manifestBytes` the way an issuer whose tooling emits `signedAttrs` in wire order
     /// does: `CMS.sign` is used to obtain a well-formed envelope, then its `signedAttrs` elements are
     /// re-ordered per `shape` and the SET-tagged encoding of THAT order is re-signed with the
-    /// signer's key. The result is cryptographically sound and rejected by stock swift-certificates,
-    /// which is exactly the reported bug (ipass-10g, Android wpass-x70).
+    /// signer's key. The result is cryptographically sound yet rejected by stock swift-certificates,
+    /// which is the reported bug.
     static func signWithWireOrderSignedAttrs(
         manifestBytes: [UInt8],
         signer: Issued,
@@ -201,11 +239,12 @@ internal enum SignatureTestSupport {
         let contentInfo = try children(of: try DER.parse(signatureBytes))
         let explicitContent = contentInfo[1]
         let signedData = try children(of: try children(of: explicitContent)[0])
-        let signerInfo = try children(of: try children(of: signedData.last!)[0])
+        let signerInfos = try children(of: try require(signedData.last))
+        let signerInfo = try children(of: signerInfos[0])
 
-        var attributes = Array(try children(of: signerInfo[SIGNED_ATTRS_INDEX]).reversed())
+        var attributes = Array(try children(of: signerInfo[CMSStructure.signedAttrsIndex]).reversed())
         if shape == .reversedWithDuplicateMessageDigest {
-            attributes.append(attributes.first { isMessageDigestAttribute($0) }!)
+            attributes.append(try require(attributes.first { leadingOID(of: $0) == CMSOID.messageDigest }))
         }
 
         // Sign the SET-tagged encoding of the re-ordered elements: the signature must cover the
@@ -228,7 +267,7 @@ internal enum SignatureTestSupport {
                             signerInfos.appendConstructedNode(identifier: .sequence) { info in
                                 for (index, field) in signerInfo.enumerated() {
                                     switch index {
-                                    case SIGNED_ATTRS_INDEX:
+                                    case CMSStructure.signedAttrsIndex:
                                         info.appendConstructedNode(identifier: field.identifier) { attrs in
                                             for attribute in attributes { attrs.serialize(attribute) }
                                         }
@@ -262,7 +301,7 @@ internal enum SignatureTestSupport {
         )
         let contentInfo = try children(of: try DER.parse(envelope))
         let signedData = try children(of: try children(of: contentInfo[1])[0])
-        let signerInfo = try children(of: try children(of: signedData.last!)[0])
+        let signerInfo = try children(of: try children(of: try require(signedData.last))[0])
         guard let signature = signerInfo.last, signature.identifier == .octetString else {
             throw TestSupportError.unexpectedShape
         }
@@ -270,18 +309,16 @@ internal enum SignatureTestSupport {
     }
 
     private static func children(of node: ASN1Node) throws -> [ASN1Node] {
-        guard case .constructed(let collection) = node.content else {
+        guard let children = constructedChildren(of: node) else {
             throw TestSupportError.unexpectedShape
         }
-        return Array(collection)
+        return children
     }
 
-    private static func isMessageDigestAttribute(_ node: ASN1Node) -> Bool {
-        leadingOID(of: node) == CMSOID.messageDigest
+    private static func require<T>(_ value: T?) throws -> T {
+        guard let value else { throw TestSupportError.unexpectedShape }
+        return value
     }
-
-    /// `SignerInfo ::= SEQUENCE { version, sid, digestAlgorithm, [0] signedAttrs, ... }`.
-    private static let SIGNED_ATTRS_INDEX = 3
 
     /// Inverse of `normalizeCMSSignatureAlgorithm`: rewrites the `SignerInfo.signatureAlgorithm`
     /// SEQUENCE - the `AlgorithmIdentifier` immediately followed by the signature OCTET STRING -
@@ -322,13 +359,6 @@ internal enum SignatureTestSupport {
             }
         }
         return changed
-    }
-
-    private static func leadingOID(of node: ASN1Node) -> ASN1ObjectIdentifier? {
-        guard case .constructed(let fields) = node.content else { return nil }
-        var iterator = fields.makeIterator()
-        guard let oidNode = iterator.next() else { return nil }
-        return try? ASN1ObjectIdentifier(derEncoded: oidNode)
     }
 
     internal enum TestSupportError: Error {

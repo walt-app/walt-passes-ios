@@ -151,11 +151,8 @@ struct SignatureVerifierTests {
     }
 
     @Test func sha1BareRSASignerIsAppleVerified() throws {
-        // Regression guard for ipass-c8p. A SignerInfo carrying digestAlgorithm=SHA-1 with the bare
-        // `rsaEncryption` signatureAlgorithm - the shape Apple PassKit ships and the shape of the
-        // pass reported in walt-app/walt-passes-android#176 - was left unrewritten by the
-        // normalizer, so `AlgorithmIdentifier(digestAlgorithmFor:)` threw and the pass read
-        // Tampered. Red before the SHA-1 arm in `combinedRSA(forDigest:)`, green after.
+        // SHA-1 digest with the bare `rsaEncryption` signatureAlgorithm: without the SHA-1 arm,
+        // `AlgorithmIdentifier(digestAlgorithmFor:)` throws and a sound pass reads Tampered.
         let root = try SignatureTestSupport.makeRSARoot(commonName: "RSA Root")
         let leaf = try SignatureTestSupport.makeRSALeaf(commonName: "RSA Leaf", issuer: root)
         let signature = try SignatureTestSupport.signSHA1BareRSA(manifestBytes: manifest, signer: leaf)
@@ -170,8 +167,7 @@ struct SignatureVerifierTests {
     }
 
     @Test func sha1BareRSAWithTamperedManifestStillFails() throws {
-        // The security half of ipass-c8p: rewriting the algorithm OID must not let a mutated
-        // manifest verify. The signed messageDigest no longer matches the manifest's SHA-1.
+        // Rewriting the algorithm OID must not let a mutated manifest verify.
         let root = try SignatureTestSupport.makeRSARoot(commonName: "RSA Root")
         let leaf = try SignatureTestSupport.makeRSALeaf(commonName: "RSA Leaf", issuer: root)
         let signature = try SignatureTestSupport.signSHA1BareRSA(manifestBytes: manifest, signer: leaf)
@@ -185,9 +181,71 @@ struct SignatureVerifierTests {
         #expect(result == .failed(.manifestSignatureMismatch))
     }
 
+    @Test func sha1WithAbsentDigestParametersIsAppleVerified() throws {
+        // The other legal SHA-1 digestAlgorithm encoding, parameters absent. Only SHA-1 maps to a
+        // NULL-carrying expectation, so this shape failed a comparison other digests pass.
+        let root = try SignatureTestSupport.makeRSARoot(commonName: "RSA Root")
+        let leaf = try SignatureTestSupport.makeRSALeaf(commonName: "RSA Leaf", issuer: root)
+        let signature = try SignatureTestSupport.signSHA1BareRSA(
+            manifestBytes: manifest,
+            signer: leaf,
+            digestParameters: .absent
+        )
+        let result = SignatureTestSupport.verify(
+            signatureBytes: signature,
+            manifestBytes: manifest,
+            config: ParserConfig(),
+            trustAnchors: [root.certificate],
+            knownIntermediates: []
+        )
+        #expect(result == .ok(.appleVerified))
+    }
+
+    @Test func sha1WithAbsentDigestParametersAndTamperedManifestFails() throws {
+        let root = try SignatureTestSupport.makeRSARoot(commonName: "RSA Root")
+        let leaf = try SignatureTestSupport.makeRSALeaf(commonName: "RSA Leaf", issuer: root)
+        let signature = try SignatureTestSupport.signSHA1BareRSA(
+            manifestBytes: manifest,
+            signer: leaf,
+            digestParameters: .absent
+        )
+        let result = SignatureTestSupport.verify(
+            signatureBytes: signature,
+            manifestBytes: [UInt8]("{\"pass.json\":\"DIFFERENT\"}".utf8),
+            config: ParserConfig(),
+            trustAnchors: [root.certificate],
+            knownIntermediates: []
+        )
+        #expect(result == .failed(.manifestSignatureMismatch))
+    }
+
+    @Test func sha1FixtureShapesDifferOnTheWire() throws {
+        // Anti-vacuity: without this the absent-parameters tests could be re-running the NULL case.
+        let root = try SignatureTestSupport.makeRSARoot(commonName: "RSA Root")
+        let leaf = try SignatureTestSupport.makeRSALeaf(commonName: "RSA Leaf", issuer: root)
+        let withNull = try SignatureTestSupport.signSHA1BareRSA(manifestBytes: manifest, signer: leaf)
+        let absent = try SignatureTestSupport.signSHA1BareRSA(
+            manifestBytes: manifest,
+            signer: leaf,
+            digestParameters: .absent
+        )
+        #expect(withNull != absent)
+    }
+
+    @Test func fallbackDeclinesBlobWithoutSignedAttrs() throws {
+        // No signedAttrs means the signature already covers the content, so there is no ordering
+        // problem to recover from and the fallback must decline rather than build its own binding.
+        let root = try SignatureTestSupport.makeRoot(commonName: "Root")
+        let leaf = try SignatureTestSupport.makeLeaf(commonName: "Leaf", issuer: root)
+        // `sign` without a signingTime emits a SignerInfo carrying no attributes.
+        let signature = try SignatureTestSupport.sign(manifestBytes: manifest, signer: leaf)
+        #expect(
+            prepareWireOrderFallback(signatureBytes: signature, manifestBytes: manifest) == nil
+        )
+    }
+
     @Test func normalizerRewritesSHA1BareRSAToCombinedOID() throws {
-        // Keeps the two tests above from going vacuous: asserts the blob really is the bare-RSA
-        // shape the normalizer must rewrite, rather than one swift-certificates already accepted.
+        // Anti-vacuity: the blob really is the bare-RSA shape the normalizer must rewrite.
         let root = try SignatureTestSupport.makeRSARoot(commonName: "RSA Root")
         let leaf = try SignatureTestSupport.makeRSALeaf(commonName: "RSA Leaf", issuer: root)
         let signature = try SignatureTestSupport.signSHA1BareRSA(manifestBytes: manifest, signer: leaf)
@@ -195,10 +253,8 @@ struct SignatureVerifierTests {
     }
 
     @Test func wireOrderSignedAttrsVerify() throws {
-        // Regression guard for ipass-10g (Android wpass-x70, GH walt-passes-android#176). The
-        // signedAttrs SET is signed in wire rather than sorted DER order, which swift-asn1 refuses to
-        // parse, so the strict path reports a structurally invalid CMS block. Apple Wallet, Google
-        // Wallet and OpenSSL all accept these passes. Red before the fallback, green after.
+        // signedAttrs signed unsorted, which swift-asn1 refuses to parse. Apple Wallet, Google Wallet
+        // and OpenSSL all accept these passes.
         let root = try SignatureTestSupport.makeRoot(commonName: "Root")
         let leaf = try SignatureTestSupport.makeLeaf(commonName: "Leaf", issuer: root)
         let signature = try SignatureTestSupport.signWithWireOrderSignedAttrs(
@@ -216,9 +272,8 @@ struct SignatureVerifierTests {
     }
 
     @Test func stockLibraryStillRejectsWireOrderSignedAttrs() async throws {
-        // Anti-vacuity control, mirroring Android's. If a future swift-certificates release accepted
-        // wire-order signedAttrs on its own, the test above would pass without exercising the
-        // fallback at all and would silently stop guarding anything. This fails when that happens.
+        // Anti-vacuity: if the library ever accepted wire order on its own, the test above would stop
+        // exercising the fallback and silently guard nothing.
         let root = try SignatureTestSupport.makeRoot(commonName: "Root")
         let leaf = try SignatureTestSupport.makeLeaf(commonName: "Leaf", issuer: root)
         let signature = try SignatureTestSupport.signWithWireOrderSignedAttrs(
@@ -239,10 +294,8 @@ struct SignatureVerifierTests {
     }
 
     @Test func libraryVerifiesOverDataBytesWhenSignedAttrsAbsent() async throws {
-        // Pins the library behaviour the fallback's whole design rests on: with no signedAttrs, the
-        // signature is checked directly against `dataBytes`. If a future release required signedAttrs
-        // to be present, the fallback would stop working, and this fails loudly rather than the
-        // regression above failing for an unexplained reason.
+        // Pins the behaviour the fallback's design rests on: with no signedAttrs the signature is
+        // checked directly against `dataBytes`. A release tightening this must fail here, legibly.
         let root = try SignatureTestSupport.makeRoot(commonName: "Root")
         let leaf = try SignatureTestSupport.makeLeaf(commonName: "Leaf", issuer: root)
         let arbitrary = [UInt8]("not a manifest, just some bytes".utf8)
@@ -262,10 +315,8 @@ struct SignatureVerifierTests {
     }
 
     @Test func wireOrderSignedAttrsWithTamperedManifestFailsClosed() throws {
-        // The security property behind ipass-10g: the fallback strips signedAttrs, which also strips
-        // the one signed attribute the library validates, so it re-does the messageDigest comparison
-        // itself. Without that, a mutated manifest would keep an intact signature over its untouched
-        // attributes and verify.
+        // Stripping signedAttrs also strips the one attribute the library validates, so the fallback
+        // re-does that comparison; without it a mutated manifest keeps a valid signature.
         let root = try SignatureTestSupport.makeRoot(commonName: "Root")
         let leaf = try SignatureTestSupport.makeLeaf(commonName: "Leaf", issuer: root)
         let signature = try SignatureTestSupport.signWithWireOrderSignedAttrs(
@@ -284,8 +335,7 @@ struct SignatureVerifierTests {
     }
 
     @Test func wireOrderSignedAttrsRejectedUnderStrictConfig() throws {
-        // The fallback routes through the same config gating as the strict path: a chain that does
-        // not reach a bundled anchor is refused when self-signed certificates are not accepted.
+        // The fallback routes through the same config gating as the strict path.
         let root = try SignatureTestSupport.makeRoot(commonName: "Root")
         let leaf = try SignatureTestSupport.makeLeaf(commonName: "Leaf", issuer: root)
         let signature = try SignatureTestSupport.signWithWireOrderSignedAttrs(
@@ -316,9 +366,8 @@ struct SignatureVerifierTests {
     }
 
     @Test func wireOrderWithDuplicateMessageDigestFailsClosed() throws {
-        // The fallback treats the messageDigest attribute as *the* digest the signature commits to,
-        // so it requires exactly one. Two of them, even both correct, must fail closed rather than
-        // letting a first-match guess stand in.
+        // The messageDigest is treated as *the* digest the signature commits to, so two of them -
+        // even both correct - must fail closed rather than becoming a first-match guess.
         let root = try SignatureTestSupport.makeRoot(commonName: "Root")
         let leaf = try SignatureTestSupport.makeLeaf(commonName: "Leaf", issuer: root)
         let signature = try SignatureTestSupport.signWithWireOrderSignedAttrs(
@@ -338,11 +387,9 @@ struct SignatureVerifierTests {
     }
 
     @Test func wireOrderMultiSignerEnvelopeFailsClosed() throws {
-        // The single-signer floor, which the fallback alone enforces. Both signatures here are
-        // genuine, so nothing is cryptographically wrong with the envelope; it is refused because the
-        // trust claim is stated for one signer. swift-certificates' own "Too many signatures" check
-        // cannot help: the fallback's rebuild emits exactly one SignerInfo, so the library never sees
-        // the second one. Mutation-tested - relaxing the guard makes this verify.
+        // Both signatures here are genuine; the envelope is refused because the trust claim is stated
+        // for one signer. The library cannot help: the rebuild emits one SignerInfo, so it never sees
+        // the second. Mutation-tested - relaxing the guard makes this verify.
         let root = try SignatureTestSupport.makeRoot(commonName: "Root")
         let leaf = try SignatureTestSupport.makeLeaf(commonName: "Leaf", issuer: root)
         let signature = try SignatureTestSupport.signWithWireOrderSignedAttrs(
