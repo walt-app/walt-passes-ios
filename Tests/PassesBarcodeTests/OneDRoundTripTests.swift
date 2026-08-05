@@ -79,10 +79,3 @@ struct OneDRoundTripTests {
         return data as Data
     }
 }
-
-/// Fidelity and round-trip suites assert what the decoder READS, not how fast. The production 5s
-/// budget is a slow-loris guard, and coupling these to it made them fail on a 3-core runner where
-/// ~41 concurrent Vision decodes contend for the same cores that Vision's out-of-process service
-/// runs on — the guard correctly reporting a real overrun, in a suite that is not testing it. The
-/// timeout has its own coverage in `DecodeTimeoutTests`.
-private let generousDecodeBudget: Duration = .seconds(120)

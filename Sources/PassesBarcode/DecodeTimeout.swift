@@ -15,13 +15,9 @@ import Foundation
 /// group would await *both* children before the closure returns, so the slow operation would still
 /// block the caller past the deadline.
 ///
-/// NEITHER racer may touch the shared Swift cooperative pool, and that is load-bearing rather than
-/// stylistic. The pool is fixed-width and does not grow, so a caller that parks its threads (see
-/// `SignatureVerifier.runBlocking`, which documents the same hazard) can keep a pool-scheduled
-/// decode from ever STARTING, while the deadline — a timer — still fires on schedule. That made the
-/// guard report a timeout for decodes that never ran (ipass-f8p): measured with the pool parked,
-/// work submitted via `Task.detached`, a concurrent `DispatchQueue`, or `DispatchQueue.global` had
-/// not begun after 20s, while a dedicated serial queue began in 0.1ms.
+/// Neither racer may touch the shared Swift cooperative pool: it is fixed-width, so a caller
+/// parking its threads can stop a pool-scheduled decode from ever starting while the deadline still
+/// fires, reporting a timeout for work never attempted. See ADR `barcode-decode-1` (ipass-f8p).
 func withDecodeTimeout<T: Sendable>(
     _ duration: Duration,
     timeoutValue: T,
@@ -42,19 +38,16 @@ func withDecodeTimeout<T: Sendable>(
     }
 }
 
-/// The decode lanes and the deadline lane, all dedicated serial queues this module owns.
+/// Dedicated serial queues this module owns — never the cooperative pool, and never a *concurrent*
+/// queue, which draws from the same thread pool the cooperative pool exhausts. See ADR
+/// `barcode-decode-1`.
 ///
-/// A bank rather than one queue: the still-image and live-frame paths decode concurrently, and a
-/// single lane would queue them behind each other until the wait they share exceeded its own
-/// budget — trading starvation-by-pool for starvation-by-queue. A bank rather than a *concurrent*
-/// queue because concurrent queues draw from the same thread pool the cooperative pool exhausts,
-/// which is the bug this exists to avoid. Queues create their threads lazily, so idle lanes cost
-/// nothing.
-///
-/// `@unchecked Sendable` because the round-robin cursor is mutable shared state guarded by an
-/// `NSLock` — the lock is this type's ADR per the repo's policy; the queues themselves are
-/// immutable and `DispatchQueue` is already `Sendable`.
-private final class DecodeLanes: @unchecked Sendable {
+/// `@unchecked Sendable`: the lane loads are mutable shared state guarded by an `NSLock`, which is
+/// this type's ADR per the repo's policy. The queues themselves are immutable and already `Sendable`.
+final class DecodeLanes: @unchecked Sendable {
+    /// Test seam so the lane assertion binds to a symbol rather than a copied string.
+    static let laneLabelPrefix = "is.walt.passes.barcode.decode."
+
     private static let shared = DecodeLanes()
 
     /// Deadlines get their own lane so a timer is never queued behind decode work.
@@ -64,33 +57,59 @@ private final class DecodeLanes: @unchecked Sendable {
         shared.submit(work)
     }
 
-    /// Sized to in-flight decodes rather than to cores: `VNImageRequestHandler.perform` runs the
-    /// decode in Vision's out-of-process service, so a lane spends its time waiting on that service,
-    /// not burning a core. Tying the width to `activeProcessorCount` made 41 concurrent decodes queue
-    /// ~14 deep on a 3-core runner and blow the 5s budget by queueing alone. Queues create their
-    /// threads lazily, so unused lanes cost nothing on a device that only ever decodes one at a time.
+    /// Sized to in-flight decodes, not cores: Vision decodes out of process, so a lane waits on that
+    /// service rather than burning a core. Queues create their threads lazily, so idle lanes are free.
     private let lanes: [DispatchQueue] = (0..<16)
-        .map { DispatchQueue(label: "is.walt.passes.barcode.decode.\($0)", qos: .userInitiated) }
+        .map { DispatchQueue(label: "\(DecodeLanes.laneLabelPrefix)\($0)", qos: .userInitiated) }
     private let cursor = NSLock()
+    private var load: [Int]
     private var next = 0
 
-    /// Round-robin so a run of decodes spreads across lanes instead of piling onto one.
+    private init() {
+        load = Array(repeating: 0, count: lanes.count)
+    }
+
+    /// Least-loaded rather than blind round-robin. A timed-out decode is orphaned but keeps running
+    /// (Vision `perform` is non-cancellable), so it holds its lane after the caller has given up;
+    /// round-robin would hand new work to that wedged lane while others sat idle, re-creating the
+    /// never-started timeout this guard exists to prevent. Ties break round-robin so bursts still
+    /// fan out. Residual: if every lane is wedged, decodes do queue — bounded execution cannot
+    /// avoid that, and the caller is still released at its budget.
     private func submit(_ work: @escaping @Sendable () -> Void) {
         cursor.lock()
-        let lane = next
-        next = (next + 1) % lanes.count
+        // Scanning from `next` rather than from 0 makes the tie-break a genuine rotation.
+        var lane = next
+        var lightest = load[next]
+        for offset in 1..<lanes.count {
+            let candidate = (next + offset) % lanes.count
+            if load[candidate] < lightest {
+                lane = candidate
+                lightest = load[candidate]
+            }
+        }
+        load[lane] += 1
+        next = (lane + 1) % lanes.count
         cursor.unlock()
-        lanes[lane].async(execute: work)
+
+        lanes[lane].async { [self] in
+            work()
+            cursor.lock()
+            load[lane] -= 1
+            cursor.unlock()
+        }
     }
 }
 
 /// `DispatchTimeInterval` in nanoseconds, saturating rather than trapping on absurd budgets.
+/// Saturates toward the budget's own sign, so a negative one fires immediately instead of
+/// wrapping into a ~292-year deadline.
 private func dispatchInterval(_ duration: Duration) -> DispatchTimeInterval {
     let (seconds, attoseconds) = duration.components
+    let saturated: DispatchTimeInterval = .nanoseconds(seconds < 0 ? .min : .max)
     let (scaled, overflow) = seconds.multipliedReportingOverflow(by: 1_000_000_000)
-    guard !overflow else { return .nanoseconds(.max) }
+    guard !overflow else { return saturated }
     let (total, carryOverflow) = scaled.addingReportingOverflow(attoseconds / 1_000_000_000)
-    guard !carryOverflow, let nanoseconds = Int(exactly: total) else { return .nanoseconds(.max) }
+    guard !carryOverflow, let nanoseconds = Int(exactly: total) else { return saturated }
     return .nanoseconds(nanoseconds)
 }
 

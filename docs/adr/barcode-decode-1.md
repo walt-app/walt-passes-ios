@@ -106,7 +106,17 @@ pool the cooperative pool exhausts, so only dedicated lanes are immune — this 
 serial queues rather than one concurrent queue. A bank rather than a single lane because the
 still-image and live-frame paths decode concurrently, and one lane would trade starvation-by-pool
 for starvation-by-queue (measured: 12 concurrent 0.3s decodes took 3.6s of a 5s budget on one
-lane, 0.6s across a bank).
+lane, 0.6s across a bank). Lane width is sized to in-flight decodes rather than to cores, since
+Vision decodes out of process and a lane waits on that service rather than burning one: tying the
+width to `activeProcessorCount` left ~41 concurrent decodes queued ~14 deep on a 3-core runner and
+blew the budget by queueing alone.
+
+Lanes are picked **least-loaded**, not round-robin. A timed-out decode is orphaned but keeps
+running, so it holds its lane after the caller has given up; blind round-robin would hand new work
+to that wedged lane while others sat idle, re-creating the never-started timeout this change
+exists to prevent. Ties break in rotation so bursts still fan out. Residual: if every lane is
+wedged, decodes queue — bounded execution cannot avoid that, and the caller is still released at
+its budget.
 
 What does NOT change: the timeout still bounds only the caller's *wait*; Vision `perform` remains
 synchronous and non-cancellable, so a hung decode is still orphaned rather than killed, and its
@@ -123,4 +133,5 @@ framework (ipass-42i) — because no value could distinguish the two. Public enu
 Honest residual: this fixes which *executor* the decode runs on, not the fact that resuming the
 caller still needs the caller's own executor. If the caller's pool is blocked, it observes the
 result late — the guard bounds the wait it controls, and cannot bound delivery into a blocked
-caller. `DecodeTimeoutTests.decodeRunsOnAnOwnedLaneNotTheCooperativePool` pins the lane invariant.
+caller. `DecodeTimeoutTests.decodeRunsOnAnOwnedLaneNotTheCooperativePool` pins the lane invariant, and
+`expiredBudgetReportsDecodeTimedOut` on each decoder pins the reported arm.

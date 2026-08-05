@@ -13,6 +13,16 @@ struct VisionBarcodeImageDecoderTests {
     private let decoder = VisionBarcodeImageDecoder(
         config: BarcodeDecodeConfig(decodeTimeout: generousDecodeBudget))
 
+    /// An expired budget must surface as `decodeTimedOut`, not `decoderUnavailable`. The two are
+    /// different signals to the consumer's retry decision, and this is the only place the image
+    /// decoder's choice between them is checked.
+    @Test func expiredBudgetReportsDecodeTimedOut() async {
+        let decoder = VisionBarcodeImageDecoder(
+            config: BarcodeDecodeConfig(decodeTimeout: expiredDecodeBudget))
+        let png = BarcodeImageFactory.qrPNG("WALT-MEMBER-12345")
+        #expect(await decoder.decode(source: .data(png)) == .decodeFailed(reason: .decodeTimedOut))
+    }
+
     @Test func decodesQrToQrFormat() async {
         let png = BarcodeImageFactory.qrPNG("WALT-MEMBER-12345")
         #expect(await decoder.decode(source: .data(png)) == .decodedBarcode(payload: "WALT-MEMBER-12345", format: .qr))
@@ -78,10 +88,3 @@ struct VisionBarcodeImageDecoderTests {
         #expect(await decoder.decode(source: .fileURL(url)) == .decodedBarcode(payload: "FROM-FILE-URL", format: .qr))
     }
 }
-
-/// Fidelity and round-trip suites assert what the decoder READS, not how fast. The production 5s
-/// budget is a slow-loris guard, and coupling these to it made them fail on a 3-core runner where
-/// ~41 concurrent Vision decodes contend for the same cores that Vision's out-of-process service
-/// runs on — the guard correctly reporting a real overrun, in a suite that is not testing it. The
-/// timeout has its own coverage in `DecodeTimeoutTests`.
-private let generousDecodeBudget: Duration = .seconds(120)

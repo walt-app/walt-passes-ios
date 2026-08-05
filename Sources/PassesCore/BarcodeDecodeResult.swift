@@ -51,10 +51,7 @@ public enum DecodeFailureReason: Sendable, CaseIterable {
     case decoderUnavailable
 
     /// The decode did not return within its wall-clock budget (the slow-loris guard on
-    /// barcode-decode-1). Distinct from `decoderUnavailable` because the two call for opposite
-    /// responses: an unavailable decoder will not succeed on retry, whereas a timed-out one is a
-    /// load signal and the same input may decode fine when the device is less busy. Folding them
-    /// together also cost a misdiagnosis once — a run of timeouts read as an absent Vision
-    /// framework (ipass-42i) — so telemetry keeps them apart.
+    /// barcode-decode-1). Kept distinct from `decoderUnavailable` because the two call for opposite
+    /// responses: an unavailable decoder will not succeed on retry, a timed-out one may.
     case decodeTimedOut
 }
