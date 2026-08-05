@@ -38,7 +38,10 @@ func withDecodeTimeout<T: Sendable>(
     }
 }
 
-/// Where this module runs decodes. Internal so tests assert against symbols rather than copies.
+// Test seams describing the private lane bank below, so tests name symbols instead of copying
+// literals. Internal rather than exposing the type itself, which stays private.
+let decodeLaneCount = 16
+let decodeMaxOverflowThreads = 64
 let decodeLaneLabelPrefix = "is.walt.passes.barcode.decode."
 let decodeOverflowThreadName = "is.walt.passes.barcode.decode.overflow"
 
@@ -58,22 +61,21 @@ private final class DecodeLanes: @unchecked Sendable {
         shared.submit(work)
     }
 
-    /// Ceiling on transient threads. Past it, decodes queue again — a bounded, documented
-    /// degradation, chosen because the alternative at the far end is a thread-exhaustion crash.
-    /// Far above any real burst: the app decodes one or two at a time.
-    private static let maxOverflowThreads = 64
-
     /// Warm lanes for the common case. Vision decodes out of process, so a lane mostly waits on
     /// that service; queues create their threads lazily, so idle lanes cost nothing.
-    private let lanes: [DispatchQueue] = (0..<16)
+    private let lanes: [DispatchQueue] = (0..<decodeLaneCount)
         .map { DispatchQueue(label: "\(decodeLaneLabelPrefix)\($0)", qos: .userInitiated) }
     private let cursor = NSLock()
-    private var busy: [Bool]
+    /// How many decodes are on each lane, not merely whether one is. A plain busy flag under-reports
+    /// once the ceiling has queued a second decode onto a lane: the first decode clears the flag when
+    /// it finishes while the queued one is still running, so the lane reads free and the next submit
+    /// queues behind untracked work — a false timeout surviving long after pressure dropped.
+    private var depth: [Int]
     private var overflowThreads = 0
     private var nextQueued = 0
 
     private init() {
-        busy = Array(repeating: false, count: lanes.count)
+        depth = Array(repeating: 0, count: lanes.count)
     }
 
     /// A decode never waits behind another decode, so only its own duration can exhaust its budget.
@@ -87,26 +89,21 @@ private final class DecodeLanes: @unchecked Sendable {
     /// frame. That input is untrusted, which makes the ceiling a security bound rather than tidiness.
     private func submit(_ work: @escaping @Sendable () -> Void) {
         cursor.lock()
-        let free = busy.firstIndex(of: false)
-        if let lane = free { busy[lane] = true }
-        let spilling = free == nil && overflowThreads < Self.maxOverflowThreads
-        if spilling { overflowThreads += 1 }
-        // Past the ceiling: spread the queueing rather than piling every decode onto one lane.
-        var queued = 0
-        if free == nil && !spilling {
-            queued = nextQueued
+        let lane: Int?
+        if let free = depth.firstIndex(of: 0) {
+            lane = free
+        } else if overflowThreads < decodeMaxOverflowThreads {
+            overflowThreads += 1
+            lane = nil
+        } else {
+            // Past the ceiling: spread the queueing rather than piling every decode onto one lane.
+            lane = nextQueued
             nextQueued = (nextQueued + 1) % lanes.count
         }
+        if let lane { depth[lane] += 1 }
         cursor.unlock()
 
-        if let lane = free {
-            lanes[lane].async { [self] in
-                work()
-                cursor.lock()
-                busy[lane] = false
-                cursor.unlock()
-            }
-        } else if spilling {
+        guard let lane else {
             let overflow = Thread { [self] in
                 work()
                 cursor.lock()
@@ -116,8 +113,14 @@ private final class DecodeLanes: @unchecked Sendable {
             overflow.qualityOfService = .userInitiated  // Match the lanes; spills happen under load.
             overflow.name = decodeOverflowThreadName
             overflow.start()
-        } else {
-            lanes[queued].async(execute: work)
+            return
+        }
+
+        lanes[lane].async { [self] in
+            work()
+            cursor.lock()
+            depth[lane] -= 1
+            cursor.unlock()
         }
     }
 }

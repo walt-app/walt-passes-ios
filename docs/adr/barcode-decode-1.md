@@ -128,6 +128,12 @@ thread per frame. Past the ceiling decodes queue again, which reintroduces false
 pathological tail; that is the correct trade, because the far end of unbounded thread growth is a
 crash rather than a degraded decode. `overflowThreadsAreCapped` pins the ceiling.
 
+Lanes track decode **depth**, not a busy flag. Once the ceiling queues a second decode onto a lane,
+a flag under-reports: the first decode clears it on completion while the queued one is still running
+there, so the lane reads free and the next submit queues behind untracked work. That false timeout
+outlives the pressure that caused it — measured 16/16 decodes timing out with idle lanes available,
+against 0/16 once lanes count depth. `laneAccountingSurvivesQueueingPastTheCeiling` pins it.
+
 What does NOT change: the timeout still bounds only the caller's *wait*; Vision `perform` remains
 synchronous and non-cancellable, so a hung decode is still orphaned rather than killed, and its
 result is still discarded. The roster clamp, bounded still-image decode, faithful-payload posture,
