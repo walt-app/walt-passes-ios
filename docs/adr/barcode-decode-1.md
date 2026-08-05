@@ -117,8 +117,16 @@ than queueing. This is not a refinement — a bounded bank alone reproduces the 
 threshold, and it did: with 16 lanes the gate still failed roughly one run in three, an instant
 operation reporting `decodeTimedOut` against a 5s budget purely because it queued. Occupied lanes
 are the normal case, not a corner: a timed-out decode is orphaned but keeps running, since Vision
-`perform` is non-cancellable. Spilling is bounded by concurrent demand, which the app controls —
-untrusted input cannot inflate it, so the thread count is not attacker-reachable.
+`perform` is non-cancellable.
+
+**Spilling is capped at 64 threads**, and an earlier draft of this entry was wrong to claim the
+thread count was "bounded by concurrent demand, which the app controls" and therefore not
+attacker-reachable. It is reachable. Because orphaned decodes never release, in-flight count is
+cumulative rather than concurrent: an image crafted to wedge Vision — untrusted input, and exactly
+the slow-loris case this guard exists for — re-fed by the per-frame scan loop, mints a permanent
+thread per frame. Past the ceiling decodes queue again, which reintroduces false timeouts in that
+pathological tail; that is the correct trade, because the far end of unbounded thread growth is a
+crash rather than a degraded decode. `overflowThreadsAreCapped` pins the ceiling.
 
 What does NOT change: the timeout still bounds only the caller's *wait*; Vision `perform` remains
 synchronous and non-cancellable, so a hung decode is still orphaned rather than killed, and its
@@ -135,5 +143,6 @@ framework (ipass-42i) — because no value could distinguish the two. Public enu
 Honest residual: this fixes which *executor* the decode runs on, not the fact that resuming the
 caller still needs the caller's own executor. If the caller's pool is blocked, it observes the
 result late — the guard bounds the wait it controls, and cannot bound delivery into a blocked
-caller. `DecodeTimeoutTests.decodeRunsOnAnOwnedLaneNotTheCooperativePool` pins the lane invariant, and
+caller. `DecodeTimeoutTests.decodeNeverRunsOnTheCooperativePool` pins that the decode runs on a
+context this module owns — a lane, or a named overflow thread, never the cooperative pool — and
 `expiredBudgetReportsDecodeTimedOut` on each decoder pins the reported arm.

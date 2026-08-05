@@ -6,8 +6,8 @@ import Foundation
 /// decode stops blocking the caller at the budget, and its result is discarded.
 ///
 /// Honest about what it can and cannot do: `VNImageRequestHandler.perform` is synchronous and does
-/// not observe cancellation mid-flight, so on timeout the operation runs on to completion on its
-/// decode lane and its result is dropped. That is acceptable because the roster clamp and the
+/// not observe cancellation mid-flight, so on timeout the operation runs on to completion wherever
+/// it was placed and its result is dropped. That is acceptable because the roster clamp and the
 /// bounded ``BoundedImageDecode`` keep the actual work bounded — the timeout exists to bound how
 /// long the caller *waits*, not to forcibly reclaim CPU.
 ///
@@ -38,6 +38,10 @@ func withDecodeTimeout<T: Sendable>(
     }
 }
 
+/// Where this module runs decodes. Internal so tests assert against symbols rather than copies.
+let decodeLaneLabelPrefix = "is.walt.passes.barcode.decode."
+let decodeOverflowThreadName = "is.walt.passes.barcode.decode.overflow"
+
 /// Dedicated serial queues this module owns — never the cooperative pool, and never a *concurrent*
 /// queue, which draws from the same thread pool the cooperative pool exhausts. See ADR
 /// `barcode-decode-1`.
@@ -54,41 +58,66 @@ private final class DecodeLanes: @unchecked Sendable {
         shared.submit(work)
     }
 
+    /// Ceiling on transient threads. Past it, decodes queue again — a bounded, documented
+    /// degradation, chosen because the alternative at the far end is a thread-exhaustion crash.
+    /// Far above any real burst: the app decodes one or two at a time.
+    private static let maxOverflowThreads = 64
+
     /// Warm lanes for the common case. Vision decodes out of process, so a lane mostly waits on
     /// that service; queues create their threads lazily, so idle lanes cost nothing.
     private let lanes: [DispatchQueue] = (0..<16)
-        .map { DispatchQueue(label: "is.walt.passes.barcode.decode.\($0)", qos: .userInitiated) }
+        .map { DispatchQueue(label: "\(decodeLaneLabelPrefix)\($0)", qos: .userInitiated) }
     private let cursor = NSLock()
     private var busy: [Bool]
+    private var overflowThreads = 0
+    private var nextQueued = 0
 
     private init() {
         busy = Array(repeating: false, count: lanes.count)
     }
 
-    /// A decode NEVER waits behind another decode, so only its own duration can exhaust its budget.
+    /// A decode never waits behind another decode, so only its own duration can exhaust its budget.
     /// A free lane is reused; when every lane is occupied the work spills to a transient thread
     /// rather than queueing, because a queued decode that never starts is exactly the false timeout
-    /// this guard exists to prevent — and a timed-out decode is orphaned but keeps running (Vision
-    /// `perform` is non-cancellable), so occupied lanes are not hypothetical. Spilling is bounded by
-    /// concurrent demand, which the app controls; untrusted input cannot inflate it.
+    /// this guard exists to prevent.
+    ///
+    /// Spilling is capped. Occupied lanes are the normal case, not a corner — a timed-out decode is
+    /// orphaned but keeps running, since Vision `perform` is non-cancellable — so an image that
+    /// wedges Vision, re-fed by the per-frame scan loop, would otherwise mint a permanent thread per
+    /// frame. That input is untrusted, which makes the ceiling a security bound rather than tidiness.
     private func submit(_ work: @escaping @Sendable () -> Void) {
         cursor.lock()
         let free = busy.firstIndex(of: false)
         if let lane = free { busy[lane] = true }
+        let spilling = free == nil && overflowThreads < Self.maxOverflowThreads
+        if spilling { overflowThreads += 1 }
+        // Past the ceiling: spread the queueing rather than piling every decode onto one lane.
+        var queued = 0
+        if free == nil && !spilling {
+            queued = nextQueued
+            nextQueued = (nextQueued + 1) % lanes.count
+        }
         cursor.unlock()
 
-        guard let lane = free else {
-            let overflow = Thread { work() }
-            overflow.stackSize = 512 * 1024
+        if let lane = free {
+            lanes[lane].async { [self] in
+                work()
+                cursor.lock()
+                busy[lane] = false
+                cursor.unlock()
+            }
+        } else if spilling {
+            let overflow = Thread { [self] in
+                work()
+                cursor.lock()
+                overflowThreads -= 1
+                cursor.unlock()
+            }
+            overflow.qualityOfService = .userInitiated  // Match the lanes; spills happen under load.
+            overflow.name = decodeOverflowThreadName
             overflow.start()
-            return
-        }
-
-        lanes[lane].async { [self] in
-            work()
-            cursor.lock()
-            busy[lane] = false
-            cursor.unlock()
+        } else {
+            lanes[queued].async(execute: work)
         }
     }
 }
