@@ -9,15 +9,28 @@ private struct DecodeContext: Sendable {
     let thread: String?
 }
 
-/// Waits for up to `count` signals but gives up after `seconds`, returning how many arrived.
+/// Non-blocking poll. Wrapped in a sync function only because the compiler bans the call in async
+/// contexts; with a `.now()` deadline it never actually blocks.
+private func tryTake(_ semaphore: DispatchSemaphore) -> Bool {
+    semaphore.wait(timeout: .now()) == .success
+}
+
+/// Waits for up to `count` signals, giving up after `seconds` and returning how many arrived.
+///
 /// Bounded on purpose: an unbounded wait turns a regression into a hung suite instead of a failing
-/// test, since the whole point of the assertion is that some submissions may never start.
-/// Synchronous because the compiler bans blocking waits in async contexts.
-private func awaitSignals(_ semaphore: DispatchSemaphore, upTo count: Int, seconds: Double) -> Int {
+/// test, since the point of these assertions is that some submissions may never start. Yields
+/// between polls rather than blocking — a blocking poll holds a cooperative-pool thread, and on a
+/// 3-core runner that starves the very tasks being waited for. That is not hypothetical: it read as
+/// 74 of 80 saturators failing to start, a harness artefact indistinguishable from a real defect.
+private func awaitSignals(_ semaphore: DispatchSemaphore, upTo count: Int, seconds: Double) async -> Int {
     let deadline = Date().addingTimeInterval(seconds)
     var seen = 0
     while seen < count, Date() < deadline {
-        if semaphore.wait(timeout: .now() + 0.05) == .success { seen += 1 }
+        if tryTake(semaphore) {
+            seen += 1
+        } else {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
     }
     return seen
 }
@@ -89,14 +102,14 @@ struct DecodeTimeoutTests {
         let ceiling = decodeLaneCount + decodeMaxOverflowThreads
         // Stops early if the bound is breached; otherwise the window is the cost of proving a
         // negative. One-sided on purpose — a slow runner starting fewer is still under the bound.
-        let concurrent = awaitSignals(started, upTo: ceiling + 1, seconds: 1)
+        let concurrent = await awaitSignals(started, upTo: ceiling + 1, seconds: 1)
 
         #expect(concurrent <= ceiling, "\(concurrent) ran at once, ceiling is \(ceiling)")
 
         // Release everything and wait for it to retire, so this test's threads do not bleed into
         // the next one's view of the shared bank.
         for _ in 0..<submissions { gate.signal() }
-        #expect(awaitSignals(finished, upTo: submissions, seconds: 30) == submissions)
+        #expect(await awaitSignals(finished, upTo: submissions, seconds: 30) == submissions)
     }
 
     /// Lane accounting must survive the ceiling engaging. A plain busy flag under-reports: the
@@ -121,7 +134,7 @@ struct DecodeTimeoutTests {
                 }
             }
         }
-        #expect(awaitSignals(saturatorStarted, upTo: saturators, seconds: 20) == saturators)
+        #expect(await awaitSignals(saturatorStarted, upTo: saturators, seconds: 20) == saturators)
 
         // Past the ceiling now, so these are queued onto lanes behind the holders above.
         for _ in 0..<decodeLaneCount {
@@ -137,7 +150,7 @@ struct DecodeTimeoutTests {
         // Retire every original holder: their completion releases the lane, but the queued decodes
         // are now running on those same lanes.
         for _ in 0..<saturators { holdSaturators.signal() }
-        #expect(awaitSignals(saturatorDone, upTo: saturators, seconds: 20) == saturators)
+        #expect(await awaitSignals(saturatorDone, upTo: saturators, seconds: 20) == saturators)
         try? await Task.sleep(for: .milliseconds(300))
         defer { for _ in 0..<decodeLaneCount { holdQueued.signal() } }
 
@@ -171,7 +184,7 @@ struct DecodeTimeoutTests {
         // Asserted, not discarded: if fewer than `hogs` start, the lanes were never saturated and
         // the check below would pass without exercising the spill path at all — most likely exactly
         // on the loaded runner this test exists for.
-        #expect(awaitSignals(occupied, upTo: hogs, seconds: 20) == hogs)
+        #expect(await awaitSignals(occupied, upTo: hogs, seconds: 20) == hogs)
         defer { for _ in 0..<hogs { gate.signal() } }
 
         // Every lane is now held. A tight budget still has to be enough for an instant operation.
