@@ -38,8 +38,9 @@ func withDecodeTimeout<T: Sendable>(
     }
 }
 
-// Test seams describing the private lane bank below, so tests name symbols instead of copying
-// literals. Internal rather than exposing the type itself, which stays private.
+// Configuration for the lane bank below — the source of truth it is built and sized from, not a
+// description of it. Internal rather than private so tests name these instead of copying literals;
+// the type itself stays private.
 let decodeLaneCount = 16
 let decodeMaxOverflowThreads = 64
 let decodeLaneLabelPrefix = "is.walt.passes.barcode.decode."
@@ -155,6 +156,8 @@ struct LanePlacement {
         case .overflow: overflowThreads -= 1
         }
     }
+
+    // Read only by the accounting tests; `submit` needs the claim, not the counts.
 
     /// Decodes in flight on `lane`, including any queued behind the one that is running.
     func depth(of lane: Int) -> Int { depth[lane] }

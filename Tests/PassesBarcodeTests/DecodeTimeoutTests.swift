@@ -38,8 +38,9 @@ private func awaitSignals(_ semaphore: DispatchSemaphore, upTo count: Int, secon
 /// Coverage for ``withDecodeTimeout(_:timeoutValue:operation:)`` — the app-level `ProcessKiller`
 /// analogue. The security-relevant property is that a slow/hung operation stops blocking the caller
 /// at the budget and yields the timeout value; the fast path must return the real result untouched.
-/// `.serialized` because these tests contend for one process-global lane bank: the ceiling test
-/// deliberately consumes the whole overflow budget, which would starve the saturation test's spill.
+/// `.serialized` because these tests contend for one process-global lane bank:
+/// `decodeDoesNotQueueBehindSaturatedLanes` holds every lane and 8 overflow threads for as long as
+/// it takes the runner to start them, so its siblings would run against a bank it has taken.
 @Suite("DecodeTimeout", .serialized)
 struct DecodeTimeoutTests {
     @Test func fastOperationReturnsItsResult() async {
@@ -96,10 +97,14 @@ struct DecodeTimeoutTests {
                 }
             }
         }
-        // Asserted, not discarded: if fewer than `hogs` start, the lanes were never saturated and
-        // the check below would pass without exercising the spill path at all — most likely exactly
-        // on the loaded runner this test exists for.
-        #expect(await awaitSignals(occupied, upTo: hogs, seconds: 20) == hogs)
+        // Asserted, not discarded: without it the check below could pass on an unsaturated bank,
+        // never exercising the spill path — most likely exactly on the loaded runner this test
+        // exists for. Waiting on `hogs` would over-require, though: `claim` fills lanes before it
+        // spills, so one signal past the lane count already proves every lane is taken. Demanding
+        // all 24 starts is an assertion about how fast the runner mints threads, which is the
+        // failure mode this suite is being cured of.
+        let saturated = decodeLaneCount + 1
+        #expect(await awaitSignals(occupied, upTo: saturated, seconds: 20) == saturated)
         defer { for _ in 0..<hogs { gate.signal() } }
 
         // Every lane is now held. A tight budget still has to be enough for an instant operation.
