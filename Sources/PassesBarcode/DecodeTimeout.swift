@@ -38,15 +38,11 @@ func withDecodeTimeout<T: Sendable>(
     }
 }
 
-/// Lane label prefix, internal only so the lane assertion in tests binds to a symbol rather than
-/// a copied string.
-let decodeLaneLabelPrefix = "is.walt.passes.barcode.decode."
-
 /// Dedicated serial queues this module owns — never the cooperative pool, and never a *concurrent*
 /// queue, which draws from the same thread pool the cooperative pool exhausts. See ADR
 /// `barcode-decode-1`.
 ///
-/// `@unchecked Sendable`: the lane loads are mutable shared state guarded by an `NSLock`, which is
+/// `@unchecked Sendable`: lane occupancy is mutable shared state guarded by an `NSLock`, which is
 /// this type's ADR per the repo's policy. The queues themselves are immutable and already `Sendable`.
 private final class DecodeLanes: @unchecked Sendable {
     private static let shared = DecodeLanes()
@@ -58,41 +54,40 @@ private final class DecodeLanes: @unchecked Sendable {
         shared.submit(work)
     }
 
-    /// Sized to in-flight decodes, not cores: Vision decodes out of process, so a lane waits on that
-    /// service rather than burning a core. Queues create their threads lazily, so idle lanes are free.
+    /// Warm lanes for the common case. Vision decodes out of process, so a lane mostly waits on
+    /// that service; queues create their threads lazily, so idle lanes cost nothing.
     private let lanes: [DispatchQueue] = (0..<16)
-        .map { DispatchQueue(label: "\(decodeLaneLabelPrefix)\($0)", qos: .userInitiated) }
+        .map { DispatchQueue(label: "is.walt.passes.barcode.decode.\($0)", qos: .userInitiated) }
     private let cursor = NSLock()
-    private var load: [Int]
-    private var next = 0
+    private var busy: [Bool]
 
     private init() {
-        load = Array(repeating: 0, count: lanes.count)
+        busy = Array(repeating: false, count: lanes.count)
     }
 
-    /// Least-loaded, not round-robin: an orphaned decode holds its lane after the caller gave up,
-    /// so blind rotation would feed a wedged lane while others sat idle. Ties rotate. See ADR
-    /// `barcode-decode-1`.
+    /// A decode NEVER waits behind another decode, so only its own duration can exhaust its budget.
+    /// A free lane is reused; when every lane is occupied the work spills to a transient thread
+    /// rather than queueing, because a queued decode that never starts is exactly the false timeout
+    /// this guard exists to prevent — and a timed-out decode is orphaned but keeps running (Vision
+    /// `perform` is non-cancellable), so occupied lanes are not hypothetical. Spilling is bounded by
+    /// concurrent demand, which the app controls; untrusted input cannot inflate it.
     private func submit(_ work: @escaping @Sendable () -> Void) {
         cursor.lock()
-        // Scanning from `next` rather than from 0 makes the tie-break a genuine rotation.
-        var lightest = next
-        for offset in 1..<lanes.count {
-            let candidate = (next + offset) % lanes.count
-            if load[candidate] < load[lightest] {
-                lightest = candidate
-            }
-        }
-        // Immutable past this point: the closure below captures it and runs concurrently.
-        let lane = lightest
-        load[lane] += 1
-        next = (lane + 1) % lanes.count
+        let free = busy.firstIndex(of: false)
+        if let lane = free { busy[lane] = true }
         cursor.unlock()
+
+        guard let lane = free else {
+            let overflow = Thread { work() }
+            overflow.stackSize = 512 * 1024
+            overflow.start()
+            return
+        }
 
         lanes[lane].async { [self] in
             work()
             cursor.lock()
-            load[lane] -= 1
+            busy[lane] = false
             cursor.unlock()
         }
     }

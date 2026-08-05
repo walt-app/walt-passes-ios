@@ -111,12 +111,14 @@ Vision decodes out of process and a lane waits on that service rather than burni
 width to `activeProcessorCount` left ~41 concurrent decodes queued ~14 deep on a 3-core runner and
 blew the budget by queueing alone.
 
-Lanes are picked **least-loaded**, not round-robin. A timed-out decode is orphaned but keeps
-running, so it holds its lane after the caller has given up; blind round-robin would hand new work
-to that wedged lane while others sat idle, re-creating the never-started timeout this change
-exists to prevent. Ties break in rotation so bursts still fan out. Residual: if every lane is
-wedged, decodes queue — bounded execution cannot avoid that, and the caller is still released at
-its budget.
+**A decode never waits behind another decode**, so only its own duration can exhaust its budget.
+A free lane is reused; when every lane is occupied the work spills to a transient thread rather
+than queueing. This is not a refinement — a bounded bank alone reproduces the defect at a higher
+threshold, and it did: with 16 lanes the gate still failed roughly one run in three, an instant
+operation reporting `decodeTimedOut` against a 5s budget purely because it queued. Occupied lanes
+are the normal case, not a corner: a timed-out decode is orphaned but keeps running, since Vision
+`perform` is non-cancellable. Spilling is bounded by concurrent demand, which the app controls —
+untrusted input cannot inflate it, so the thread count is not attacker-reachable.
 
 What does NOT change: the timeout still bounds only the caller's *wait*; Vision `perform` remains
 synchronous and non-cancellable, so a hung decode is still orphaned rather than killed, and its
