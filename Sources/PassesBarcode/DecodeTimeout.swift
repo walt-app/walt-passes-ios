@@ -38,16 +38,17 @@ func withDecodeTimeout<T: Sendable>(
     }
 }
 
+/// Lane label prefix, internal only so the lane assertion in tests binds to a symbol rather than
+/// a copied string.
+let decodeLaneLabelPrefix = "is.walt.passes.barcode.decode."
+
 /// Dedicated serial queues this module owns — never the cooperative pool, and never a *concurrent*
 /// queue, which draws from the same thread pool the cooperative pool exhausts. See ADR
 /// `barcode-decode-1`.
 ///
 /// `@unchecked Sendable`: the lane loads are mutable shared state guarded by an `NSLock`, which is
 /// this type's ADR per the repo's policy. The queues themselves are immutable and already `Sendable`.
-final class DecodeLanes: @unchecked Sendable {
-    /// Test seam so the lane assertion binds to a symbol rather than a copied string.
-    static let laneLabelPrefix = "is.walt.passes.barcode.decode."
-
+private final class DecodeLanes: @unchecked Sendable {
     private static let shared = DecodeLanes()
 
     /// Deadlines get their own lane so a timer is never queued behind decode work.
@@ -60,7 +61,7 @@ final class DecodeLanes: @unchecked Sendable {
     /// Sized to in-flight decodes, not cores: Vision decodes out of process, so a lane waits on that
     /// service rather than burning a core. Queues create their threads lazily, so idle lanes are free.
     private let lanes: [DispatchQueue] = (0..<16)
-        .map { DispatchQueue(label: "\(DecodeLanes.laneLabelPrefix)\($0)", qos: .userInitiated) }
+        .map { DispatchQueue(label: "\(decodeLaneLabelPrefix)\($0)", qos: .userInitiated) }
     private let cursor = NSLock()
     private var load: [Int]
     private var next = 0
@@ -69,24 +70,21 @@ final class DecodeLanes: @unchecked Sendable {
         load = Array(repeating: 0, count: lanes.count)
     }
 
-    /// Least-loaded rather than blind round-robin. A timed-out decode is orphaned but keeps running
-    /// (Vision `perform` is non-cancellable), so it holds its lane after the caller has given up;
-    /// round-robin would hand new work to that wedged lane while others sat idle, re-creating the
-    /// never-started timeout this guard exists to prevent. Ties break round-robin so bursts still
-    /// fan out. Residual: if every lane is wedged, decodes do queue — bounded execution cannot
-    /// avoid that, and the caller is still released at its budget.
+    /// Least-loaded, not round-robin: an orphaned decode holds its lane after the caller gave up,
+    /// so blind rotation would feed a wedged lane while others sat idle. Ties rotate. See ADR
+    /// `barcode-decode-1`.
     private func submit(_ work: @escaping @Sendable () -> Void) {
         cursor.lock()
         // Scanning from `next` rather than from 0 makes the tie-break a genuine rotation.
-        var lane = next
-        var lightest = load[next]
+        var lightest = next
         for offset in 1..<lanes.count {
             let candidate = (next + offset) % lanes.count
-            if load[candidate] < lightest {
-                lane = candidate
-                lightest = load[candidate]
+            if load[candidate] < load[lightest] {
+                lightest = candidate
             }
         }
+        // Immutable past this point: the closure below captures it and runs concurrently.
+        let lane = lightest
         load[lane] += 1
         next = (lane + 1) % lanes.count
         cursor.unlock()

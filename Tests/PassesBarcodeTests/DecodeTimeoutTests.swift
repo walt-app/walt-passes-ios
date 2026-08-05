@@ -31,6 +31,6 @@ struct DecodeTimeoutTests {
         let lane = await withDecodeTimeout(.seconds(5), timeoutValue: "TIMED_OUT") {
             String(cString: __dispatch_queue_get_label(nil))
         }
-        #expect(lane.hasPrefix(DecodeLanes.laneLabelPrefix), "ran on \(lane)")
+        #expect(lane.hasPrefix(decodeLaneLabelPrefix), "ran on \(lane)")
     }
 }
