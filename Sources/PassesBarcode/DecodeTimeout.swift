@@ -66,7 +66,7 @@ private final class DecodeLanes: @unchecked Sendable {
     /// that service; queues create their threads lazily, so idle lanes cost nothing.
     private let lanes: [DispatchQueue] = (0..<decodeLaneCount)
         .map { DispatchQueue(label: "\(decodeLaneLabelPrefix)\($0)", qos: .userInitiated) }
-    private let cursor = NSLock()
+    private let placementLock = NSLock()
     private var placement = LanePlacement(
         lanes: decodeLaneCount, maxOverflowThreads: decodeMaxOverflowThreads)
 
@@ -80,26 +80,28 @@ private final class DecodeLanes: @unchecked Sendable {
     /// wedges Vision, re-fed by the per-frame scan loop, would otherwise mint a permanent thread per
     /// frame. That input is untrusted, which makes the ceiling a security bound rather than tidiness.
     private func submit(_ work: @escaping @Sendable () -> Void) {
-        cursor.lock()
+        placementLock.lock()
         let target = placement.claim()
-        cursor.unlock()
+        placementLock.unlock()
 
         let release: @Sendable () -> Void = { [self] in
-            cursor.lock()
+            placementLock.lock()
             placement.release(target)
-            cursor.unlock()
+            placementLock.unlock()
         }
 
+        // Deferred rather than trailing `work()`: a lane or overflow slot leaked here reads as
+        // occupied forever, which is a false timeout that outlives its cause.
         switch target {
         case .lane(let lane):
             lanes[lane].async {
+                defer { release() }
                 work()
-                release()
             }
         case .overflow:
             let overflow = Thread {
+                defer { release() }
                 work()
-                release()
             }
             overflow.qualityOfService = .userInitiated  // Match the lanes; spills happen under load.
             overflow.name = decodeOverflowThreadName
@@ -108,11 +110,8 @@ private final class DecodeLanes: @unchecked Sendable {
     }
 }
 
-/// Where each submission goes, and the bookkeeping that decides it.
-///
-/// A value type separate from the queues so the accounting can be tested exhaustively at two lanes
-/// and a ceiling of one, instead of by saturating a real 16-lane bank with 80 live threads — a
-/// brute-force setup that proved both slow and unreliable on a 3-core runner.
+/// Where each submission goes, and the bookkeeping that decides it. A value type so the accounting
+/// is testable without a live lane bank.
 struct LanePlacement {
     enum Target: Equatable {
         case lane(Int)

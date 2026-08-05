@@ -3,14 +3,19 @@ import Testing
 
 @testable import PassesBarcode
 
-/// Placement accounting for the decode lanes, exercised directly at two lanes and a ceiling of one.
-///
-/// These were integration tests that saturated the real 16-lane bank with 80 live holders. That is
-/// how the accounting leak was found, but as a permanent gate it was slow and unreliable: on a
-/// 3-core runner "80 saturators must start" is a statement about the runner, and it failed there on
-/// code that was correct. The invariants below are pure, so they are pinned deterministically.
+/// Placement accounting for the decode lanes, exercised directly at small lane counts and ceilings
+/// so the invariants are pinned deterministically rather than by saturating the real bank.
 @Suite("LanePlacement")
 struct LanePlacementTests {
+    /// The bank's thread ceiling is a security bound, not tidiness (ADR `barcode-decode-1`): a
+    /// timed-out decode is orphaned but keeps running, so an image crafted to wedge Vision, re-fed
+    /// by the per-frame scan loop, mints a thread per frame against whatever this permits.
+    /// Asserted as a bound rather than an equality so lowering it stays free and only raising it
+    /// has to be deliberate.
+    @Test func theBankCannotOutgrowItsDocumentedThreadCeiling() {
+        #expect(decodeLaneCount + decodeMaxOverflowThreads <= 80)
+    }
+
     @Test func reusesFreeLanesBeforeSpilling() {
         var placement = LanePlacement(lanes: 2, maxOverflowThreads: 1)
         #expect(placement.claim() == .lane(0))

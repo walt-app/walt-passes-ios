@@ -17,11 +17,8 @@ private func tryTake(_ semaphore: DispatchSemaphore) -> Bool {
 
 /// Waits for up to `count` signals, giving up after `seconds` and returning how many arrived.
 ///
-/// Bounded on purpose: an unbounded wait turns a regression into a hung suite instead of a failing
-/// test, since the point of these assertions is that some submissions may never start. Yields
-/// between polls rather than blocking — a blocking poll holds a cooperative-pool thread, and on a
-/// 3-core runner that starves the very tasks being waited for. That is not hypothetical: it read as
-/// 74 of 80 saturators failing to start, a harness artefact indistinguishable from a real defect.
+/// Bounded so a regression fails rather than hanging the suite. Yields rather than blocking: a
+/// blocking poll holds a cooperative-pool thread and starves the tasks being waited for.
 private func awaitSignals(_ semaphore: DispatchSemaphore, upTo count: Int, seconds: Double) async -> Int {
     let deadline = Date().addingTimeInterval(seconds)
     var seen = 0

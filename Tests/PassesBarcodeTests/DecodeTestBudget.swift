@@ -4,13 +4,12 @@ import Foundation
 /// is a slow-loris guard with its own coverage; coupling these suites to it made them fail under
 /// contention rather than on fidelity. See ADR `barcode-decode-1`.
 ///
-/// Load-bearing for suite isolation, not just for these assertions: the decode lanes are one
-/// process-global bank, and `DecodeTimeoutTests` deliberately saturates it. `.serialized` orders
-/// those tests against each other but not against sibling suites, so this budget is what keeps a
-/// fidelity decode from failing while that saturation is in flight. Trim it and those suites start
-/// flaking for reasons that have nothing to do with fidelity.
+/// Also load-bearing for suite isolation: `DecodeTimeoutTests` saturates the one process-global
+/// lane bank, and `.serialized` does not order it against sibling suites.
 let generousDecodeBudget: Duration = .seconds(120)
 
-/// An already-expired budget, for asserting that a decoder reports the timeout arm. Not a race:
-/// the deadline has elapsed before the decode is even submitted.
+/// An already-expired budget, for asserting that a decoder reports the timeout arm. Still a race in
+/// principle — both racers are dispatched — but a deadline that fires on an idle queue resolves in
+/// nanoseconds against a Vision decode measured in milliseconds. A stubbed instant decode would not
+/// keep that margin.
 let expiredDecodeBudget: Duration = .zero
