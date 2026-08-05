@@ -66,17 +66,8 @@ private final class DecodeLanes: @unchecked Sendable {
     private let lanes: [DispatchQueue] = (0..<decodeLaneCount)
         .map { DispatchQueue(label: "\(decodeLaneLabelPrefix)\($0)", qos: .userInitiated) }
     private let cursor = NSLock()
-    /// How many decodes are on each lane, not merely whether one is. A plain busy flag under-reports
-    /// once the ceiling has queued a second decode onto a lane: the first decode clears the flag when
-    /// it finishes while the queued one is still running, so the lane reads free and the next submit
-    /// queues behind untracked work — a false timeout surviving long after pressure dropped.
-    private var depth: [Int]
-    private var overflowThreads = 0
-    private var nextQueued = 0
-
-    private init() {
-        depth = Array(repeating: 0, count: lanes.count)
-    }
+    private var placement = LanePlacement(
+        lanes: decodeLaneCount, maxOverflowThreads: decodeMaxOverflowThreads)
 
     /// A decode never waits behind another decode, so only its own duration can exhaust its budget.
     /// A free lane is reused; when every lane is occupied the work spills to a transient thread
@@ -89,40 +80,86 @@ private final class DecodeLanes: @unchecked Sendable {
     /// frame. That input is untrusted, which makes the ceiling a security bound rather than tidiness.
     private func submit(_ work: @escaping @Sendable () -> Void) {
         cursor.lock()
-        let lane: Int?
-        if let free = depth.firstIndex(of: 0) {
-            lane = free
-        } else if overflowThreads < decodeMaxOverflowThreads {
-            overflowThreads += 1
-            lane = nil
-        } else {
-            // Past the ceiling: spread the queueing rather than piling every decode onto one lane.
-            lane = nextQueued
-            nextQueued = (nextQueued + 1) % lanes.count
-        }
-        if let lane { depth[lane] += 1 }
+        let target = placement.claim()
         cursor.unlock()
 
-        guard let lane else {
-            let overflow = Thread { [self] in
+        let release: @Sendable () -> Void = { [self] in
+            cursor.lock()
+            placement.release(target)
+            cursor.unlock()
+        }
+
+        switch target {
+        case .lane(let lane):
+            lanes[lane].async {
                 work()
-                cursor.lock()
-                overflowThreads -= 1
-                cursor.unlock()
+                release()
+            }
+        case .overflow:
+            let overflow = Thread {
+                work()
+                release()
             }
             overflow.qualityOfService = .userInitiated  // Match the lanes; spills happen under load.
             overflow.name = decodeOverflowThreadName
             overflow.start()
-            return
-        }
-
-        lanes[lane].async { [self] in
-            work()
-            cursor.lock()
-            depth[lane] -= 1
-            cursor.unlock()
         }
     }
+}
+
+/// Where each submission goes, and the bookkeeping that decides it.
+///
+/// A value type separate from the queues so the accounting can be tested exhaustively at two lanes
+/// and a ceiling of one, instead of by saturating a real 16-lane bank with 80 live threads — a
+/// brute-force setup that proved both slow and unreliable on a 3-core runner.
+struct LanePlacement {
+    enum Target: Equatable {
+        case lane(Int)
+        case overflow
+    }
+
+    /// Decodes currently on each lane — a count, not a flag. A flag under-reports once the ceiling
+    /// has queued a second decode onto a lane: the first clears it on completion while the queued
+    /// one is still running there, so the lane reads free and the next submission queues behind
+    /// untracked work, a false timeout outliving the pressure that caused it.
+    private var depth: [Int]
+    private var overflowThreads = 0
+    private var nextQueued = 0
+    private let maxOverflowThreads: Int
+
+    init(lanes: Int, maxOverflowThreads: Int) {
+        depth = Array(repeating: 0, count: lanes)
+        self.maxOverflowThreads = maxOverflowThreads
+    }
+
+    /// A free lane if there is one; otherwise a transient thread up to the ceiling; otherwise a
+    /// lane to queue on, rotating so the queueing spreads rather than piling onto one.
+    mutating func claim() -> Target {
+        if let free = depth.firstIndex(of: 0) {
+            depth[free] += 1
+            return .lane(free)
+        }
+        if overflowThreads < maxOverflowThreads {
+            overflowThreads += 1
+            return .overflow
+        }
+        let lane = nextQueued
+        nextQueued = (nextQueued + 1) % depth.count
+        depth[lane] += 1
+        return .lane(lane)
+    }
+
+    mutating func release(_ target: Target) {
+        switch target {
+        case .lane(let lane): depth[lane] -= 1
+        case .overflow: overflowThreads -= 1
+        }
+    }
+
+    /// Decodes in flight on `lane`, including any queued behind the one that is running.
+    func depth(of lane: Int) -> Int { depth[lane] }
+
+    var overflowInFlight: Int { overflowThreads }
 }
 
 /// `DispatchTimeInterval` in nanoseconds, saturating rather than trapping on absurd budgets.

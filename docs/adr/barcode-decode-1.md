@@ -126,13 +126,21 @@ cumulative rather than concurrent: an image crafted to wedge Vision — untruste
 the slow-loris case this guard exists for — re-fed by the per-frame scan loop, mints a permanent
 thread per frame. Past the ceiling decodes queue again, which reintroduces false timeouts in that
 pathological tail; that is the correct trade, because the far end of unbounded thread growth is a
-crash rather than a degraded decode. `overflowThreadsAreCapped` pins the ceiling.
+crash rather than a degraded decode. `LanePlacementTests.spillsOnlyUntilTheCeiling` pins it.
 
 Lanes track decode **depth**, not a busy flag. Once the ceiling queues a second decode onto a lane,
 a flag under-reports: the first decode clears it on completion while the queued one is still running
 there, so the lane reads free and the next submit queues behind untracked work. That false timeout
 outlives the pressure that caused it — measured 16/16 decodes timing out with idle lanes available,
-against 0/16 once lanes count depth. `laneAccountingSurvivesQueueingPastTheCeiling` pins it.
+against 0/16 once lanes count depth.
+
+Placement is a value type (`LanePlacement`) rather than state tangled into the queues, so these
+invariants are pinned deterministically at two lanes and a ceiling of one, in
+`LanePlacementTests`. The measurements above came from integration tests that saturated the real
+bank with 80 live holders; that is how the leak was found, but as a permanent gate it was both
+slow and unreliable — on a 3-core runner "80 holders must start" is an assertion about the runner,
+and it failed there on correct code. One end-to-end check
+(`decodeDoesNotQueueBehindSaturatedLanes`) remains for the wiring.
 
 What does NOT change: the timeout still bounds only the caller's *wait*; Vision `perform` remains
 synchronous and non-cancellable, so a hung decode is still orphaned rather than killed, and its
