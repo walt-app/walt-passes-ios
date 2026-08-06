@@ -243,18 +243,18 @@ struct FieldLinkScannerTests {
 
     @Test func phoneScanCompletesQuicklyOnPathologicalInput() {
         let pathological = String(repeating: "0123456789", count: 410)  // ~4096
-        let start = Date()
+        let start = threadCPUMilliseconds()
         _ = FieldLinkScanner.scan(pathological, source: source)
-        let elapsed = Date().timeIntervalSince(start) * 1000
-        #expect(elapsed < 500, "elapsed=\(elapsed)ms")
+        let cpu = threadCPUMilliseconds() - start
+        #expect(cpu < 500, "cpu=\(cpu)ms")
     }
 
     @Test func mixedAlphaDigitSoupCompletesQuickly() {
         let pathological = String(repeating: "5 -", count: 2048)
-        let start = Date()
+        let start = threadCPUMilliseconds()
         _ = FieldLinkScanner.scan(pathological, source: source)
-        let elapsed = Date().timeIntervalSince(start) * 1000
-        #expect(elapsed < 500)
+        let cpu = threadCPUMilliseconds() - start
+        #expect(cpu < 500, "cpu=\(cpu)ms")
     }
 
     // -- registrableDomain extraction ------------------------------------------
@@ -284,4 +284,16 @@ struct FieldLinkScannerTests {
     @Test func registrableDomainReturnsNilForNonHttpScheme() {
         #expect(FieldLinkScanner.registrableDomainOf("mailto:x@y.example") == nil)
     }
+}
+
+/// CPU time burned on the calling thread, in milliseconds.
+///
+/// The catastrophic-backtracking guards above measured wall clock and flaked under the parallel
+/// suite (ipass-sry): they were reporting the machine's contention, not the scanner's behaviour.
+/// A real blowup is exponential CPU, which this still catches, and `FieldLinkScanner.scan` is a
+/// synchronous pure function so none of its work escapes this thread.
+private func threadCPUMilliseconds() -> Double {
+    var time = timespec()
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &time)
+    return Double(time.tv_sec) * 1000 + Double(time.tv_nsec) / 1_000_000
 }
