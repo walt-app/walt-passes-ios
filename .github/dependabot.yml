@@ -5,6 +5,11 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    ignore:
+      # setup-swift v3's only release is 3.0.0-beta.1, and it dies installing the
+      # toolchain (`/usr/bin/gpg` exit 2) — see PR #34. Revisit if v3 ships stable.
+      - dependency-name: "swift-actions/setup-swift"
+        versions: ["3.x"]
   - package-ecosystem: "swift"
     directory: "/"
     schedule:
