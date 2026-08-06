@@ -83,11 +83,18 @@ jobs:
 
           # Label keeps its original name on purpose: renaming it would orphan the lookup
           # below and start filing a second standing issue alongside the existing one.
+          # `create` fails on an existing label, so `edit` is what actually applies the wording
+          # once the label is already there.
           gh label create ci-sweep-failure \
             --repo "$REPO" \
             --color B60205 \
             --description "An unattended full-ci run on main is failing" \
-            2>/dev/null || true
+            2>/dev/null \
+            || gh label edit ci-sweep-failure \
+              --repo "$REPO" \
+              --color B60205 \
+              --description "An unattended full-ci run on main is failing" \
+              2>/dev/null || true
 
           body=$(cat <<EOF
           \`full-ci\` failed on \`main\` (event: $GITHUB_EVENT_NAME).

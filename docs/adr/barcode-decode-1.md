@@ -125,8 +125,24 @@ attacker-reachable. It is reachable. Because orphaned decodes never release, in-
 cumulative rather than concurrent: an image crafted to wedge Vision — untrusted input, and exactly
 the slow-loris case this guard exists for — re-fed by the per-frame scan loop, mints a permanent
 thread per frame. Past the ceiling decodes queue again, which reintroduces false timeouts in that
-pathological tail; that is the correct trade, because the far end of unbounded thread growth is a
-crash rather than a degraded decode. `LanePlacementTests.spillsOnlyUntilTheCeiling` pins it.
+pathological tail. `LanePlacementTests.spillsOnlyUntilTheCeiling` pins the ceiling, and
+`theBankCannotOutgrowItsDocumentedThreadCeiling` pins the total: **at most 80 live decode threads**,
+16 lanes plus the 64-thread spill.
+
+Be precise about what that tail costs, because an earlier draft of this paragraph was wrong a second
+time: it called the queueing tail "a degraded decode" against "a crash" for unbounded threads. Both
+ends are a crash. The queue past the ceiling has no depth cap, and each queued submission retains its
+payload — a `CGImage` up to the ~50MP `BoundedImageDecode` limit, or a camera `CVPixelBuffer` — behind
+a lane head that a wedged decode never releases. So the trade is bounded threads for unbounded
+retention, and the far end is jetsam rather than thread exhaustion. It is still the better end of the
+trade (a thread costs its stack *plus* whatever it retains), and it is **not a regression**: before
+this change the same closures queued unboundedly on the cooperative pool and retained the same
+buffers. Capping the queue and refusing past it is filed as ipass-ba3.
+
+The bank is process-global and shared by the still-image and live-frame decoders, and an orphaned
+decode never returns its slot, so occupancy is cumulative for the life of the process. Enough wedging
+inputs through the still-image path can therefore starve the live-frame path permanently. Isolating
+the two banks is filed as ipass-9tv.
 
 Lanes track decode **depth**, not a busy flag. Once the ceiling queues a second decode onto a lane,
 a flag under-reports: the first decode clears it on completion while the queued one is still running

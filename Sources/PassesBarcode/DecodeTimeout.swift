@@ -11,10 +11,6 @@ import Foundation
 /// bounded ``BoundedImageDecode`` keep the actual work bounded — the timeout exists to bound how
 /// long the caller *waits*, not to forcibly reclaim CPU.
 ///
-/// Implemented with a resolve-once continuation rather than a `withTaskGroup` race: a structured
-/// group would await *both* children before the closure returns, so the slow operation would still
-/// block the caller past the deadline.
-///
 /// Neither racer may touch the shared Swift cooperative pool: it is fixed-width, so a caller
 /// parking its threads can stop a pool-scheduled decode from ever starting while the deadline still
 /// fires, reporting a timeout for work never attempted. See ADR `barcode-decode-1` (ipass-f8p).
@@ -38,9 +34,8 @@ func withDecodeTimeout<T: Sendable>(
     }
 }
 
-// Configuration for the lane bank below — the source of truth it is built and sized from, not a
-// description of it. Internal rather than private so tests name these instead of copying literals;
-// the type itself stays private.
+// Configuration the lane bank is built and sized from. Internal so tests name these rather than
+// copying literals.
 let decodeLaneCount = 16
 let decodeMaxOverflowThreads = 64
 let decodeLaneLabelPrefix = "is.walt.passes.barcode.decode."
@@ -55,30 +50,24 @@ let decodeOverflowThreadName = "is.walt.passes.barcode.decode.overflow"
 private final class DecodeLanes: @unchecked Sendable {
     private static let shared = DecodeLanes()
 
-    /// Deadlines get their own lane so a timer is never queued behind decode work.
+    /// Deadlines get their own lane so a timer is never queued behind decode work. One shared queue
+    /// is enough because `resolve` is O(1) and never blocks, so deadlines cannot starve each other.
     static let deadlines = DispatchQueue(label: "is.walt.passes.barcode.decode-deadline", qos: .userInitiated)
 
     static func submit(_ work: @escaping @Sendable () -> Void) {
         shared.submit(work)
     }
 
-    /// Warm lanes for the common case. Vision decodes out of process, so a lane mostly waits on
-    /// that service; queues create their threads lazily, so idle lanes cost nothing.
+    /// Queues create their threads on first use, so idle lanes cost nothing.
     private let lanes: [DispatchQueue] = (0..<decodeLaneCount)
         .map { DispatchQueue(label: "\(decodeLaneLabelPrefix)\($0)", qos: .userInitiated) }
     private let placementLock = NSLock()
     private var placement = LanePlacement(
         lanes: decodeLaneCount, maxOverflowThreads: decodeMaxOverflowThreads)
 
-    /// A decode never waits behind another decode, so only its own duration can exhaust its budget.
-    /// A free lane is reused; when every lane is occupied the work spills to a transient thread
-    /// rather than queueing, because a queued decode that never starts is exactly the false timeout
-    /// this guard exists to prevent.
-    ///
-    /// Spilling is capped. Occupied lanes are the normal case, not a corner — a timed-out decode is
-    /// orphaned but keeps running, since Vision `perform` is non-cancellable — so an image that
-    /// wedges Vision, re-fed by the per-frame scan loop, would otherwise mint a permanent thread per
-    /// frame. That input is untrusted, which makes the ceiling a security bound rather than tidiness.
+    /// A decode never waits behind another decode, so only its own duration can exhaust its budget;
+    /// spilling past a full bank is capped because the wedging input is untrusted. Both invariants
+    /// and their measurements are argued in ADR `barcode-decode-1`.
     private func submit(_ work: @escaping @Sendable () -> Void) {
         placementLock.lock()
         let target = placement.claim()
@@ -118,16 +107,15 @@ struct LanePlacement {
         case overflow
     }
 
-    /// Decodes currently on each lane — a count, not a flag. A flag under-reports once the ceiling
-    /// has queued a second decode onto a lane: the first clears it on completion while the queued
-    /// one is still running there, so the lane reads free and the next submission queues behind
-    /// untracked work, a false timeout outliving the pressure that caused it.
+    /// Decodes currently on each lane — a count, not a flag, because a flag reads free while a
+    /// decode queued past the ceiling is still running there (ADR `barcode-decode-1`).
     private var depth: [Int]
     private var overflowThreads = 0
     private var nextQueued = 0
     private let maxOverflowThreads: Int
 
     init(lanes: Int, maxOverflowThreads: Int) {
+        precondition(lanes > 0, "a bank needs at least one lane; claim() rotates modulo the count")
         depth = Array(repeating: 0, count: lanes)
         self.maxOverflowThreads = maxOverflowThreads
     }
@@ -166,8 +154,8 @@ struct LanePlacement {
 
 /// `DispatchTimeInterval` in nanoseconds, saturating rather than trapping on absurd budgets.
 /// Saturates toward the budget's own sign, so a negative one fires immediately instead of
-/// wrapping into a ~292-year deadline.
-private func dispatchInterval(_ duration: Duration) -> DispatchTimeInterval {
+/// wrapping into a ~292-year deadline. Internal so the saturation arms are directly testable.
+func dispatchInterval(_ duration: Duration) -> DispatchTimeInterval {
     let (seconds, attoseconds) = duration.components
     let saturated: DispatchTimeInterval = .nanoseconds(seconds < 0 ? .min : .max)
     let (scaled, overflow) = seconds.multipliedReportingOverflow(by: 1_000_000_000)

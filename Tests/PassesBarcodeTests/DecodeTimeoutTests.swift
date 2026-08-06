@@ -36,8 +36,8 @@ private func awaitSignals(_ semaphore: DispatchSemaphore, upTo count: Int, secon
 /// analogue. The security-relevant property is that a slow/hung operation stops blocking the caller
 /// at the budget and yields the timeout value; the fast path must return the real result untouched.
 /// `.serialized` because these tests contend for one process-global lane bank:
-/// `decodeDoesNotQueueBehindSaturatedLanes` holds every lane and 8 overflow threads for as long as
-/// it takes the runner to start them, so its siblings would run against a bank it has taken.
+/// `decodeDoesNotQueueBehindSaturatedLanes` holds every lane and 8 overflow threads until it
+/// finishes, so its siblings would otherwise run against a bank it has taken.
 @Suite("DecodeTimeout", .serialized)
 struct DecodeTimeoutTests {
     @Test func fastOperationReturnsItsResult() async {
@@ -45,9 +45,10 @@ struct DecodeTimeoutTests {
         #expect(result == "REAL")
     }
 
-    /// Exact, and strictly stronger than any elapsed-time bound: had the caller waited on the
-    /// operation, the operation would have won the race and this would read "REAL". A hang is
-    /// caught by the test framework's own timeout.
+    /// Asserts *which* value comes back rather than how fast: had the caller waited on the
+    /// operation, this would read "REAL". That bounds the wait by the operation's 3s, not by the
+    /// 100ms budget, so it is not a substitute for a timing assertion — but it is immune to runner
+    /// speed, which is the flake this suite was cured of. A hang is caught by the test framework.
     @Test func slowOperationYieldsTheTimeoutValueRatherThanWaiting() async {
         let result = await withDecodeTimeout(.milliseconds(100), timeoutValue: "TIMED_OUT") {
             Thread.sleep(forTimeInterval: 3)
@@ -94,12 +95,9 @@ struct DecodeTimeoutTests {
                 }
             }
         }
-        // Asserted, not discarded: without it the check below could pass on an unsaturated bank,
-        // never exercising the spill path — most likely exactly on the loaded runner this test
-        // exists for. Waiting on `hogs` would over-require, though: `claim` fills lanes before it
-        // spills, so one signal past the lane count already proves every lane is taken. Demanding
-        // all 24 starts is an assertion about how fast the runner mints threads, which is the
-        // failure mode this suite is being cured of.
+        // Asserted, not discarded: an unsaturated bank would never exercise the spill path. One
+        // signal past the lane count is sufficient — `claim` fills lanes before it spills — and
+        // waiting on all 24 would assert how fast the runner mints threads.
         let saturated = decodeLaneCount + 1
         #expect(await awaitSignals(occupied, upTo: saturated, seconds: 20) == saturated)
         defer { for _ in 0..<hogs { gate.signal() } }
