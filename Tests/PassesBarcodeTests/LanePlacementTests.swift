@@ -13,7 +13,8 @@ struct LanePlacementTests {
     /// Asserted as a bound rather than an equality so lowering it stays free and only raising it
     /// has to be deliberate.
     @Test func theBankCannotOutgrowItsDocumentedThreadCeiling() {
-        // Every bank together, not one: isolating the two paths (ipass-9tv) multiplies this.
+        // Every bank together, not one. Two banks at 8 + 32 consume the bound exactly, so a third
+        // bank cannot be added without resizing — deliberate, and the reason this is a product.
         #expect(DecodeBank.allCases.count * (decodeLaneCount + decodeMaxOverflowThreads) <= 80)
     }
 

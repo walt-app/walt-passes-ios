@@ -9,35 +9,14 @@ private struct DecodeContext: Sendable {
     let thread: String?
 }
 
-/// Non-blocking poll. Wrapped in a sync function only because the compiler bans the call in async
-/// contexts; with a `.now()` deadline it never actually blocks.
-private func tryTake(_ semaphore: DispatchSemaphore) -> Bool {
-    semaphore.wait(timeout: .now()) == .success
-}
-
-/// Waits for up to `count` signals, giving up after `seconds` and returning how many arrived.
-///
-/// Bounded so a regression fails rather than hanging the suite. Yields rather than blocking: a
-/// blocking poll holds a cooperative-pool thread and starves the tasks being waited for.
-private func awaitSignals(_ semaphore: DispatchSemaphore, upTo count: Int, seconds: Double) async -> Int {
-    let deadline = Date().addingTimeInterval(seconds)
-    var seen = 0
-    while seen < count, Date() < deadline {
-        if tryTake(semaphore) {
-            seen += 1
-        } else {
-            try? await Task.sleep(for: .milliseconds(5))
-        }
-    }
-    return seen
-}
-
-/// Coverage for ``withDecodeTimeout(_:timeoutValue:operation:)`` — the app-level `ProcessKiller`
+/// Coverage for ``withDecodeTimeout(_:on:timeoutValue:operation:)`` — the app-level `ProcessKiller`
 /// analogue. The security-relevant property is that a slow/hung operation stops blocking the caller
 /// at the budget and yields the timeout value; the fast path must return the real result untouched.
-/// `.serialized` because these tests contend for process-global lane banks:
+/// `.serialized` orders the tests *in this suite* against the process-global banks:
 /// `decodeDoesNotQueueBehindSaturatedLanes` holds every still-image lane and 16 overflow threads
-/// until it finishes, so its siblings would otherwise run against a bank it has taken.
+/// until it finishes. It does NOT hold off other suites — `VisionBarcodeImageDecoderTests` and the
+/// hostile-payload suites drive the real decoders in parallel with this one — so the hog count has to
+/// leave the still-image bank headroom for them. It currently leaves 16 of 40 slots.
 @Suite("DecodeTimeout", .serialized)
 struct DecodeTimeoutTests {
     @Test func fastOperationReturnsItsResult() async {
@@ -111,12 +90,7 @@ struct DecodeTimeoutTests {
             "REAL"
         }
         #expect(stillImage == "REAL")
-
-        // The live-frame bank is untouched by pressure on the still-image bank (ipass-9tv): its
-        // capacity is its own, so the scanner keeps working while imports are wedged.
-        let liveFrame = await withDecodeTimeout(.seconds(5), on: .liveFrame, timeoutValue: "TIMED_OUT") {
-            "REAL"
-        }
-        #expect(liveFrame == "REAL")
+        // No live-frame probe here: 24 hogs leave 16 still-image slots free, so a live-frame decode
+        // would return instantly under a SHARED bank too. Isolation is pinned in `LaneBankIsolation`.
     }
 }

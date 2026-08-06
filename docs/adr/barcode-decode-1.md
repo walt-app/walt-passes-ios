@@ -196,7 +196,8 @@ time. Bounded and small, rather than zero.
 
 A refusal is **not** resolved early on purpose. The caller waits its full budget and is then told
 `decodeTimedOut` by the deadline that was already scheduled. Resolving instantly was considered and
-rejected: `FrameScanLoop` clears its in-flight gate on each result, so instant refusals would spin it
+rejected: `FrameScanLoop` (the consumer's scan loop, in `walt-app/iOS`, not this repo) clears its
+in-flight gate on each result, so instant refusals would spin it
 at camera rate against a bank that cannot recover, burning battery to no end. The wait is the
 backpressure.
 
@@ -252,11 +253,21 @@ or 1 is dead generality. The regression the count guarded against returns the mo
 so `LanePlacementTests.refusesRatherThanQueueingOntoAnOccupiedLane` pins the property the flag depends
 on: a full bank refuses rather than handing back a lane that is already running something.
 
-Full-saturation isolation is **not** pinned by an integration test, for the reason the entry above
-already gives: "40 holders must start" is an assertion about the runner, and that shape of test failed
-on correct code. It is pinned by construction (two instances, separate accounting) plus the cheap
-cross-bank probe in `decodeDoesNotQueueBehindSaturatedLanes`, which saturates the still-image lanes
-and asserts a live-frame decode still returns instantly.
+Isolation is **not** pinned by saturating a real bank, for the reason the entry above already gives:
+"40 holders must start" is an assertion about the runner, and that shape of test failed on correct
+code. It is pinned instead by shrinking the bank until saturation is deterministic.
+`withDecodeTimeout` has an overload taking a `DecodeLanes` rather than a `DecodeBank`, so
+`LaneBankIsolationTests` builds one-lane, no-spill banks and reaches a genuinely full bank with a
+single holder. That covers refusal, isolation, and the wiring — `DecodeLanes.bank(.stillImage) !==
+DecodeLanes.bank(.liveFrame)` — without a thread storm.
+
+An earlier version of this entry credited a cross-bank probe inside
+`decodeDoesNotQueueBehindSaturatedLanes` as half the evidence. It was not evidence of anything: 24
+hogs leave 16 of the still-image bank's 40 slots free, and the pre-split bank of 80 left 56, so a
+live-frame decode returned instantly under either design and the assertion could not fail. It has been
+removed rather than left to look like a safety net. Discriminating at that level would have needed
+≥40 hogs, which is the runner measurement being avoided — which is exactly why the small-bank seam
+exists.
 
 That surviving integration check needed a fix here, and the reason is worth recording because it is
 the same hazard in a new place. Its probe ran against a 500ms budget, which passed locally and failed

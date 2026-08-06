@@ -4,8 +4,8 @@ import Foundation
 /// is a slow-loris guard with its own coverage; coupling these suites to it made them fail under
 /// contention rather than on fidelity. See ADR `barcode-decode-1`.
 ///
-/// Also load-bearing for suite isolation: `DecodeTimeoutTests` saturates the one process-global
-/// lane bank, and `.serialized` does not order it against sibling suites.
+/// Also load-bearing for suite isolation: `DecodeTimeoutTests` takes most of the process-global
+/// still-image bank, and `.serialized` does not order it against sibling suites.
 let generousDecodeBudget: Duration = .seconds(120)
 
 /// An already-expired budget, for asserting that a decoder reports the timeout arm. Still a race in

@@ -24,14 +24,32 @@ func withDecodeTimeout<T: Sendable>(
     timeoutValue: T,
     operation: @escaping @Sendable () -> T
 ) async -> T {
+    await withDecodeTimeout(
+        duration,
+        on: DecodeLanes.bank(bank),
+        timeoutValue: timeoutValue,
+        operation: operation
+    )
+}
+
+/// Overload taking the bank itself, so tests can build one small enough to saturate deterministically
+/// — a full bank is 40 slots, and "40 holders must start" asserts runner speed, not this code.
+func withDecodeTimeout<T: Sendable>(
+    _ duration: Duration,
+    on lanes: DecodeLanes,
+    timeoutValue: T,
+    operation: @escaping @Sendable () -> T
+) async -> T {
     await withCheckedContinuation { (continuation: CheckedContinuation<T, Never>) in
         let resolver = ResolveOnce(continuation)
         let deadline = DeadlineBox(DispatchWorkItem { resolver.resolve(timeoutValue) })
+        // Scheduled before the submission, not after: a refused submission runs nothing, so this is
+        // the only thing left that can resolve the caller.
         DecodeLanes.deadlines.asyncAfter(
             deadline: .now() + dispatchInterval(duration),
             execute: deadline.item
         )
-        DecodeLanes.submit(bank) {
+        lanes.submit {
             let value = operation()
             deadline.item.cancel()
             resolver.resolve(value)
@@ -39,20 +57,15 @@ func withDecodeTimeout<T: Sendable>(
     }
 }
 
-/// Which lane bank a decode runs on. The banks are isolated because their inputs carry different
-/// trust: enough wedging still-image imports would otherwise consume every slot the live camera
-/// scanner needs. A decode that overruns its budget still releases its slot when it finishes; only
-/// one that never returns holds it for the life of the process, which is what makes that starvation
-/// permanent (ADR `barcode-decode-1`, ipass-9tv).
+/// Which lane bank a decode runs on. Isolated per trust level: a decode Vision never returns from
+/// holds its slot for the life of the process, so a shared bank let wedging imports starve the
+/// camera permanently (ADR `barcode-decode-1`).
 enum DecodeBank: String, CaseIterable, Sendable {
-    /// User-supplied files arriving via the share sheet or the photo picker.
     case stillImage = "still"
-    /// Camera frames the app captured itself.
     case liveFrame = "frame"
 }
 
-// Configuration each lane bank is built and sized from. Internal so tests name these rather than
-// copying literals. Per bank, not process-wide: the documented ceiling covers every bank together.
+// Sizing is per bank, so the documented ceiling is this times `DecodeBank.allCases`.
 let decodeLaneCount = 8
 let decodeMaxOverflowThreads = 32
 let decodeLaneLabelPrefix = "is.walt.passes.barcode.decode."
@@ -64,40 +77,45 @@ let decodeOverflowThreadName = "is.walt.passes.barcode.decode.overflow"
 ///
 /// `@unchecked Sendable`: lane occupancy is mutable shared state guarded by an `NSLock`, which is
 /// this type's ADR per the repo's policy. The queues themselves are immutable and already `Sendable`.
-private final class DecodeLanes: @unchecked Sendable {
+final class DecodeLanes: @unchecked Sendable {
     private static let stillImage = DecodeLanes(bank: .stillImage)
     private static let liveFrame = DecodeLanes(bank: .liveFrame)
 
     /// Deadlines get their own lane so a timer is never queued behind decode work. One shared queue
     /// is enough because `resolve` is O(1) and never blocks, so deadlines cannot starve each other.
-    /// Shared across banks for the same reason: a deadline does no work a bank could starve.
     static let deadlines = DispatchQueue(label: "is.walt.passes.barcode.decode-deadline", qos: .userInitiated)
 
-    static func submit(_ bank: DecodeBank, _ work: @escaping @Sendable () -> Void) {
+    static func bank(_ bank: DecodeBank) -> DecodeLanes {
         switch bank {
-        case .stillImage: stillImage.submit(work)
-        case .liveFrame: liveFrame.submit(work)
+        case .stillImage: stillImage
+        case .liveFrame: liveFrame
         }
     }
 
-    /// Queues create their threads on first use, so an idle bank costs nothing — which is what makes
-    /// running two of them affordable.
     private let lanes: [DispatchQueue]
     private let placementLock = NSLock()
-    private var placement = LanePlacement(
-        lanes: decodeLaneCount, maxOverflowThreads: decodeMaxOverflowThreads)
+    private var placement: LanePlacement
 
-    private init(bank: DecodeBank) {
-        lanes = (0..<decodeLaneCount).map {
-            DispatchQueue(label: "\(decodeLaneLabelPrefix)\(bank.rawValue).\($0)", qos: .userInitiated)
+    /// Queues create their threads on first use, so an idle bank costs nothing.
+    init(lanes laneCount: Int, maxOverflowThreads: Int, labelPrefix: String) {
+        lanes = (0..<laneCount).map {
+            DispatchQueue(label: "\(labelPrefix)\($0)", qos: .userInitiated)
         }
+        placement = LanePlacement(lanes: laneCount, maxOverflowThreads: maxOverflowThreads)
     }
 
-    /// A decode never waits behind another decode, so only its own duration can exhaust its budget;
-    /// spilling past a full bank is capped because the wedging input is untrusted, and a submission
-    /// past that cap is refused rather than queued. All three invariants and their measurements are
-    /// argued in ADR `barcode-decode-1`.
-    private func submit(_ work: @escaping @Sendable () -> Void) {
+    private convenience init(bank: DecodeBank) {
+        self.init(
+            lanes: decodeLaneCount,
+            maxOverflowThreads: decodeMaxOverflowThreads,
+            labelPrefix: "\(decodeLaneLabelPrefix)\(bank.rawValue)."
+        )
+    }
+
+    /// A decode never waits behind another decode, so only its own duration can exhaust its budget.
+    /// Spilling is capped, and past the cap a submission is refused rather than queued (ADR
+    /// `barcode-decode-1`).
+    func submit(_ work: @escaping @Sendable () -> Void) {
         placementLock.lock()
         let target = placement.claim()
         placementLock.unlock()
@@ -125,9 +143,8 @@ private final class DecodeLanes: @unchecked Sendable {
             overflow.name = decodeOverflowThreadName
             overflow.start()
         case .refused:
-            // Dropping `work` here releases the payload it captured — a `CGImage` up to the ~50MP
-            // `BoundedImageDecode` limit, or a camera `CVPixelBuffer`. Queueing it instead is what
-            // made retention unbounded (ipass-ba3). The caller is resolved by its own deadline.
+            // Dropping `work` releases the payload it captured; the caller is resolved by its own
+            // deadline.
             break
         }
     }
@@ -143,9 +160,7 @@ struct LanePlacement {
         case refused
     }
 
-    /// Whether each lane is running a decode. A flag rather than a count because nothing is ever
-    /// placed on an occupied lane: `claim` refuses instead of queueing, which is the invariant
-    /// `refusesRatherThanQueueingOntoAnOccupiedLane` exists to pin (ADR `barcode-decode-1`).
+    /// A flag rather than a count because `claim` refuses instead of queueing, so a lane is binary.
     private var occupied: [Bool]
     private var overflowThreads = 0
     private let maxOverflowThreads: Int
