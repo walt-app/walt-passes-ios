@@ -41,8 +41,9 @@ func withDecodeTimeout<T: Sendable>(
 
 /// Which lane bank a decode runs on. The banks are isolated because their inputs carry different
 /// trust: enough wedging still-image imports would otherwise consume every slot the live camera
-/// scanner needs, and a decode orphaned by a timeout never returns its slot, so that starvation is
-/// permanent for the life of the process (ADR `barcode-decode-1`, ipass-9tv).
+/// scanner needs. A decode that overruns its budget still releases its slot when it finishes; only
+/// one that never returns holds it for the life of the process, which is what makes that starvation
+/// permanent (ADR `barcode-decode-1`, ipass-9tv).
 enum DecodeBank: String, CaseIterable, Sendable {
     /// User-supplied files arriving via the share sheet or the photo picker.
     case stillImage = "still"

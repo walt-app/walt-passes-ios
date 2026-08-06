@@ -121,7 +121,7 @@ are the normal case, not a corner: a timed-out decode is orphaned but keeps runn
 
 **Spilling is capped at 64 threads**, and an earlier draft of this entry was wrong to claim the
 thread count was "bounded by concurrent demand, which the app controls" and therefore not
-attacker-reachable. It is reachable. Because orphaned decodes never release, in-flight count is
+attacker-reachable. It is reachable. Because a *wedged* decode never releases, in-flight count is
 cumulative rather than concurrent: an image crafted to wedge Vision — untrusted input, and exactly
 the slow-loris case this guard exists for — re-fed by the per-frame scan loop, mints a permanent
 thread per frame. Past the ceiling decodes queue again, which reintroduces false timeouts in that
@@ -139,8 +139,8 @@ trade (a thread costs its stack *plus* whatever it retains), and it is **not a r
 this change the same closures queued unboundedly on the cooperative pool and retained the same
 buffers. Capping the queue and refusing past it is ipass-ba3, done in the 2026-08-06 update below.
 
-The bank is process-global and shared by the still-image and live-frame decoders, and an orphaned
-decode never returns its slot, so occupancy is cumulative for the life of the process. Enough wedging
+The bank is process-global and shared by the still-image and live-frame decoders, and a wedged
+decode never returns its slot, so occupancy accumulates for the life of the process. Enough wedging
 inputs through the still-image path can therefore starve the live-frame path permanently. Isolating
 the two banks is ipass-9tv, done in the 2026-08-06 update below.
 
@@ -200,19 +200,36 @@ rejected: `FrameScanLoop` clears its in-flight gate on each result, so instant r
 at camera rate against a bank that cannot recover, burning battery to no end. The wait is the
 backpressure.
 
-Honest about what refusal does not fix: a saturated bank never drains, because orphaned decodes never
-return their slots. Every decode after saturation is refused for the life of the process, and the arm
-the caller sees — `decodeTimedOut`, whose contract says the same input may decode fine later — is
-misleading in exactly that state. Reporting saturation distinctly was weighed and declined
-(2026-08-06): it is a public enum change plus consumer copy, for a state reachable only by ~80
-deliberately wedging decodes, and it would add a second iOS-only arm on top of the divergence recorded
-below. Revisit if saturation is ever observed in the wild.
+Honest about what refusal does not fix: a bank saturated by wedged decodes never drains. Every decode
+after that is refused for the life of the process, and the arm the caller sees — `decodeTimedOut`,
+whose contract says the same input may decode fine later — is misleading in exactly that state.
+Reporting saturation distinctly was weighed and declined (2026-08-06): it is a public enum change plus
+consumer copy, for a state reachable only by ~80 deliberately wedging decodes, and it would add a
+second iOS-only arm on top of the divergence recorded below. Revisit if saturation is ever observed in
+the wild.
+
+**Which decodes actually hold a slot**, because the entries above use "orphaned" as shorthand for
+"wedged" and that reads far more broadly than it should. Three cases, and only the third accumulates:
+
+1. A decode that returns an answer — including a *failure* answer like `noBarcodeFound` or
+   `unsupportedBarcodeFormat` — has completed. `submit` releases its slot in a `defer` on completion,
+   not on the caller being resolved, so the ordinary failure path leaks nothing however often it runs.
+2. A decode that overruns its budget but eventually finishes resolves the caller with `decodeTimedOut`
+   at 5s, keeps running, and **releases its slot when it finishes**. It is "orphaned" in that its
+   result is discarded, but its capacity comes back. The cost is the overrun, not a permanent slot.
+3. A decode that never returns at all — Vision entered the image and did not come out — holds its slot
+   for the life of the process, because `VNImageRequestHandler.perform` cannot be cancelled or killed.
+
+So occupancy accumulates only from case 3, which needs an input that hangs Apple's decoder. That is
+the crafted-input threat this guard exists for, not "the user's photo did not scan". Sentences in the
+2026-08-04 entry that said orphaned decodes never release were corrected in place to say *wedged*;
+the conclusions they support are unchanged, since the analysis was always about wedging inputs.
 
 **The two decode paths no longer share a bank (ipass-9tv).** `withDecodeTimeout` takes a `DecodeBank`
 — `.stillImage` for untrusted files off the share sheet or picker, `.liveFrame` for app-captured
 camera frames — and each bank is its own `DecodeLanes` instance with its own lanes, its own overflow
 ceiling, and its own placement accounting. Wedging the still-image path can no longer consume a slot
-the scanner needs, which was the whole failure: since occupancy is cumulative, ~80 wedging imports
+the scanner needs, which was the whole failure: since wedged decodes accumulate, ~80 wedging imports
 used to pin the shared bank and leave the camera returning `decodeTimedOut` until the app was
 force-quit.
 

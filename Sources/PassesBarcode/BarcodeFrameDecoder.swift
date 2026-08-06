@@ -48,9 +48,9 @@ extension BarcodeFrameDecoder {
 /// core — plus the ``withDecodeTimeout(_:on:timeoutValue:operation:)`` wait bound (the `ProcessKiller`
 /// analogue) so a hung per-frame decode never stalls the scan loop.
 ///
-/// The live path decodes on its own lane bank (``DecodeBank/liveFrame``). Timed-out decodes are
-/// orphaned and never return their slot, so sharing one bank let wedging still-image imports starve
-/// the scanner permanently (ipass-9tv).
+/// The live path decodes on its own lane bank (``DecodeBank/liveFrame``). A decode Vision never
+/// returns from holds its slot for the life of the process, so sharing one bank let wedging
+/// still-image imports starve the scanner permanently (ipass-9tv).
 ///
 /// `Sendable` via the immutable `decodeTimeout`; no shared mutable state, so no lock is needed.
 public struct VisionBarcodeFrameDecoder: BarcodeFrameDecoder {
