@@ -35,8 +35,8 @@ struct DataProtectionTests {
         }
     }
 
-    @Test func protectedFileURLsCoverDbAndSidecars() throws {
-        try withTempDatabase { url in
+    @Test func protectedFileURLsCoverDbAndSidecars() {
+        withTempDatabase { url in
             let names = GrdbDatabaseFactory.protectedFileURLs(for: url).map(\.lastPathComponent)
             let base = url.lastPathComponent
             #expect(names == [base, base + "-wal", base + "-shm", base + "-journal"])

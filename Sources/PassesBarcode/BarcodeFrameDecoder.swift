@@ -45,8 +45,12 @@ extension BarcodeFrameDecoder {
 /// the container-format / compressed-byte / decompression-bomb gates have nothing to bound (the app
 /// owns the capture resolution). The two protections that DO carry over are the roster clamp and the
 /// faithful-payload posture — both live in the shared ``VisionSymbolDecode/detectBarcode(using:)``
-/// core — plus the ``withDecodeTimeout(_:timeoutValue:operation:)`` wait bound (the `ProcessKiller`
+/// core — plus the ``withDecodeTimeout(_:on:timeoutValue:operation:)`` wait bound (the `ProcessKiller`
 /// analogue) so a hung per-frame decode never stalls the scan loop.
+///
+/// The live path decodes on its own lane bank (``DecodeBank/liveFrame``). Timed-out decodes are
+/// orphaned and never return their slot, so sharing one bank let wedging still-image imports starve
+/// the scanner permanently (ipass-9tv).
 ///
 /// `Sendable` via the immutable `decodeTimeout`; no shared mutable state, so no lock is needed.
 public struct VisionBarcodeFrameDecoder: BarcodeFrameDecoder {
@@ -63,6 +67,7 @@ public struct VisionBarcodeFrameDecoder: BarcodeFrameDecoder {
         let frame = FrameBox(buffer: frame)
         return await withDecodeTimeout(
             decodeTimeout,
+            on: .liveFrame,
             timeoutValue: .decodeFailed(reason: .decodeTimedOut)
         ) {
             let handler = VNImageRequestHandler(

@@ -7,6 +7,15 @@ This is the iOS counterpart of
 consumed by [`walt-app/iOS`](https://github.com/walt-app/iOS) as a Swift
 Package dependency.
 
+The two kernels mirror each other's *contracts* — the same result shapes, the
+same trust-claim surface, the same faithful-payload posture. They are allowed to
+diverge where the platforms' process models genuinely differ, and where they do,
+the ADR for that area records why. `DecodeFailureReason.decodeTimedOut` is the
+current example: Android kills its isolated decode process and cannot observe a
+timeout separately from an absent decoder, while iOS cannot kill Vision
+mid-decode and must distinguish the two (see
+[`docs/adr/barcode-decode-1.md`](docs/adr/barcode-decode-1.md)).
+
 ## Modules
 
 Pure-logic targets are split from their SwiftUI counterparts (`*Core` vs. the

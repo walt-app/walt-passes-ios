@@ -137,12 +137,12 @@ a lane head that a wedged decode never releases. So the trade is bounded threads
 retention, and the far end is jetsam rather than thread exhaustion. It is still the better end of the
 trade (a thread costs its stack *plus* whatever it retains), and it is **not a regression**: before
 this change the same closures queued unboundedly on the cooperative pool and retained the same
-buffers. Capping the queue and refusing past it is filed as ipass-ba3.
+buffers. Capping the queue and refusing past it is ipass-ba3, done in the 2026-08-06 update below.
 
 The bank is process-global and shared by the still-image and live-frame decoders, and an orphaned
 decode never returns its slot, so occupancy is cumulative for the life of the process. Enough wedging
 inputs through the still-image path can therefore starve the live-frame path permanently. Isolating
-the two banks is filed as ipass-9tv.
+the two banks is ipass-9tv, done in the 2026-08-06 update below.
 
 Lanes track decode **depth**, not a busy flag. Once the ceiling queues a second decode onto a lane,
 a flag under-reports: the first decode clears it on completion while the queued one is still running
@@ -176,3 +176,87 @@ result late — the guard bounds the wait it controls, and cannot bound delivery
 caller. `DecodeTimeoutTests.decodeNeverRunsOnTheCooperativePool` pins that the decode runs on a
 context this module owns — a lane, or a named overflow thread, never the cooperative pool — and
 `expiredBudgetReportsDecodeTimedOut` on each decoder pins the reported arm.
+
+## Update 2026-08-06 (ipass-ba3, ipass-9tv): the bank refuses instead of queueing, and there are two
+
+The entry above closed with two holes it had named but not fixed. Both are fixed here.
+
+**A full bank now refuses (ipass-ba3).** `LanePlacement.claim` returns a third target, `.refused`,
+once every lane and the whole overflow ceiling are taken. `submit` drops the work, which releases the
+payload the closure captured. Total in-flight work per bank is therefore capped at
+`decodeLaneCount + decodeMaxOverflowThreads` — the accounting no longer has an unbounded arm.
+
+Be precise about what "retains nothing" means here, because the obvious reading is too strong. The
+*bank* retains nothing: what was unbounded was the queue, and the queue is gone. The refused
+**caller** still holds its own payload, because `withDecodeTimeout` is suspended and its `operation`
+parameter stays alive in the async frame until the deadline resolves it. So retention past the cap is
+bounded by the budget (5s) times the number of concurrent callers, and concurrent callers are bounded
+by the app: the scan loop gates itself to one decode in flight, and imports are user-driven one at a
+time. Bounded and small, rather than zero.
+
+A refusal is **not** resolved early on purpose. The caller waits its full budget and is then told
+`decodeTimedOut` by the deadline that was already scheduled. Resolving instantly was considered and
+rejected: `FrameScanLoop` clears its in-flight gate on each result, so instant refusals would spin it
+at camera rate against a bank that cannot recover, burning battery to no end. The wait is the
+backpressure.
+
+Honest about what refusal does not fix: a saturated bank never drains, because orphaned decodes never
+return their slots. Every decode after saturation is refused for the life of the process, and the arm
+the caller sees — `decodeTimedOut`, whose contract says the same input may decode fine later — is
+misleading in exactly that state. Reporting saturation distinctly was weighed and declined
+(2026-08-06): it is a public enum change plus consumer copy, for a state reachable only by ~80
+deliberately wedging decodes, and it would add a second iOS-only arm on top of the divergence recorded
+below. Revisit if saturation is ever observed in the wild.
+
+**The two decode paths no longer share a bank (ipass-9tv).** `withDecodeTimeout` takes a `DecodeBank`
+— `.stillImage` for untrusted files off the share sheet or picker, `.liveFrame` for app-captured
+camera frames — and each bank is its own `DecodeLanes` instance with its own lanes, its own overflow
+ceiling, and its own placement accounting. Wedging the still-image path can no longer consume a slot
+the scanner needs, which was the whole failure: since occupancy is cumulative, ~80 wedging imports
+used to pin the shared bank and leave the camera returning `decodeTimedOut` until the app was
+force-quit.
+
+Sizing: **8 lanes plus a 32-thread spill per bank**, halved from 16 + 64 so that two banks still total
+the documented **80 live decode threads**. `theBankCannotOutgrowItsDocumentedThreadCeiling` now asserts
+the product across `DecodeBank.allCases`, so adding a third bank cannot quietly triple the ceiling.
+Halving each bank is affordable because real concurrent demand per path is one or two decodes, not
+eight; the ADR's original width argument was about not queueing under a burst, and 8 lanes clears that
+with room. Idle queues create no threads, so the second bank costs nothing until it is used.
+
+The cost of isolation, stated plainly: the live-frame path can now be starved by ~40 wedged decodes
+instead of ~80, because it no longer has the other path's capacity to fall back on. That is the right
+trade — the fallback ran in the wrong direction, letting untrusted input eat the trusted path's
+slots — but it is a real halving, not a free win.
+
+**Lane occupancy is a flag again, not a depth count.** The count existed because claims queued onto
+occupied lanes; a flag under-reported once a second decode was queued behind a running one (measured
+16/16 false timeouts, above). Nothing queues now, so a lane is binary, and a count that can only be 0
+or 1 is dead generality. The regression the count guarded against returns the moment queueing does,
+so `LanePlacementTests.refusesRatherThanQueueingOntoAnOccupiedLane` pins the property the flag depends
+on: a full bank refuses rather than handing back a lane that is already running something.
+
+Full-saturation isolation is **not** pinned by an integration test, for the reason the entry above
+already gives: "40 holders must start" is an assertion about the runner, and that shape of test failed
+on correct code. It is pinned by construction (two instances, separate accounting) plus the cheap
+cross-bank probe in `decodeDoesNotQueueBehindSaturatedLanes`, which saturates the still-image lanes
+and asserts a live-frame decode still returns instantly.
+
+## Update 2026-08-06 (ipass-7vo): the failure taxonomies diverge from Android on purpose
+
+`DecodeFailureReason.decodeTimedOut` has no Android counterpart and **will not get one**. Android is
+not merely missing the arm — it cannot populate it. `DecodeWatchdog` runs *inside* the isolated decode
+process and expires by calling `killer.killSelf()`; the main process only ever observes the dropped
+binder. `BarcodeDecodeClient` folds that `RemoteException` together with a failed bind, a `false`
+`transact`, and any malformed reply into `DecoderUnavailable`, and nothing on that side can tell a
+watchdog kill from a decoder that was never there. Adding the arm would mean adding a second,
+client-side timer duplicating the watchdog, plus a wire code in `DecodeFailureReasonWire` and its
+fail-closed surface test, plus consumer copy — to carry a value the platform cannot distinguish.
+
+iOS has the opposite constraint: Vision `perform` cannot be killed, so a timeout genuinely leaves the
+decoder present and working, and conflating it with "the decoder is gone" already cost a misdiagnosis
+(ipass-42i). The two platforms are reporting what they can actually observe.
+
+So the mirror claim is scoped rather than upheld: the two kernels mirror each other's *contracts* —
+same result shape, same roster clamp, same faithful-payload posture — and their failure taxonomies may
+diverge where the process models do. `README.md` says so. This is the rule for the next divergence
+too, which is why the saturation arm weighed above was declined rather than debated again.
