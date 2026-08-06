@@ -97,14 +97,17 @@ struct DecodeTimeoutTests {
                 }
             }
         }
-        // Asserted, not discarded: an unsaturated bank would never exercise the spill path. One
-        // signal past the lane count is sufficient — `claim` fills lanes before it spills — and
-        // waiting on all 24 would assert how fast the runner mints threads.
-        let saturated = decodeLaneCount + 1
-        #expect(await awaitSignals(occupied, upTo: saturated, seconds: 20) == saturated)
+        // Wait for EVERY hog, not just one past the lane count. Both are assertions about the
+        // runner, but they are not equally forgiving: probing early leaves the runner mid-storm,
+        // still minting the remaining spill threads, and the probe below then has to win a 500ms
+        // budget against that. Measured on the 3-core CI runner, where the early-probe version
+        // failed while the same code passed locally. Waiting instead spends the generous 20s
+        // allowance and leaves the bank settled with every hog parked in `gate.wait()`.
+        #expect(await awaitSignals(occupied, upTo: hogs, seconds: 20) == hogs)
         defer { for _ in 0..<hogs { gate.signal() } }
 
-        // Every lane is now held. A tight budget still has to be enough for an instant operation.
+        // Every lane and 16 of the 32 spill threads are now held. A tight budget still has to be
+        // enough for an instant operation: it must spill, not queue.
         let result = await withDecodeTimeout(.milliseconds(500), on: .stillImage, timeoutValue: "TIMED_OUT") {
             "REAL"
         }

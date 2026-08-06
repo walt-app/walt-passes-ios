@@ -241,6 +241,15 @@ on correct code. It is pinned by construction (two instances, separate accountin
 cross-bank probe in `decodeDoesNotQueueBehindSaturatedLanes`, which saturates the still-image lanes
 and asserts a live-frame decode still returns instantly.
 
+That surviving integration check needed a fix here, and the reason is worth recording because it is
+the same hazard in a new place. It waited for `decodeLaneCount + 1` hogs before probing, on the
+argument that waiting for all of them "would assert how fast the runner mints threads". Halving the
+lane count halved that precondition too, so the probe now ran while the runner was still minting the
+remaining spill threads, and had to win a 500ms budget against that storm — green locally, red on the
+3-core CI runner, on correct code. Both forms assert runner speed; they differ in how much slack they
+allow. Waiting for every hog spends the generous 20s allowance and leaves the bank settled, so the
+probe measures placement rather than thread-start latency.
+
 ## Update 2026-08-06 (ipass-7vo): the failure taxonomies diverge from Android on purpose
 
 `DecodeFailureReason.decodeTimedOut` has no Android counterpart and **will not get one**. Android is
