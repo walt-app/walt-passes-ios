@@ -97,6 +97,11 @@ final class DecodeLanes: @unchecked Sendable {
     private var placement: LanePlacement
 
     /// Queues create their threads on first use, so an idle bank costs nothing.
+    ///
+    /// Production banks must come from ``bank(_:)``, because the documented thread ceiling is a
+    /// security bound and the test enforcing it sums over ``DecodeBank`` — a bank built directly
+    /// here is outside that sum. This initializer exists so tests can build one small enough to
+    /// saturate deterministically.
     init(lanes laneCount: Int, maxOverflowThreads: Int, labelPrefix: String) {
         lanes = (0..<laneCount).map {
             DispatchQueue(label: "\(labelPrefix)\($0)", qos: .userInitiated)

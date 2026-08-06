@@ -126,8 +126,9 @@ cumulative rather than concurrent: an image crafted to wedge Vision — untruste
 the slow-loris case this guard exists for — re-fed by the per-frame scan loop, mints a permanent
 thread per frame. Past the ceiling decodes queue again, which reintroduces false timeouts in that
 pathological tail. `LanePlacementTests.spillsOnlyUntilTheCeiling` pins the ceiling, and
-`theBankCannotOutgrowItsDocumentedThreadCeiling` pins the total: **at most 80 live decode threads**,
-16 lanes plus the 64-thread spill.
+`theBanksCannotOutgrowTheirDocumentedThreadCeiling` pins the total: **at most 80 live decode
+threads**, 16 lanes plus the 64-thread spill. Superseded by the 2026-08-06 update below: the spill
+cap, the per-bank split of those 80 threads, and the queueing tail all changed there.
 
 Be precise about what that tail costs, because an earlier draft of this paragraph was wrong a second
 time: it called the queueing tail "a degraded decode" against "a crash" for unbounded threads. Both
@@ -148,7 +149,9 @@ Lanes track decode **depth**, not a busy flag. Once the ceiling queues a second 
 a flag under-reports: the first decode clears it on completion while the queued one is still running
 there, so the lane reads free and the next submit queues behind untracked work. That false timeout
 outlives the pressure that caused it — measured 16/16 decodes timing out with idle lanes available,
-against 0/16 once lanes count depth.
+against 0/16 once lanes count depth. Superseded by the 2026-08-06 update below, which removes the
+queueing this depended on and returns occupancy to a flag; the measurement stands as the reason
+queueing must not come back without the count.
 
 Placement is a value type (`LanePlacement`) rather than state tangled into the queues, so these
 invariants are pinned deterministically at two lanes and a ceiling of one, in
@@ -197,17 +200,19 @@ time. Bounded and small, rather than zero.
 A refusal is **not** resolved early on purpose. The caller waits its full budget and is then told
 `decodeTimedOut` by the deadline that was already scheduled. Resolving instantly was considered and
 rejected: `FrameScanLoop` (the consumer's scan loop, in `walt-app/iOS`, not this repo) clears its
-in-flight gate on each result, so instant refusals would spin it
-at camera rate against a bank that cannot recover, burning battery to no end. The wait is the
-backpressure.
+in-flight gate on each result, so instant refusals would spin it at camera rate against a bank that
+cannot recover, burning battery to no end. The wait is the backpressure.
 
 Honest about what refusal does not fix: a bank saturated by wedged decodes never drains. Every decode
 after that is refused for the life of the process, and the arm the caller sees — `decodeTimedOut`,
 whose contract says the same input may decode fine later — is misleading in exactly that state.
 Reporting saturation distinctly was weighed and declined (2026-08-06): it is a public enum change plus
-consumer copy, for a state reachable only by ~80 deliberately wedging decodes, and it would add a
-second iOS-only arm on top of the divergence recorded below. Revisit if saturation is ever observed in
-the wild.
+consumer copy, for a state reachable only by ~40 deliberately wedging decodes **per bank** — one
+bank's 8 lanes plus its 32-thread spill — and it would add a second iOS-only arm on top of the
+divergence recorded below. That figure is half what an earlier draft of this paragraph claimed, which
+carried the pre-split 80 over from a single shared bank; the decision was re-checked against 40 and
+stands, since the input has to hang Apple's decoder every time. Revisit if saturation is ever observed
+in the wild.
 
 **Which decodes actually hold a slot**, because the entries above use "orphaned" as shorthand for
 "wedged" and that reads far more broadly than it should. Three cases, and only the third accumulates:
@@ -235,8 +240,11 @@ used to pin the shared bank and leave the camera returning `decodeTimedOut` unti
 force-quit.
 
 Sizing: **8 lanes plus a 32-thread spill per bank**, halved from 16 + 64 so that two banks still total
-the documented **80 live decode threads**. `theBankCannotOutgrowItsDocumentedThreadCeiling` now asserts
-the product across `DecodeBank.allCases`, so adding a third bank cannot quietly triple the ceiling.
+the documented **80 live decode threads**. `theBanksCannotOutgrowTheirDocumentedThreadCeiling` asserts
+the product across `DecodeBank.allCases`, so adding a third *`DecodeBank`* cannot quietly triple the
+ceiling. Scope that precisely: `DecodeLanes` is internal with a general initializer so tests can build
+small banks, so the ceiling binds banks reached through `DecodeBank`, which is every production bank
+by construction — not any bank the module could physically build.
 Halving each bank is affordable because real concurrent demand per path is one or two decodes, not
 eight; the ADR's original width argument was about not queueing under a burst, and 8 lanes clears that
 with room. Idle queues create no threads, so the second bank costs nothing until it is used.
@@ -280,9 +288,11 @@ removed rather than left to look like a safety net. Discriminating at that level
 exists.
 
 That surviving integration check needed a fix here, and the reason is worth recording because it is
-the same hazard in a new place. Its probe ran against a 500ms budget, which passed locally and failed
-on the 3-core CI runner once the lane count was halved: with 8 lanes the probe needs the *17th* spill
-thread rather than the 9th, and minting it there costs more than 500ms. The budget was never what
+the same hazard in a new place. Under its then-24 hogs, its probe ran against a 500ms budget, which
+passed locally and failed on the 3-core CI runner once the lane count was halved: with 8 lanes the
+probe needed the *17th* spill thread rather than the 9th, and minting it there cost more than 500ms.
+(The hog count later dropped, for the separate reason above, so those ordinals are history rather
+than a description of the test today.) The budget was never what
 made the assertion discriminating — the hogs hold for 60s, so a decode that queued behind one cannot
 return quickly under *any* budget well below that. The tight budget only added a second, unintended
 assertion about thread-start latency. It is now 5s, and the probe waits for every hog first so the

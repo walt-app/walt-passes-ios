@@ -7,14 +7,14 @@ import Testing
 /// so the invariants are pinned deterministically rather than by saturating the real bank.
 @Suite("LanePlacement")
 struct LanePlacementTests {
-    /// The bank's thread ceiling is a security bound, not tidiness (ADR `barcode-decode-1`): a
-    /// timed-out decode is orphaned but keeps running, so an image crafted to wedge Vision, re-fed
-    /// by the per-frame scan loop, mints a thread per frame against whatever this permits.
-    /// Asserted as a bound rather than an equality so lowering it stays free and only raising it
-    /// has to be deliberate.
-    @Test func theBankCannotOutgrowItsDocumentedThreadCeiling() {
+    /// The thread ceiling is a security bound, not tidiness (ADR `barcode-decode-1`): a *wedged*
+    /// decode never returns its slot, so an image crafted to wedge Vision, re-fed by the per-frame
+    /// scan loop, mints a permanent thread against whatever this permits. Asserted as a bound rather
+    /// than an equality so lowering it stays free and only raising it has to be deliberate.
+    @Test func theBanksCannotOutgrowTheirDocumentedThreadCeiling() {
         // Every bank together, not one. Two banks at 8 + 32 consume the bound exactly, so a third
-        // bank cannot be added without resizing — deliberate, and the reason this is a product.
+        // `DecodeBank` cannot be added without resizing — deliberate, and the reason this is a
+        // product. Binds banks reached through `DecodeBank`; tests build their own outside it.
         #expect(DecodeBank.allCases.count * (decodeLaneCount + decodeMaxOverflowThreads) <= 80)
     }
 

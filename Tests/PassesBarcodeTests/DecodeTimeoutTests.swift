@@ -13,10 +13,10 @@ private struct DecodeContext: Sendable {
 /// analogue. The security-relevant property is that a slow/hung operation stops blocking the caller
 /// at the budget and yields the timeout value; the fast path must return the real result untouched.
 /// `.serialized` orders the tests *in this suite* against the process-global banks:
-/// `decodeDoesNotQueueBehindSaturatedLanes` holds every still-image lane and 4 overflow threads until
+/// `decodeDoesNotQueueBehindSaturatedLanes` holds every still-image lane and part of its spill until
 /// it finishes. It does NOT hold off other suites — `VisionBarcodeImageDecoderTests` and the
 /// hostile-payload suites drive the real decoders in parallel with this one — so the hog count has to
-/// leave the still-image bank headroom for them, 28 of 40 slots as sized.
+/// leave the still-image bank headroom for them, which that test derives and asserts.
 @Suite("DecodeTimeout", .serialized)
 struct DecodeTimeoutTests {
     @Test func fastOperationReturnsItsResult() async {
@@ -63,12 +63,15 @@ struct DecodeTimeoutTests {
     @Test func decodeDoesNotQueueBehindSaturatedLanes() async {
         let gate = DispatchSemaphore(value: 0)
         let occupied = DispatchSemaphore(value: 0)
-        // Four past the lane count, so the decode below must spill. Deliberately modest: this shares
-        // the process-global still-image bank with every sibling suite that decodes an image, and
-        // since ipass-ba3 an over-subscribed bank REFUSES rather than queueing, so a hog that loses
-        // the race never runs and never signals. 24 hogs left 16 slots of headroom and failed here on
-        // CI; 12 leaves 28.
-        let hogs = 12
+        // Derived, not hand-counted: every prose restatement of this arithmetic has gone stale at
+        // least once. Past the lane count so the decode below must spill, and modest because this
+        // shares the process-global still-image bank with every sibling suite that decodes an image
+        // — and since ipass-ba3 an over-subscribed bank REFUSES rather than queueing, so a hog that
+        // loses the race never runs and never signals. The headroom left is asserted below rather
+        // than described, which is what kept going stale.
+        let hogs = decodeLaneCount + 4
+        let headroom = decodeLaneCount + decodeMaxOverflowThreads - hogs
+        #expect(headroom >= 24, "sibling suites decode against this bank while these hogs hold it")
         for _ in 0..<hogs {
             Task.detached {
                 _ = await withDecodeTimeout(.seconds(60), on: .stillImage, timeoutValue: "TIMED_OUT") {
@@ -84,16 +87,17 @@ struct DecodeTimeoutTests {
         #expect(started == hogs, "hogs that never started were refused, or the runner is saturated")
         defer { for _ in 0..<started { gate.signal() } }
 
-        // Every lane and 4 of the 32 spill threads are now held, so this must spill rather than
-        // queue. What discriminates is the hogs' 60s hold, not a tight budget: a queued decode
-        // cannot return before them, so ANY budget well under 60s catches it. An earlier 500ms
-        // budget also measured how fast the runner mints a thread, and failed on the 3-core CI
-        // runner while passing locally — precision this assertion never needed.
+        // Every lane is held and the spill is in use, so this must spill rather than queue. What
+        // discriminates is the hogs' 60s hold, not a tight budget: a queued decode cannot return
+        // before them, so ANY budget well under 60s catches it. An earlier 500ms budget also
+        // measured how fast the runner mints a thread, and failed on the 3-core CI runner while
+        // passing locally — precision this assertion never needed.
         let stillImage = await withDecodeTimeout(.seconds(5), on: .stillImage, timeoutValue: "TIMED_OUT") {
             "REAL"
         }
         #expect(stillImage == "REAL")
-        // No live-frame probe here: these hogs leave 28 still-image slots free, so a live-frame decode
-        // would return instantly under a SHARED bank too. Isolation is pinned in `LaneBankIsolation`.
+        // No live-frame probe here: these hogs leave the still-image bank plenty free (the `headroom`
+        // asserted above), so a live-frame decode would return instantly under a SHARED bank too.
+        // Isolation is pinned in `LaneBankIsolation`.
     }
 }
