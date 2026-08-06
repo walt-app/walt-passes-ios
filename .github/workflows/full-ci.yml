@@ -23,8 +23,14 @@ on:
     types: [labeled]
     branches: [main]
 
+# Keyed on the event as well as the ref so a push to main cannot cancel the Monday cron
+# sweep: both run on refs/heads/main, and a cancelled run is not a failed one, so the
+# sweep would die without the alert job below ever firing (ipass-h2t). Superseding a
+# push with a newer push to the same ref still cancels, which is the point of the group.
+# Side effect, accepted: a manual dispatch on main no longer supersedes an in-flight push
+# run either, so both complete. That costs one extra runner, not a lost signal.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 permissions:
@@ -106,6 +112,12 @@ jobs:
           Close this once main is green again.
           EOF
           )
+
+          # Written before the issue is filed, so the run page still carries the alert if
+          # `gh issue create` fails. A failing create reddens a job nobody watches, and
+          # GitHub offers no escalation out of it — the summary is the fallback record
+          # (ipass-h2t).
+          echo "$body" >> "$GITHUB_STEP_SUMMARY"
 
           # Degrade to filing a fresh issue rather than aborting: under `set -e` a lookup
           # blip would redden a job nobody is watching, which is the failure mode this

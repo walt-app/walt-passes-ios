@@ -14,19 +14,42 @@ import Foundation
 /// Neither racer may touch the shared Swift cooperative pool: it is fixed-width, so a caller
 /// parking its threads can stop a pool-scheduled decode from ever starting while the deadline still
 /// fires, reporting a timeout for work never attempted. See ADR `barcode-decode-1` (ipass-f8p).
+///
+/// `bank` picks which of the two isolated lane banks runs the decode; the untrusted still-image path
+/// and the live camera path never share capacity (ipass-9tv). A submission arriving at a full bank is
+/// refused rather than queued, and the deadline reports it as a timeout (ipass-ba3).
 func withDecodeTimeout<T: Sendable>(
     _ duration: Duration,
+    on bank: DecodeBank,
+    timeoutValue: T,
+    operation: @escaping @Sendable () -> T
+) async -> T {
+    await withDecodeTimeout(
+        duration,
+        on: DecodeLanes.bank(bank),
+        timeoutValue: timeoutValue,
+        operation: operation
+    )
+}
+
+/// Overload taking the bank itself, so tests can build one small enough to saturate deterministically
+/// — a full bank is 40 slots, and "40 holders must start" asserts runner speed, not this code.
+func withDecodeTimeout<T: Sendable>(
+    _ duration: Duration,
+    on lanes: DecodeLanes,
     timeoutValue: T,
     operation: @escaping @Sendable () -> T
 ) async -> T {
     await withCheckedContinuation { (continuation: CheckedContinuation<T, Never>) in
         let resolver = ResolveOnce(continuation)
         let deadline = DeadlineBox(DispatchWorkItem { resolver.resolve(timeoutValue) })
+        // Scheduled before the submission, not after: a refused submission runs nothing, so this is
+        // the only thing left that can resolve the caller.
         DecodeLanes.deadlines.asyncAfter(
             deadline: .now() + dispatchInterval(duration),
             execute: deadline.item
         )
-        DecodeLanes.submit {
+        lanes.submit {
             let value = operation()
             deadline.item.cancel()
             resolver.resolve(value)
@@ -34,10 +57,17 @@ func withDecodeTimeout<T: Sendable>(
     }
 }
 
-// Configuration the lane bank is built and sized from. Internal so tests name these rather than
-// copying literals.
-let decodeLaneCount = 16
-let decodeMaxOverflowThreads = 64
+/// Which lane bank a decode runs on. Isolated per trust level: a decode Vision never returns from
+/// holds its slot for the life of the process, so a shared bank let wedging imports starve the
+/// camera permanently (ADR `barcode-decode-1`).
+enum DecodeBank: String, CaseIterable, Sendable {
+    case stillImage = "still"
+    case liveFrame = "frame"
+}
+
+// Sizing is per bank, so the documented ceiling is this times `DecodeBank.allCases`.
+let decodeLaneCount = 8
+let decodeMaxOverflowThreads = 32
 let decodeLaneLabelPrefix = "is.walt.passes.barcode.decode."
 let decodeOverflowThreadName = "is.walt.passes.barcode.decode.overflow"
 
@@ -47,28 +77,50 @@ let decodeOverflowThreadName = "is.walt.passes.barcode.decode.overflow"
 ///
 /// `@unchecked Sendable`: lane occupancy is mutable shared state guarded by an `NSLock`, which is
 /// this type's ADR per the repo's policy. The queues themselves are immutable and already `Sendable`.
-private final class DecodeLanes: @unchecked Sendable {
-    private static let shared = DecodeLanes()
+final class DecodeLanes: @unchecked Sendable {
+    private static let stillImage = DecodeLanes(bank: .stillImage)
+    private static let liveFrame = DecodeLanes(bank: .liveFrame)
 
     /// Deadlines get their own lane so a timer is never queued behind decode work. One shared queue
     /// is enough because `resolve` is O(1) and never blocks, so deadlines cannot starve each other.
     static let deadlines = DispatchQueue(label: "is.walt.passes.barcode.decode-deadline", qos: .userInitiated)
 
-    static func submit(_ work: @escaping @Sendable () -> Void) {
-        shared.submit(work)
+    static func bank(_ bank: DecodeBank) -> DecodeLanes {
+        switch bank {
+        case .stillImage: stillImage
+        case .liveFrame: liveFrame
+        }
     }
 
-    /// Queues create their threads on first use, so idle lanes cost nothing.
-    private let lanes: [DispatchQueue] = (0..<decodeLaneCount)
-        .map { DispatchQueue(label: "\(decodeLaneLabelPrefix)\($0)", qos: .userInitiated) }
+    private let lanes: [DispatchQueue]
     private let placementLock = NSLock()
-    private var placement = LanePlacement(
-        lanes: decodeLaneCount, maxOverflowThreads: decodeMaxOverflowThreads)
+    private var placement: LanePlacement
 
-    /// A decode never waits behind another decode, so only its own duration can exhaust its budget;
-    /// spilling past a full bank is capped because the wedging input is untrusted. Both invariants
-    /// and their measurements are argued in ADR `barcode-decode-1`.
-    private func submit(_ work: @escaping @Sendable () -> Void) {
+    /// Queues create their threads on first use, so an idle bank costs nothing.
+    ///
+    /// Production banks must come from ``bank(_:)``, because the documented thread ceiling is a
+    /// security bound and the test enforcing it sums over ``DecodeBank`` — a bank built directly
+    /// here is outside that sum. This initializer exists so tests can build one small enough to
+    /// saturate deterministically.
+    init(lanes laneCount: Int, maxOverflowThreads: Int, labelPrefix: String) {
+        lanes = (0..<laneCount).map {
+            DispatchQueue(label: "\(labelPrefix)\($0)", qos: .userInitiated)
+        }
+        placement = LanePlacement(lanes: laneCount, maxOverflowThreads: maxOverflowThreads)
+    }
+
+    private convenience init(bank: DecodeBank) {
+        self.init(
+            lanes: decodeLaneCount,
+            maxOverflowThreads: decodeMaxOverflowThreads,
+            labelPrefix: "\(decodeLaneLabelPrefix)\(bank.rawValue)."
+        )
+    }
+
+    /// A decode never waits behind another decode, so only its own duration can exhaust its budget.
+    /// Spilling is capped, and past the cap a submission is refused rather than queued (ADR
+    /// `barcode-decode-1`).
+    func submit(_ work: @escaping @Sendable () -> Void) {
         placementLock.lock()
         let target = placement.claim()
         placementLock.unlock()
@@ -95,6 +147,10 @@ private final class DecodeLanes: @unchecked Sendable {
             overflow.qualityOfService = .userInitiated  // Match the lanes; spills happen under load.
             overflow.name = decodeOverflowThreadName
             overflow.start()
+        case .refused:
+            // Dropping `work` releases the payload it captured; the caller is resolved by its own
+            // deadline.
+            break
         }
     }
 }
@@ -105,49 +161,46 @@ struct LanePlacement {
     enum Target: Equatable {
         case lane(Int)
         case overflow
+        /// The bank is full. The submission runs nowhere and is retained by nothing.
+        case refused
     }
 
-    /// Decodes currently on each lane — a count, not a flag, because a flag reads free while a
-    /// decode queued past the ceiling is still running there (ADR `barcode-decode-1`).
-    private var depth: [Int]
+    /// A flag rather than a count because `claim` refuses instead of queueing, so a lane is binary.
+    private var occupied: [Bool]
     private var overflowThreads = 0
-    private var nextQueued = 0
     private let maxOverflowThreads: Int
 
     init(lanes: Int, maxOverflowThreads: Int) {
-        precondition(lanes > 0, "a bank needs at least one lane; claim() rotates modulo the count")
-        depth = Array(repeating: 0, count: lanes)
+        precondition(lanes > 0, "a bank needs at least one lane")
+        occupied = Array(repeating: false, count: lanes)
         self.maxOverflowThreads = maxOverflowThreads
     }
 
-    /// A free lane if there is one; otherwise a transient thread up to the ceiling; otherwise a
-    /// lane to queue on, rotating so the queueing spreads rather than piling onto one.
+    /// A free lane if there is one; otherwise a transient thread up to the ceiling; otherwise
+    /// nothing. Total in-flight work is therefore capped at `lanes + maxOverflowThreads`.
     mutating func claim() -> Target {
-        if let free = depth.firstIndex(of: 0) {
-            depth[free] += 1
+        if let free = occupied.firstIndex(of: false) {
+            occupied[free] = true
             return .lane(free)
         }
         if overflowThreads < maxOverflowThreads {
             overflowThreads += 1
             return .overflow
         }
-        let lane = nextQueued
-        nextQueued = (nextQueued + 1) % depth.count
-        depth[lane] += 1
-        return .lane(lane)
+        return .refused
     }
 
     mutating func release(_ target: Target) {
         switch target {
-        case .lane(let lane): depth[lane] -= 1
+        case .lane(let lane): occupied[lane] = false
         case .overflow: overflowThreads -= 1
+        case .refused: break  // Claimed nothing, so there is nothing to give back.
         }
     }
 
     // Read only by the accounting tests; `submit` needs the claim, not the counts.
 
-    /// Decodes in flight on `lane`, including any queued behind the one that is running.
-    func depth(of lane: Int) -> Int { depth[lane] }
+    func isOccupied(_ lane: Int) -> Bool { occupied[lane] }
 
     var overflowInFlight: Int { overflowThreads }
 }

@@ -9,39 +9,18 @@ private struct DecodeContext: Sendable {
     let thread: String?
 }
 
-/// Non-blocking poll. Wrapped in a sync function only because the compiler bans the call in async
-/// contexts; with a `.now()` deadline it never actually blocks.
-private func tryTake(_ semaphore: DispatchSemaphore) -> Bool {
-    semaphore.wait(timeout: .now()) == .success
-}
-
-/// Waits for up to `count` signals, giving up after `seconds` and returning how many arrived.
-///
-/// Bounded so a regression fails rather than hanging the suite. Yields rather than blocking: a
-/// blocking poll holds a cooperative-pool thread and starves the tasks being waited for.
-private func awaitSignals(_ semaphore: DispatchSemaphore, upTo count: Int, seconds: Double) async -> Int {
-    let deadline = Date().addingTimeInterval(seconds)
-    var seen = 0
-    while seen < count, Date() < deadline {
-        if tryTake(semaphore) {
-            seen += 1
-        } else {
-            try? await Task.sleep(for: .milliseconds(5))
-        }
-    }
-    return seen
-}
-
-/// Coverage for ``withDecodeTimeout(_:timeoutValue:operation:)`` — the app-level `ProcessKiller`
+/// Coverage for ``withDecodeTimeout(_:on:timeoutValue:operation:)`` — the app-level `ProcessKiller`
 /// analogue. The security-relevant property is that a slow/hung operation stops blocking the caller
 /// at the budget and yields the timeout value; the fast path must return the real result untouched.
-/// `.serialized` because these tests contend for one process-global lane bank:
-/// `decodeDoesNotQueueBehindSaturatedLanes` holds every lane and 8 overflow threads until it
-/// finishes, so its siblings would otherwise run against a bank it has taken.
+/// `.serialized` orders the tests *in this suite* against the process-global banks:
+/// `decodeDoesNotQueueBehindSaturatedLanes` holds every still-image lane and part of its spill until
+/// it finishes. It does NOT hold off other suites — `VisionBarcodeImageDecoderTests` and the
+/// hostile-payload suites drive the real decoders in parallel with this one — so the hog count has to
+/// leave the still-image bank headroom for them, which that test derives and asserts.
 @Suite("DecodeTimeout", .serialized)
 struct DecodeTimeoutTests {
     @Test func fastOperationReturnsItsResult() async {
-        let result = await withDecodeTimeout(.seconds(5), timeoutValue: "TIMED_OUT") { "REAL" }
+        let result = await withDecodeTimeout(.seconds(5), on: .liveFrame, timeoutValue: "TIMED_OUT") { "REAL" }
         #expect(result == "REAL")
     }
 
@@ -50,7 +29,7 @@ struct DecodeTimeoutTests {
     /// 100ms budget, so it is not a substitute for a timing assertion — but it is immune to runner
     /// speed, which is the flake this suite was cured of. A hang is caught by the test framework.
     @Test func slowOperationYieldsTheTimeoutValueRatherThanWaiting() async {
-        let result = await withDecodeTimeout(.milliseconds(100), timeoutValue: "TIMED_OUT") {
+        let result = await withDecodeTimeout(.milliseconds(100), on: .liveFrame, timeoutValue: "TIMED_OUT") {
             Thread.sleep(forTimeInterval: 3)
             return "REAL"
         }
@@ -64,7 +43,7 @@ struct DecodeTimeoutTests {
     /// version starves sibling suites, which is this bug's own blast radius.
     @Test func decodeNeverRunsOnTheCooperativePool() async {
         let timedOut = DecodeContext(queue: "TIMED_OUT", thread: nil)
-        let ranOn = await withDecodeTimeout(.seconds(5), timeoutValue: timedOut) {
+        let ranOn = await withDecodeTimeout(.seconds(5), on: .liveFrame, timeoutValue: timedOut) {
             DecodeContext(
                 queue: String(cString: __dispatch_queue_get_label(nil)),
                 thread: Thread.current.name
@@ -84,26 +63,41 @@ struct DecodeTimeoutTests {
     @Test func decodeDoesNotQueueBehindSaturatedLanes() async {
         let gate = DispatchSemaphore(value: 0)
         let occupied = DispatchSemaphore(value: 0)
-        // Occupy well past the lane count so the overflow path is what serves the decode below.
-        let hogs = 24
+        // Derived, not hand-counted: every prose restatement of this arithmetic has gone stale at
+        // least once. Past the lane count so the decode below must spill, and modest because this
+        // shares the process-global still-image bank with every sibling suite that decodes an image
+        // — and since ipass-ba3 an over-subscribed bank REFUSES rather than queueing, so a hog that
+        // loses the race never runs and never signals. The headroom left is asserted below rather
+        // than described, which is what kept going stale.
+        let hogs = decodeLaneCount + 4
+        let headroom = decodeLaneCount + decodeMaxOverflowThreads - hogs
+        #expect(headroom >= 24, "sibling suites decode against this bank while these hogs hold it")
         for _ in 0..<hogs {
             Task.detached {
-                _ = await withDecodeTimeout(.seconds(60), timeoutValue: "TIMED_OUT") {
+                _ = await withDecodeTimeout(.seconds(60), on: .stillImage, timeoutValue: "TIMED_OUT") {
                     occupied.signal()
                     gate.wait()
                     return "REAL"
                 }
             }
         }
-        // Asserted, not discarded: an unsaturated bank would never exercise the spill path. One
-        // signal past the lane count is sufficient — `claim` fills lanes before it spills — and
-        // waiting on all 24 would assert how fast the runner mints threads.
-        let saturated = decodeLaneCount + 1
-        #expect(await awaitSignals(occupied, upTo: saturated, seconds: 20) == saturated)
-        defer { for _ in 0..<hogs { gate.signal() } }
+        // Asserted, not discarded: an unsaturated bank would never exercise the spill path. Every
+        // hog, so the bank is settled rather than still minting spill threads under the probe.
+        let started = await awaitSignals(occupied, upTo: hogs, seconds: 20)
+        #expect(started == hogs, "hogs that never started were refused, or the runner is saturated")
+        defer { for _ in 0..<started { gate.signal() } }
 
-        // Every lane is now held. A tight budget still has to be enough for an instant operation.
-        let result = await withDecodeTimeout(.milliseconds(500), timeoutValue: "TIMED_OUT") { "REAL" }
-        #expect(result == "REAL")
+        // Every lane is held and the spill is in use, so this must spill rather than queue. What
+        // discriminates is the hogs' 60s hold, not a tight budget: a queued decode cannot return
+        // before them, so ANY budget well under 60s catches it. An earlier 500ms budget also
+        // measured how fast the runner mints a thread, and failed on the 3-core CI runner while
+        // passing locally — precision this assertion never needed.
+        let stillImage = await withDecodeTimeout(.seconds(5), on: .stillImage, timeoutValue: "TIMED_OUT") {
+            "REAL"
+        }
+        #expect(stillImage == "REAL")
+        // No live-frame probe here: these hogs leave the still-image bank plenty free (the `headroom`
+        // asserted above), so a live-frame decode would return instantly under a SHARED bank too.
+        // Isolation is pinned in `LaneBankIsolation`.
     }
 }

@@ -16,15 +16,24 @@ struct SignatureStatusTests {
         #expect(Set(statuses).count == statuses.count)
     }
 
+    /// Switched over values read from an array, not over a literal: a `let` bound to one arm is a
+    /// compile-time constant, so the compiler folds the other branches away as dead code and the
+    /// test asserts nothing about them.
     @Test func armsAreReachableViaSwitch() {
-        let status: SignatureStatus = .appleVerified
-        let branch: String
-        switch status {
-        case .unsigned: branch = "unsigned"
-        case .selfSigned: branch = "selfSigned"
-        case .appleVerified: branch = "appleVerified"
-        case .certChainIncomplete: branch = "certChainIncomplete"
+        let statuses: [SignatureStatus] = [
+            .unsigned,
+            .selfSigned,
+            .appleVerified,
+            .certChainIncomplete,
+        ]
+        let branches = statuses.map { status -> String in
+            switch status {
+            case .unsigned: return "unsigned"
+            case .selfSigned: return "selfSigned"
+            case .appleVerified: return "appleVerified"
+            case .certChainIncomplete: return "certChainIncomplete"
+            }
         }
-        #expect(branch == "appleVerified")
+        #expect(branches == ["unsigned", "selfSigned", "appleVerified", "certChainIncomplete"])
     }
 }

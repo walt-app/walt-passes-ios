@@ -336,7 +336,7 @@ struct SignatureVerifierTests {
             signatureBytes: signature,
             trustRoots: CertificateStore([root.certificate])
         ) {
-            RFC5280Policy(validationTime: Date())
+            RFC5280Policy()
         }
         guard case .failure(.invalidCMSBlock) = result else {
             Issue.record("stock swift-certificates now accepts wire-order signedAttrs: \(result)")
@@ -357,7 +357,7 @@ struct SignatureVerifierTests {
             signatureBytes: signature,
             trustRoots: CertificateStore([root.certificate])
         ) {
-            RFC5280Policy(validationTime: Date())
+            RFC5280Policy()
         }
         guard case .success = result else {
             Issue.record("swift-certificates no longer verifies over dataBytes without signedAttrs: \(result)")

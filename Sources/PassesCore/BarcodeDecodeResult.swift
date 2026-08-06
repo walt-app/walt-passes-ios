@@ -55,5 +55,11 @@ public enum DecodeFailureReason: Sendable, CaseIterable {
     /// responses: an unavailable decoder will not succeed on retry, a timed-out one may. Retry is
     /// worthwhile for transient contention, not for the input that timed out — a decode that wedges
     /// the engine is not cancellable, so re-feeding it consumes another slot that never comes back.
+    ///
+    /// One case does NOT recover: once enough wedged decodes have consumed a lane bank, every later
+    /// decode on that path is refused and reported here, for the life of the process. Retry cannot
+    /// clear it — only relaunching can. Reporting that state distinctly was weighed and declined
+    /// (ADR barcode-decode-1, 2026-08-06), so a consumer whose retry copy promises "try again in a
+    /// moment" is accurate for the common case and wrong for this one.
     case decodeTimedOut
 }
