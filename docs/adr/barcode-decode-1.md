@@ -242,13 +242,18 @@ cross-bank probe in `decodeDoesNotQueueBehindSaturatedLanes`, which saturates th
 and asserts a live-frame decode still returns instantly.
 
 That surviving integration check needed a fix here, and the reason is worth recording because it is
-the same hazard in a new place. It waited for `decodeLaneCount + 1` hogs before probing, on the
-argument that waiting for all of them "would assert how fast the runner mints threads". Halving the
-lane count halved that precondition too, so the probe now ran while the runner was still minting the
-remaining spill threads, and had to win a 500ms budget against that storm — green locally, red on the
-3-core CI runner, on correct code. Both forms assert runner speed; they differ in how much slack they
-allow. Waiting for every hog spends the generous 20s allowance and leaves the bank settled, so the
-probe measures placement rather than thread-start latency.
+the same hazard in a new place. Its probe ran against a 500ms budget, which passed locally and failed
+on the 3-core CI runner once the lane count was halved: with 8 lanes the probe needs the *17th* spill
+thread rather than the 9th, and minting it there costs more than 500ms. The budget was never what
+made the assertion discriminating — the hogs hold for 60s, so a decode that queued behind one cannot
+return quickly under *any* budget well below that. The tight budget only added a second, unintended
+assertion about thread-start latency. It is now 5s, and the probe waits for every hog first so the
+bank is settled rather than mid-storm.
+
+Worth stating because the first fix attempted here was wrong: the settled-bank wait alone did not fix
+it, and the rerun proved the budget was the fragile part. A test that fails on correct code is a
+measurement of the runner, and the honest response is to remove the accidental measurement rather than
+to loosen it until it passes.
 
 ## Update 2026-08-06 (ipass-7vo): the failure taxonomies diverge from Android on purpose
 

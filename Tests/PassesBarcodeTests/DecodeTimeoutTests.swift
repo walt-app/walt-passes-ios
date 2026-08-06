@@ -97,25 +97,24 @@ struct DecodeTimeoutTests {
                 }
             }
         }
-        // Wait for EVERY hog, not just one past the lane count. Both are assertions about the
-        // runner, but they are not equally forgiving: probing early leaves the runner mid-storm,
-        // still minting the remaining spill threads, and the probe below then has to win a 500ms
-        // budget against that. Measured on the 3-core CI runner, where the early-probe version
-        // failed while the same code passed locally. Waiting instead spends the generous 20s
-        // allowance and leaves the bank settled with every hog parked in `gate.wait()`.
+        // Asserted, not discarded: an unsaturated bank would never exercise the spill path. Every
+        // hog, so the bank is settled rather than still minting spill threads under the probes.
         #expect(await awaitSignals(occupied, upTo: hogs, seconds: 20) == hogs)
         defer { for _ in 0..<hogs { gate.signal() } }
 
-        // Every lane and 16 of the 32 spill threads are now held. A tight budget still has to be
-        // enough for an instant operation: it must spill, not queue.
-        let result = await withDecodeTimeout(.milliseconds(500), on: .stillImage, timeoutValue: "TIMED_OUT") {
+        // Every lane and 16 of the 32 spill threads are now held, so these must spill rather than
+        // queue. What discriminates is the hogs' 60s hold, not a tight budget: a queued decode
+        // cannot return before them, so ANY budget well under 60s catches it. An earlier 500ms
+        // budget also measured how fast the runner mints the 17th thread, and failed on the 3-core
+        // CI runner while passing locally — precision this assertion never needed.
+        let stillImage = await withDecodeTimeout(.seconds(5), on: .stillImage, timeoutValue: "TIMED_OUT") {
             "REAL"
         }
-        #expect(result == "REAL")
+        #expect(stillImage == "REAL")
 
         // The live-frame bank is untouched by pressure on the still-image bank (ipass-9tv): its
         // capacity is its own, so the scanner keeps working while imports are wedged.
-        let liveFrame = await withDecodeTimeout(.milliseconds(500), on: .liveFrame, timeoutValue: "TIMED_OUT") {
+        let liveFrame = await withDecodeTimeout(.seconds(5), on: .liveFrame, timeoutValue: "TIMED_OUT") {
             "REAL"
         }
         #expect(liveFrame == "REAL")
