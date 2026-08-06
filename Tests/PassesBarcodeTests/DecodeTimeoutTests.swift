@@ -93,7 +93,7 @@ struct DecodeTimeoutTests {
             "REAL"
         }
         #expect(stillImage == "REAL")
-        // No live-frame probe here: 24 hogs leave 16 still-image slots free, so a live-frame decode
+        // No live-frame probe here: these hogs leave 28 still-image slots free, so a live-frame decode
         // would return instantly under a SHARED bank too. Isolation is pinned in `LaneBankIsolation`.
     }
 }
