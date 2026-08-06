@@ -31,8 +31,8 @@ public protocol BarcodeImageDecoder: Sendable {
 ///     shared verbatim with the live-frame path — reads the symbol in Vision's system services, out
 ///     of Walt's address space (the iOS analogue of Android's isolated decode process).
 ///  3. The whole Vision step runs under ``withDecodeTimeout(_:timeoutValue:operation:)`` — the
-///     app-level `ProcessKiller` analogue — so a hung decode reports `decoderUnavailable` rather
-///     than blocking the caller.
+///     app-level `ProcessKiller` analogue — so a hung decode reports `decodeTimedOut` rather than
+///     blocking the caller.
 ///
 /// The payload is returned FAITHFULLY: nothing here interprets, normalizes, or acts on the decoded
 /// bytes. `Sendable` via immutable `config`; no shared mutable state, so no lock is needed.
@@ -50,7 +50,7 @@ public struct VisionBarcodeImageDecoder: BarcodeImageDecoder {
         case .decoded(let cgImage):
             return await withDecodeTimeout(
                 config.decodeTimeout,
-                timeoutValue: .decodeFailed(reason: .decoderUnavailable)
+                timeoutValue: .decodeFailed(reason: .decodeTimedOut)
             ) {
                 VisionSymbolDecode.detectBarcode(using: VNImageRequestHandler(cgImage: cgImage, options: [:]))
             }

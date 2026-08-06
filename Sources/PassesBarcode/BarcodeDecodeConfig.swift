@@ -17,7 +17,7 @@ public struct BarcodeDecodeConfig: Sendable {
     /// ``maxDimensionPx`` per axis.
     public var maxAreaPx: Int
     /// Wall-clock budget for the Vision decode; on expiry the decoder reports
-    /// `decoderUnavailable` (the app-level `ProcessKiller` analogue).
+    /// `decodeTimedOut` (the app-level `ProcessKiller` analogue).
     public var decodeTimeout: Duration
     /// Still-image containers a card photo realistically arrives in; others are refused before decode.
     public var allowedContentTypes: Set<UTType>
@@ -45,7 +45,7 @@ public struct BarcodeDecodeConfig: Sendable {
     /// ~50 MP bounds the RGBA allocation to ~200 MB, catching the huge-canvas bomb.
     public static let defaultMaxAreaPx = 50_000_000
 
-    /// Decode wall-clock budget; on expiry the decoder reports `decoderUnavailable` (slow-loris guard).
+    /// Decode wall-clock budget; on expiry the decoder reports `decodeTimedOut` (slow-loris guard).
     public static let defaultDecodeTimeout: Duration = .milliseconds(5000)
 
     /// Still-image containers a card photo realistically arrives in; others are refused before decode.

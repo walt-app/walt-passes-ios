@@ -10,7 +10,18 @@ import UniformTypeIdentifiers
 /// The adversarial faithfulness corpus is its own suite, ``HostilePayloadFidelityTests``.
 @Suite("VisionBarcodeImageDecoder")
 struct VisionBarcodeImageDecoderTests {
-    private let decoder = VisionBarcodeImageDecoder()
+    private let decoder = VisionBarcodeImageDecoder(
+        config: BarcodeDecodeConfig(decodeTimeout: generousDecodeBudget))
+
+    /// An expired budget must surface as `decodeTimedOut`, not `decoderUnavailable`. The two are
+    /// different signals to the consumer's retry decision, and this is the only place the image
+    /// decoder's choice between them is checked.
+    @Test func expiredBudgetReportsDecodeTimedOut() async {
+        let decoder = VisionBarcodeImageDecoder(
+            config: BarcodeDecodeConfig(decodeTimeout: expiredDecodeBudget))
+        let png = BarcodeImageFactory.qrPNG("WALT-MEMBER-12345")
+        #expect(await decoder.decode(source: .data(png)) == .decodeFailed(reason: .decodeTimedOut))
+    }
 
     @Test func decodesQrToQrFormat() async {
         let png = BarcodeImageFactory.qrPNG("WALT-MEMBER-12345")

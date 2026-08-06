@@ -15,13 +15,20 @@ import Testing
 /// production decoder — the same pixel→symbol path the consumer's per-frame analyzer runs, minus
 /// the `CMSampleBuffer` capture glue the app strips before calling in.
 ///
-/// The timeout / ``DecodeFailureReason/decoderUnavailable`` branch is the shared
-/// ``withDecodeTimeout(_:timeoutValue:operation:)``, covered deterministically by
-/// ``DecodeTimeoutTests``; it is not re-tested here because forcing the frame decoder's internal
-/// Vision decode to overrun a near-zero budget races the decode and flakes under load.
+/// The shared timeout machinery is covered by ``DecodeTimeoutTests``; what is pinned here is the
+/// arm THIS decoder reports when the budget expires, which nothing else asserts.
 @Suite("VisionBarcodeFrameDecoder")
 struct VisionBarcodeFrameDecoderTests {
-    private let decoder = VisionBarcodeFrameDecoder()
+    private let decoder = VisionBarcodeFrameDecoder(decodeTimeout: generousDecodeBudget)
+
+    /// An expired budget must surface as `decodeTimedOut`, not `decoderUnavailable`. The two are
+    /// different signals to the consumer's retry decision, and this is the only place the frame
+    /// decoder's choice between them is checked.
+    @Test func expiredBudgetReportsDecodeTimedOut() async {
+        let decoder = VisionBarcodeFrameDecoder(decodeTimeout: expiredDecodeBudget)
+        let frame = BarcodeFrameFactory.qrFrame("WALT-LIVE-12345")
+        #expect(await decoder.decode(frame: frame) == .decodeFailed(reason: .decodeTimedOut))
+    }
 
     @Test func decodesQrFromFrame() async {
         let frame = BarcodeFrameFactory.qrFrame("WALT-LIVE-12345")

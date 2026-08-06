@@ -28,7 +28,8 @@ import Testing
 /// Code128 covers the ASCII control/scheme cases to prove the contract is not QR-specific.
 @Suite("HostilePayloadFidelity")
 struct HostilePayloadFidelityTests {
-    private let decoder = VisionBarcodeImageDecoder()
+    private let decoder = VisionBarcodeImageDecoder(
+        config: BarcodeDecodeConfig(decodeTimeout: generousDecodeBudget))
 
     @Test func rtlOverrideIsReturnedVerbatim() async {
         // A right-to-left override (U+202E) is the classic filename/URL spoof. The decoder must

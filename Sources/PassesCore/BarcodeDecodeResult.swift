@@ -47,6 +47,13 @@ public enum DecodeFailureReason: Sendable, CaseIterable {
     /// A symbol was found but its symbology is outside the `ScannableFormat` roster.
     case unsupportedBarcodeFormat
 
-    /// The decode engine could not be reached or timed out before returning a result.
+    /// The decode engine could not be reached, or failed outright when asked to run.
     case decoderUnavailable
+
+    /// The decode did not return within its wall-clock budget (the slow-loris guard on
+    /// barcode-decode-1). Kept distinct from `decoderUnavailable` because the two call for opposite
+    /// responses: an unavailable decoder will not succeed on retry, a timed-out one may. Retry is
+    /// worthwhile for transient contention, not for the input that timed out — a decode that wedges
+    /// the engine is not cancellable, so re-feeding it consumes another slot that never comes back.
+    case decodeTimedOut
 }

@@ -14,7 +14,8 @@ import UniformTypeIdentifiers
 /// or the wrong string — this suite is why the tables need no golden strings.
 @Suite("OneD encode -> Vision decode round-trip")
 struct OneDRoundTripTests {
-    private let decoder = VisionBarcodeImageDecoder()
+    private let decoder = VisionBarcodeImageDecoder(
+        config: BarcodeDecodeConfig(decodeTimeout: generousDecodeBudget))
 
     @Test func ean13RoundTrips() async throws {
         let png = try pngFor(payload: "4006381333931", format: .ean13)

@@ -58,12 +58,15 @@ jobs:
           swift test \
             --package-path .
 
-  # The cron sweep has no PR to turn red, so a failure surfaced nowhere and main sat
-  # broken for a week (ipass-42i). File an issue instead of failing silently.
-  alert-on-cron-failure:
-    name: Alert on cron failure
+  # Neither the cron sweep nor a push to main has a PR to turn red, which is how main
+  # sat broken for a week (ipass-42i). File an issue instead of failing silently. PR
+  # label runs are excluded: those already show their red check on the PR.
+  alert-on-unattended-failure:
+    name: Alert on unattended failure
     needs: build-and-test
-    if: failure() && github.event_name == 'schedule'
+    if: >-
+      failure() &&
+      (github.event_name == 'schedule' || github.event_name == 'push')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -78,32 +81,45 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Label keeps its original name on purpose: renaming it would orphan the lookup
+          # below and start filing a second standing issue alongside the existing one.
+          # `create` fails on an existing label, so `edit` is what actually applies the wording
+          # once the label is already there.
           gh label create ci-sweep-failure \
             --repo "$REPO" \
             --color B60205 \
-            --description "The scheduled full-ci sweep on main is failing" \
-            2>/dev/null || true
+            --description "An unattended full-ci run on main is failing" \
+            2>/dev/null \
+            || gh label edit ci-sweep-failure \
+              --repo "$REPO" \
+              --color B60205 \
+              --description "An unattended full-ci run on main is failing" \
+              2>/dev/null || true
 
           body=$(cat <<EOF
-          The scheduled \`full-ci\` sweep failed on \`main\`.
+          \`full-ci\` failed on \`main\` (event: $GITHUB_EVENT_NAME).
 
           - Run: $RUN_URL
           - Commit: \`$GITHUB_SHA\`
 
           Filed automatically so a red macOS gate cannot go unnoticed (ipass-42i).
-          Close this once the sweep is green again.
+          Close this once main is green again.
           EOF
           )
 
+          # Degrade to filing a fresh issue rather than aborting: under `set -e` a lookup
+          # blip would redden a job nobody is watching, which is the failure mode this
+          # job exists to prevent.
           existing=$(gh issue list --repo "$REPO" --state open \
-            --label ci-sweep-failure --limit 1 --json number --jq '.[0].number // empty')
+            --label ci-sweep-failure --limit 1 --json number --jq '.[0].number // empty' \
+            || echo "")
 
-          # Comment on the standing issue rather than filing a new one each Monday.
+          # Comment on the standing issue rather than filing a new one per failed run.
           if [ -n "$existing" ]; then
             gh issue comment "$existing" --repo "$REPO" --body "$body"
           else
             gh issue create --repo "$REPO" \
-              --title "full-ci (macOS) cron sweep is failing on main" \
+              --title "full-ci (macOS) is failing on main" \
               --label ci-sweep-failure \
               --body "$body"
           fi

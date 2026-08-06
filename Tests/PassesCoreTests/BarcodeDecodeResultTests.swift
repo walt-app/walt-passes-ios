@@ -52,8 +52,8 @@ struct BarcodeDecodeResultTests {
         )
     }
 
-    @Test func decodeFailureReasonHasAllFiveBuckets() {
-        #expect(DecodeFailureReason.allCases.count == 5)
+    @Test func decodeFailureReasonHasAllSixBuckets() {
+        #expect(DecodeFailureReason.allCases.count == 6)
         #expect(
             Set(DecodeFailureReason.allCases) == [
                 .sourceUnreadable,
@@ -61,7 +61,17 @@ struct BarcodeDecodeResultTests {
                 .imageTooLarge,
                 .unsupportedBarcodeFormat,
                 .decoderUnavailable,
+                .decodeTimedOut,
             ]
+        )
+    }
+
+    /// A timeout and an unreachable decoder are different signals: one is a load condition the
+    /// same input may survive on retry, the other is not (ipass-f8p).
+    @Test func timedOutIsDistinctFromDecoderUnavailable() {
+        #expect(
+            BarcodeDecodeResult.decodeFailed(reason: .decodeTimedOut)
+                != .decodeFailed(reason: .decoderUnavailable)
         )
     }
 }

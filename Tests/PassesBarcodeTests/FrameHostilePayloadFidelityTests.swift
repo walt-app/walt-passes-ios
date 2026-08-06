@@ -27,7 +27,7 @@ import Testing
 /// Code128 covers the ASCII control/scheme cases to prove the contract is not QR-specific.
 @Suite("FrameHostilePayloadFidelity")
 struct FrameHostilePayloadFidelityTests {
-    private let decoder = VisionBarcodeFrameDecoder()
+    private let decoder = VisionBarcodeFrameDecoder(decodeTimeout: generousDecodeBudget)
 
     @Test func rtlOverrideIsReturnedVerbatim() async {
         await assertQrRoundTrips("invoice\u{202E}gnp.exe")

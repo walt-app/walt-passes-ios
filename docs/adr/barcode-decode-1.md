@@ -81,3 +81,98 @@ Every compensating control from the original decision (bounded still-image decod
 timeout, faithful-payload posture, label-never-autofilled) carries over unchanged; the roster
 clamp now matches Android's `POSSIBLE_FORMATS` pin exactly. Encode-side parity lands in the same
 change (`passes-ui-2`, revised).
+
+## Update 2026-08-04 (ipass-f8p): the decode timeout runs on lanes this module owns
+
+The `Task` timeout above did not hold the property it claimed. It scheduled the decode with
+`Task.detached`, which runs on the shared Swift **cooperative pool** — a fixed-width pool that
+does not grow — while the deadline was a `Task.sleep` **timer** that fires on wall-clock time
+regardless. The two racers were not on equal footing: a caller that parks the pool's threads (the
+in-repo example is `SignatureVerifier.runBlocking`'s `semaphore.wait()`, whose own comment names
+this hazard) could keep the decode from ever *starting*, while the deadline fired on schedule and
+won by default.
+
+The guard therefore reported a timeout for decodes that had not run. It measured thread
+availability, not decode duration. `full-ci` surfaced it unambiguously: a test whose entire
+operation is `{ "REAL" }` — microseconds of CPU — lost a **5 second** race. Reproduced locally at
+100% under a parked pool.
+
+**Change (human-approved §7, 2026-08-04, recorded on ipass-f8p).** `withDecodeTimeout` submits the
+decode to a bank of dedicated serial `DispatchQueue`s that `PassesBarcode` owns, and schedules the
+deadline on a separate owned lane. Measured with the pool parked: work submitted via
+`Task.detached`, a *concurrent* `DispatchQueue`, or `DispatchQueue.global` had not begun after 20s;
+a dedicated serial queue began in 0.1ms. Concurrent and global queues draw from the same thread
+pool the cooperative pool exhausts, so only dedicated lanes are immune — this is why the bank is
+serial queues rather than one concurrent queue. A bank rather than a single lane because the
+still-image and live-frame paths decode concurrently, and one lane would trade starvation-by-pool
+for starvation-by-queue (measured: 12 concurrent 0.3s decodes took 3.6s of a 5s budget on one
+lane, 0.6s across a bank). Lane width is sized to in-flight decodes rather than to cores, since
+Vision decodes out of process and a lane waits on that service rather than burning one: tying the
+width to `activeProcessorCount` left ~41 concurrent decodes queued ~14 deep on a 3-core runner and
+blew the budget by queueing alone.
+
+**A decode never waits behind another decode**, so only its own duration can exhaust its budget.
+A free lane is reused; when every lane is occupied the work spills to a transient thread rather
+than queueing. This is not a refinement — a bounded bank alone reproduces the defect at a higher
+threshold, and it did: with 16 lanes the gate still failed roughly one run in three, an instant
+operation reporting `decodeTimedOut` against a 5s budget purely because it queued. Occupied lanes
+are the normal case, not a corner: a timed-out decode is orphaned but keeps running, since Vision
+`perform` is non-cancellable.
+
+**Spilling is capped at 64 threads**, and an earlier draft of this entry was wrong to claim the
+thread count was "bounded by concurrent demand, which the app controls" and therefore not
+attacker-reachable. It is reachable. Because orphaned decodes never release, in-flight count is
+cumulative rather than concurrent: an image crafted to wedge Vision — untrusted input, and exactly
+the slow-loris case this guard exists for — re-fed by the per-frame scan loop, mints a permanent
+thread per frame. Past the ceiling decodes queue again, which reintroduces false timeouts in that
+pathological tail. `LanePlacementTests.spillsOnlyUntilTheCeiling` pins the ceiling, and
+`theBankCannotOutgrowItsDocumentedThreadCeiling` pins the total: **at most 80 live decode threads**,
+16 lanes plus the 64-thread spill.
+
+Be precise about what that tail costs, because an earlier draft of this paragraph was wrong a second
+time: it called the queueing tail "a degraded decode" against "a crash" for unbounded threads. Both
+ends are a crash. The queue past the ceiling has no depth cap, and each queued submission retains its
+payload — a `CGImage` up to the ~50MP `BoundedImageDecode` limit, or a camera `CVPixelBuffer` — behind
+a lane head that a wedged decode never releases. So the trade is bounded threads for unbounded
+retention, and the far end is jetsam rather than thread exhaustion. It is still the better end of the
+trade (a thread costs its stack *plus* whatever it retains), and it is **not a regression**: before
+this change the same closures queued unboundedly on the cooperative pool and retained the same
+buffers. Capping the queue and refusing past it is filed as ipass-ba3.
+
+The bank is process-global and shared by the still-image and live-frame decoders, and an orphaned
+decode never returns its slot, so occupancy is cumulative for the life of the process. Enough wedging
+inputs through the still-image path can therefore starve the live-frame path permanently. Isolating
+the two banks is filed as ipass-9tv.
+
+Lanes track decode **depth**, not a busy flag. Once the ceiling queues a second decode onto a lane,
+a flag under-reports: the first decode clears it on completion while the queued one is still running
+there, so the lane reads free and the next submit queues behind untracked work. That false timeout
+outlives the pressure that caused it — measured 16/16 decodes timing out with idle lanes available,
+against 0/16 once lanes count depth.
+
+Placement is a value type (`LanePlacement`) rather than state tangled into the queues, so these
+invariants are pinned deterministically at two lanes and a ceiling of one, in
+`LanePlacementTests`. The measurements above came from integration tests that saturated the real
+bank with 80 live holders; that is how the leak was found, but as a permanent gate it was both
+slow and unreliable — on a 3-core runner "80 holders must start" is an assertion about the runner,
+and it failed there on correct code. One end-to-end check
+(`decodeDoesNotQueueBehindSaturatedLanes`) remains for the wiring.
+
+What does NOT change: the timeout still bounds only the caller's *wait*; Vision `perform` remains
+synchronous and non-cancellable, so a hung decode is still orphaned rather than killed, and its
+result is still discarded. The roster clamp, bounded still-image decode, faithful-payload posture,
+and label-never-autofilled guard are untouched.
+
+**`DecodeFailureReason.decodeTimedOut` added**, splitting the timeout out of `decoderUnavailable`.
+The two called for opposite responses while sharing one value: an unavailable decoder will not
+succeed on retry, a timed-out one is a load signal and the same input may decode fine later.
+Conflating them also cost a real misdiagnosis — a run of timeouts was read as an absent Vision
+framework (ipass-42i) — because no value could distinguish the two. Public enum change on
+`BarcodeDecodeResult`; `decoderUnavailable` keeps its original meaning, a Vision `perform` failure.
+
+Honest residual: this fixes which *executor* the decode runs on, not the fact that resuming the
+caller still needs the caller's own executor. If the caller's pool is blocked, it observes the
+result late — the guard bounds the wait it controls, and cannot bound delivery into a blocked
+caller. `DecodeTimeoutTests.decodeNeverRunsOnTheCooperativePool` pins that the decode runs on a
+context this module owns — a lane, or a named overflow thread, never the cooperative pool — and
+`expiredBudgetReportsDecodeTimedOut` on each decoder pins the reported arm.
