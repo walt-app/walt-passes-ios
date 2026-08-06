@@ -13,10 +13,10 @@ private struct DecodeContext: Sendable {
 /// analogue. The security-relevant property is that a slow/hung operation stops blocking the caller
 /// at the budget and yields the timeout value; the fast path must return the real result untouched.
 /// `.serialized` orders the tests *in this suite* against the process-global banks:
-/// `decodeDoesNotQueueBehindSaturatedLanes` holds every still-image lane and 16 overflow threads
-/// until it finishes. It does NOT hold off other suites — `VisionBarcodeImageDecoderTests` and the
+/// `decodeDoesNotQueueBehindSaturatedLanes` holds every still-image lane and 4 overflow threads until
+/// it finishes. It does NOT hold off other suites — `VisionBarcodeImageDecoderTests` and the
 /// hostile-payload suites drive the real decoders in parallel with this one — so the hog count has to
-/// leave the still-image bank headroom for them. It currently leaves 16 of 40 slots.
+/// leave the still-image bank headroom for them, 28 of 40 slots as sized.
 @Suite("DecodeTimeout", .serialized)
 struct DecodeTimeoutTests {
     @Test func fastOperationReturnsItsResult() async {
@@ -63,10 +63,12 @@ struct DecodeTimeoutTests {
     @Test func decodeDoesNotQueueBehindSaturatedLanes() async {
         let gate = DispatchSemaphore(value: 0)
         let occupied = DispatchSemaphore(value: 0)
-        // Occupy well past the lane count so the overflow path is what serves the decode below.
-        // Kept under the bank's `decodeLaneCount + decodeMaxOverflowThreads` cap: at the cap the
-        // bank refuses, which is a different property (pinned deterministically in LanePlacementTests).
-        let hogs = 24
+        // Four past the lane count, so the decode below must spill. Deliberately modest: this shares
+        // the process-global still-image bank with every sibling suite that decodes an image, and
+        // since ipass-ba3 an over-subscribed bank REFUSES rather than queueing, so a hog that loses
+        // the race never runs and never signals. 24 hogs left 16 slots of headroom and failed here on
+        // CI; 12 leaves 28.
+        let hogs = 12
         for _ in 0..<hogs {
             Task.detached {
                 _ = await withDecodeTimeout(.seconds(60), on: .stillImage, timeoutValue: "TIMED_OUT") {
@@ -77,15 +79,16 @@ struct DecodeTimeoutTests {
             }
         }
         // Asserted, not discarded: an unsaturated bank would never exercise the spill path. Every
-        // hog, so the bank is settled rather than still minting spill threads under the probes.
-        #expect(await awaitSignals(occupied, upTo: hogs, seconds: 20) == hogs)
-        defer { for _ in 0..<hogs { gate.signal() } }
+        // hog, so the bank is settled rather than still minting spill threads under the probe.
+        let started = await awaitSignals(occupied, upTo: hogs, seconds: 20)
+        #expect(started == hogs, "hogs that never started were refused, or the runner is saturated")
+        defer { for _ in 0..<started { gate.signal() } }
 
-        // Every lane and 16 of the 32 spill threads are now held, so these must spill rather than
+        // Every lane and 4 of the 32 spill threads are now held, so this must spill rather than
         // queue. What discriminates is the hogs' 60s hold, not a tight budget: a queued decode
         // cannot return before them, so ANY budget well under 60s catches it. An earlier 500ms
-        // budget also measured how fast the runner mints the 17th thread, and failed on the 3-core
-        // CI runner while passing locally — precision this assertion never needed.
+        // budget also measured how fast the runner mints a thread, and failed on the 3-core CI
+        // runner while passing locally — precision this assertion never needed.
         let stillImage = await withDecodeTimeout(.seconds(5), on: .stillImage, timeoutValue: "TIMED_OUT") {
             "REAL"
         }

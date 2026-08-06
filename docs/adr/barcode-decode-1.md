@@ -261,6 +261,16 @@ code. It is pinned instead by shrinking the bank until saturation is determinist
 single holder. That covers refusal, isolation, and the wiring — `DecodeLanes.bank(.stillImage) !==
 DecodeLanes.bank(.liveFrame)` — without a thread storm.
 
+Refusal has a consequence for the test suite that is worth recording, because it caught this branch
+out. `decodeDoesNotQueueBehindSaturatedLanes` holds slots in the *real* still-image bank, which every
+sibling suite that decodes an image also draws from, and `.serialized` orders only this suite's own
+tests. Before the cap, over-subscribing that bank merely queued: a hog that lost the race started late
+and the test still passed. Now it is refused outright, never runs, and never signals — so the same
+over-subscription is a hard failure. Its 24 hogs left 16 of 40 slots for everyone else and failed on
+CI; 12 hogs leave 28 and still spill past the 8 lanes, which is all the test needs. The general
+lesson: a shared-resource test that used to degrade under load now breaks under it, so anything
+asserting against the production banks has to leave real headroom.
+
 An earlier version of this entry credited a cross-bank probe inside
 `decodeDoesNotQueueBehindSaturatedLanes` as half the evidence. It was not evidence of anything: 24
 hogs leave 16 of the still-image bank's 40 slots free, and the pre-split bank of 80 left 56, so a
