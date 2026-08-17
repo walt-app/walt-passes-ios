@@ -51,15 +51,15 @@ struct BarcodeEncoderTests {
         }
     }
 
-    @Test func qrFullCapAlphanumericPayloadStillEncodes() {
-        // Over-rejection guard: 2000 alphanumeric-mode chars exceed the byte-mode
-        // ceiling count but fit alphanumeric mode (~3,391 chars at v40-M), so the
-        // byte-mode pre-check must not fire.
-        let payload = String(repeating: "WALT7 ", count: 333) + "AB"
-        #expect(payload.count == 2_000)
+    @Test func qrAlphanumericPayloadOverTheByteCeilingStillEncodes() {
+        // Over-rejection guard for the alphanumeric-mode gate itself: 2400 chars weigh
+        // 2400 bytes — past the byte-mode ceiling — but fit alphanumeric mode (~3,391
+        // chars at v40-M). Simplifying refuseBeforeWriter to a bare byte-count check
+        // turns this payload into a false payloadTooDense.
+        let payload = String(repeating: "A", count: 2_400)
         let result = BarcodeEncoder.encode(payload: payload, format: .qr)
         guard case .success = result else {
-            Issue.record("full-cap alphanumeric QR payload should encode, got \(result)")
+            Issue.record("over-ceiling alphanumeric QR payload should encode, got \(result)")
             return
         }
     }

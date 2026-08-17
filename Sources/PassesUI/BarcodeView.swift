@@ -62,13 +62,9 @@ internal enum BarcodeRenderer {
     }
 
     static func cgImage(payload: String, format: ScannableFormat) -> CGImage? {
-        // One encode path per symbology: `PassesCore.BarcodeEncoder` owns both the
-        // CoreImage generators (QR, Code128) and the hand-rolled 1D trio (ADR
-        // `passes-ui-2`, revised), and the storage layer's trial-encode gate runs the
-        // same code — so save-time approval and draw-time render cannot diverge
-        // (wpass-1kg). A failed encode keeps its pre-gate visual: the 1D trio degrades
-        // to the grey placeholder — never a wrong-scanning symbol — while QR/Code128
-        // return nil (the "failed to render" tile).
+        // All five formats encode through `PassesCore.BarcodeEncoder` — the same code
+        // the storage trial-encode gate runs (ADR `passes-ui-2`, revised). Failure keeps
+        // its pre-gate visual: 1D degrades to the grey placeholder, QR/Code128 to nil.
         switch BarcodeEncoder.encode(payload: payload, format: format) {
         case .success(.image(let image)):
             return image

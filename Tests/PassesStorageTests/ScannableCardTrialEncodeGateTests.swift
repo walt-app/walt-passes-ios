@@ -65,14 +65,10 @@ struct ScannableCardTrialEncodeGateTests {
         #expect(card.payload == "WALT-0042")
     }
 
-    @Test func validatorRejectionStillWinsOverTheEncoder() async {
+    @Test func validatorRejectionStillWinsOverTheEncoder() async throws {
         // Non-ASCII Code128 fails both the validator's charset rule and the encoder;
         // the gate runs validate-then-encode, so the validator's arm must surface.
-        let repository = try? makeRepository()
-        guard let repository else {
-            Issue.record("repository setup failed")
-            return
-        }
+        let repository = try makeRepository()
         let result = await repository.createScannableCard(
             input: ScannableCardCreateInput(payload: "café", format: .code128, label: "Card")
         )
@@ -82,16 +78,19 @@ struct ScannableCardTrialEncodeGateTests {
         }
     }
 
-    @Test func fullCapAlphanumericQrPayloadStillPersists() async throws {
-        // Over-rejection guard at the gate: 2000 alphanumeric-mode chars exceed the
-        // byte-mode ceiling count but fit alphanumeric mode, so the save must succeed.
+    @Test func fullLengthQrPayloadStillPersists() async throws {
+        // Full-length happy path through the gate: the validator's 2000-char QR cap
+        // keeps an all-alphanumeric payload under the byte-mode ceiling, so no gate
+        // arm can fire here. (The encoder's own over-rejection guard — an alphanumeric
+        // payload past the ceiling — lives in BarcodeEncoderTests; the validator cap
+        // makes it unreachable through this repository.)
         let repository = try makeRepository()
         let payload = String(repeating: "WALT7 ", count: 333) + "AB"
         let result = await repository.createScannableCard(
             input: ScannableCardCreateInput(payload: payload, format: .qr, label: "Long card")
         )
         guard case .success = result else {
-            Issue.record("full-cap alphanumeric QR payload should persist, got \(result)")
+            Issue.record("full-length QR payload should persist, got \(result)")
             return
         }
     }

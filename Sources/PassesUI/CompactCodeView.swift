@@ -91,9 +91,8 @@ public struct CompactCodeView: View {
 
     /// Encoder entry for the compact path. Unlike the detail surfaces, an
     /// encode failure returns nil (failure tile), never the grey placeholder —
-    /// internal so tests pin the routing. Routes through the kernel's
-    /// `BarcodeEncoder` (the same code the storage trial-encode gate runs), so
-    /// an invalid payload cannot surface the placeholder here either.
+    /// internal so tests pin the routing. All formats route through
+    /// `PassesCore.BarcodeEncoder` (ADR `passes-ui-2`, revised).
     internal static func renderImage(payload: String, format: ScannableFormat) -> CGImage? {
         switch BarcodeEncoder.encode(payload: payload, format: format) {
         case .success(.image(let image)):

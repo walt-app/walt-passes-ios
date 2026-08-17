@@ -38,6 +38,12 @@ generator calls moved down from `PassesUI.BarcodeRenderer` into the encoder. Bot
 paths (`BarcodeRenderer.cgImage(payload:format:)` and `CompactCodeView.renderImage`) route
 through it, and so does the new trial-encode gate on the storage layer's scannable-card
 write paths (wpass-1kg analogue) — so save-time approval and draw-time render judge
-encodability with the same code and cannot diverge. Failure visuals are unchanged: the 1D
+encodability with the same code and cannot diverge. Failure visuals are unchanged — the 1D
 trio degrades to the grey placeholder on detail surfaces; QR / Code128 and the compact path
-keep their failure tiles.
+keep their failure tiles — with one deliberate exception: an empty QR payload now renders
+the failure tile instead of the empty-but-scannable symbol `CIQRCodeGenerator` happily
+emits (the encoder refuses an empty payload uniformly for every format; a persisted row can
+never be empty, so this is reachable only with a caller-constructed in-memory card).
+
+Rows already on disk that clear the validator but fail the encode (the CJK-density case)
+are not backfilled: they degrade to the failure tile and stay editable to a valid payload.

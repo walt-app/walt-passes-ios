@@ -21,7 +21,9 @@ import Foundation
 /// `OneDimensionalBarcodeEncoder`; QR and Code128 own the CoreImage generators here
 /// (moved down from `PassesUI.BarcodeRenderer`, which now routes through this entry).
 /// QR error correction is pinned at level M — `ScannableFormatConstraints`' byte-mode
-/// ceiling was derived against that pin; changing one means re-deriving the other.
+/// ceiling was derived against that pin; changing one means re-deriving the other, and
+/// the pkpass `Barcode` path (`BarcodeRenderer.cgImage(message:format:)`) carries its
+/// own generator calls and its own level-M pin that must move in lockstep.
 public enum BarcodeEncoder {
 
     public static func encode(payload: String, format: ScannableFormat) -> EncodeResult {
@@ -98,8 +100,12 @@ public enum BarcodeEncoder {
             return nil
         }
         guard let output = filter?.outputImage else { return nil }
-        return CIContext().createCGImage(output, from: output.extent)
+        return ciContext.createCGImage(output, from: output.extent)
     }
+
+    /// Shared context: construction costs real resources on every save otherwise, and
+    /// `CIContext` is documented thread-safe.
+    private static let ciContext = CIContext()
 
     /// Kernel-authored refusal wording. Unlike Android, no third-party message exists to
     /// carry: CoreImage yields no reason and the 1D encoder returns bare nil, so `detail`
@@ -122,10 +128,8 @@ public enum EncodeResult: Sendable {
 
 /// What the encoder produced: the 1D trio yields a module matrix the renderer
 /// rasterizes; the CoreImage formats yield the generator's module-per-pixel image
-/// directly. `@unchecked Sendable` per the kernel policy: `CGImage` is an immutable,
-/// documented-thread-safe object (its pixel data cannot change after creation), and
-/// `BarcodeMatrix` is a value type.
-public enum EncodedBarcodeSymbol: @unchecked Sendable {
+/// directly.
+public enum EncodedBarcodeSymbol: Sendable {
     case matrix(BarcodeMatrix)
     case image(CGImage)
 }

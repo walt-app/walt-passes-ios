@@ -340,23 +340,13 @@ public final class GrdbPassRepository: PassRepository, @unchecked Sendable {
         scannableBroadcaster.stream()
     }
 
-    /// The approval gate both scannable-card write paths share: kernel validation, then a
-    /// trial encode of what the validator approved (wpass-1kg analogue). The trial encode
-    /// is what keeps a card nothing can render off disk — a payload can clear
-    /// `ScannableCardInputValidator` and still overflow its symbology (the length caps
-    /// count characters while writer capacity is spent in bytes; see
-    /// `ScannableFormatConstraints`' ceiling doc), and without an encode here the row
-    /// persists and first surfaces as a blank barcode with no reason attached.
-    ///
-    /// The encoder refusal re-enters the kernel result family as
-    /// `ScannableCardCreateResult.encoderFailure`, so the existing single
-    /// `storageRejectionReason` mapping covers every arm — validator and encoder alike.
-    /// The encoded symbol is discarded (the renderer re-encodes at draw time); cost is
-    /// one encode per save on a non-hot path.
-    ///
-    /// The `ScannableCardId` is a placeholder: the validator does not read it, and both
-    /// write paths take only payload / format / label off the approved card — storage
-    /// mints the real id at insert and preserves it across an update.
+    /// The approval gate both scannable-card write paths share: kernel validation, then
+    /// a trial encode of what the validator approved, with the encoder refusal folded
+    /// onto the same `storageRejectionReason` mapping as `.encoderFailure` (wpass-1kg;
+    /// rationale in `BarcodeEncoder`'s doc and ADR `passes-ui-2`). The encoded symbol is
+    /// discarded — one encode per save on a non-hot path. The `ScannableCardId` is a
+    /// placeholder: the validator does not read it; storage mints the real id at insert
+    /// and preserves it across an update.
     private func approveScannableCard(
         input: ScannableCardCreateInput, nowEpochMs: Int64
     ) -> StorageResult<ScannableCard> {
