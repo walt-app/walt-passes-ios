@@ -94,9 +94,10 @@ enum CodeRenderPolicy: Equatable {
     /// letterboxing down to at least `minHeight`. Floor derived from the
     /// writer's measured output at the pinned EC (2.7-3.5:1 across the
     /// payload range): 320 wide yields 91-117 natural height, so the 90
-    /// floor never distorts and only guards a degenerate parent.
-    /// `ScannableCardTile`'s hard 132 x 40 frame letterboxes the same range
-    /// to =46pt height, within its bounds.
+    /// floor never distorts and only guards a degenerate parent. Inside
+    /// `ScannableCardTile`'s hard 132 x 40 frame the floor over-reports
+    /// height, exactly as the 1D formats' fixed bar band already does in
+    /// that slot — the tile inherits, not worsens, that behavior.
     case fitToWidth(minHeight: CGFloat)
 }
 

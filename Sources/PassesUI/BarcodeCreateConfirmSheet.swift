@@ -179,14 +179,9 @@ private struct BarcodeCreateBody: View {
 
 extension QrPayloadKind {
     /// Whether `BarcodeCreateConfirmSheet` should be invoked for this payload in
-    /// `format`. False for `plainText` (nothing to confirm) and for the 1D symbologies
-    /// (no scanner auto-acts on them). `format` is a parameter rather than an assumed QR
-    /// because PDF417 and Aztec carry the same actionable URIs QR does, and assuming the
-    /// format is the C4 gate's silent-bypass risk (ios-pjs.17, wlt-9o3x analogue) —
-    /// taking it here puts the decision behind `canCarryActionablePayload()`'s exhaustive
-    /// switch, so a roster addition is a compile error at one kernel site rather than a
-    /// gate that quietly stops covering a format. The app must call this, never carry a
-    /// copy.
+    /// `format`: false for `plainText` and for formats that cannot carry an actionable
+    /// payload (rationale on `canCarryActionablePayload()`). The app must call this,
+    /// never carry a copy (ios-pjs.17).
     public func requiresCreateConfirmation(format: ScannableFormat) -> Bool {
         guard format.canCarryActionablePayload() else { return false }
         if case .plainText = self { return false }

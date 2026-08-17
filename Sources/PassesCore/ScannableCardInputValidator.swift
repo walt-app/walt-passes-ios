@@ -21,11 +21,25 @@ public enum ScannableCardInputValidator {
         id: ScannableCardId,
         createdAt: PassInstant
     ) -> ScannableCardCreateResult {
+        validate(
+            input: input, id: id, createdAt: createdAt,
+            decodeOnly: ScannableFormatConstraints.decodeOnly)
+    }
+
+    /// Test seam: `decodeOnly` is injectable so the refusal mechanism stays testable
+    /// while the production set is empty (Android's "the decode-refusal test must not go
+    /// vacuous when the filtered set empties" rule).
+    static func validate(
+        input: ScannableCardCreateInput,
+        id: ScannableCardId,
+        createdAt: PassInstant,
+        decodeOnly: Set<ScannableFormat>
+    ) -> ScannableCardCreateResult {
         // Decode-only formats are refused before the field checks: the format is unusable
         // regardless of what was typed (wpass-pl7.1 lesson). Storage rehydrates rows
         // through this validator too, so decode-only deliberately gates reads as well —
         // a row demoted to decode-only drops from the list rather than rendering blank.
-        if ScannableFormatConstraints.decodeOnly.contains(input.format) {
+        if decodeOnly.contains(input.format) {
             return .unsupportedFormat(format: input.format)
         }
         let trimmedLabel = input.label.trimmingCharacters(in: .whitespacesAndNewlines)

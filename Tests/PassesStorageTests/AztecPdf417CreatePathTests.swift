@@ -39,6 +39,31 @@ struct AztecPdf417CreatePathTests {
         }
     }
 
+    @Test func updateRefusesNonLatin1AndLeavesTheRow() async throws {
+        let repository = try makeRepository()
+        let created = await repository.createScannableCard(
+            input: ScannableCardCreateInput(payload: "M1DOE/JANE", format: .aztec, label: "Flight")
+        )
+        guard case .success(let id) = created else {
+            Issue.record("setup create failed: \(created)")
+            return
+        }
+        let update = await repository.updateScannableCard(
+            id: id,
+            input: ScannableCardCreateInput(payload: "東京メトロ", format: .aztec, label: "Flight")
+        )
+        guard case .failure(.scannableCardRejected(.invalidPayload(.wrongCharset))) = update else {
+            Issue.record("CJK update should be wrongCharset, got \(update)")
+            return
+        }
+        let loaded = await repository.loadScannableCard(id: id)
+        guard case .success(let card) = loaded else {
+            Issue.record("card should survive the rejected update, got \(loaded)")
+            return
+        }
+        #expect(card.payload == "M1DOE/JANE")
+    }
+
     @Test func nonLatin1PayloadIsRefusedAsWrongCharset() async throws {
         let repository = try makeRepository()
         let result = await repository.createScannableCard(

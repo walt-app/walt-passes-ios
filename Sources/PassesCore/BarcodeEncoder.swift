@@ -106,6 +106,7 @@ public enum BarcodeEncoder {
             filter = CIFilter(name: "CICode128BarcodeGenerator")
             filter?.setValue(data, forKey: "inputMessage")
         case .pdf417:
+            // Unreachable nil: refuseBeforeWriter vets Latin-1 representability first.
             guard let latin1 = payload.data(using: .isoLatin1) else { return nil }
             filter = CIFilter(name: "CIPDF417BarcodeGenerator")
             filter?.setValue(latin1, forKey: "inputMessage")
