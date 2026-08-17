@@ -4,13 +4,14 @@ import Testing
 
 @testable import PassesBarcode
 
-/// Pins the QR charset posture (ios-pjs.20, wpass-qj6 analogue, human-approved 2026-08-17):
-/// CoreImage emits raw UTF-8 bytes with NO ECI declaration, and iOS keeps that as the
-/// de-facto mobile convention rather than hand-rolling an ECI-emitting encoder. These cases
-/// prove non-Latin-1 payloads decode back verbatim on the production Vision path. Residual,
-/// documented risk: a strictly spec-conformant reader defaults ECI-less symbols to Latin-1
-/// and shows mojibake for non-ASCII payloads; ASCII payloads are unambiguous everywhere.
-/// See `BarcodeEncoder`'s charset doc and ADR `passes-ui-2`.
+/// Pins the QR charset posture (ios-pjs.20, wpass-qj6 analogue; full record in ADR
+/// `passes-ui-2`, human-approved 2026-08-17): non-Latin-1 payloads round-trip verbatim
+/// through the production `BarcodeEncoder` -> Vision path, proving both ends agree on
+/// UTF-8. The ECI-absence half of the posture is pinned by
+/// `qrByteModeCeilingIsExactAtTheBoundary` (an emitted ECI header would cost the 2331st
+/// byte), not here — Vision decodes symbols with and without the header alike. Distinct
+/// from `HostilePayloadFidelityTests`, which pins decode faithfulness on hostile content;
+/// this suite pins the charset contract.
 @Suite("QR charset round-trip")
 struct QrCharsetRoundTripTests {
     private let decoder = VisionBarcodeImageDecoder(
@@ -31,7 +32,14 @@ struct QrCharsetRoundTripTests {
     }
 
     private func assertQrRoundTrips(_ payload: String) async {
-        let png = BarcodeImageFactory.qrPNG(payload)
+        // Encode through the production BarcodeEncoder, not the factory's test-local
+        // generator, so a charset change in the real encoder fails these tests.
+        guard case .success(.image(let symbol)) = BarcodeEncoder.encode(payload: payload, format: .qr)
+        else {
+            Issue.record("production encoder should encode \(payload)")
+            return
+        }
+        let png = BarcodeImageFactory.png(symbol: symbol)
         #expect(await decoder.decode(source: .data(png)) == .decodedBarcode(payload: payload, format: .qr))
     }
 }

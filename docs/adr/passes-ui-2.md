@@ -59,7 +59,11 @@ UTF-8-without-ECI** as the de-facto mobile convention.
 
 Evidence: `QrCharsetRoundTripTests` round-trips Android's original defect payload
 ("café — naïve — 東京"), CJK-only, and supplementary-plane payloads verbatim through the
-production Vision decode path. Residual, accepted risk: a strictly spec-conformant reader
+production `BarcodeEncoder` -> Vision path — proving the two ends agree on UTF-8. The
+ECI-absence claim itself is pinned by `qrByteModeCeilingIsExactAtTheBoundary`: its
+2331-byte success arm fails if the generator ever spends capacity on an ECI header
+(Vision decodes symbols with and without the header alike, so the round-trip suite
+cannot detect one). Residual, accepted risk: a strictly spec-conformant reader
 defaults ECI-less symbols to Latin-1 and shows mojibake for non-ASCII payloads (ASCII is
 unambiguous everywhere). Capacity consequence: the v40-M byte-mode ceiling stays 2331 on
 iOS where Android's ECI header lowers it to 2330 — `qrByteModeCeilingIsExactAtTheBoundary`

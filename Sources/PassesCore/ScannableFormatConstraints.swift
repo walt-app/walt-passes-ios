@@ -102,11 +102,10 @@ enum ScannableFormatConstraints {
     /// matching the underlying encoder's English exception text. ECC-M was chosen at the
     /// encoder; if that pin changes, this constant must change in lockstep.
     ///
-    /// **Deliberately one byte above Android's 2330** (ios-pjs.20, human-approved
-    /// 2026-08-17): Android's encoder emits a UTF-8 ECI header whose 12 bits cost one
-    /// byte of v40-M capacity; the CoreImage generator emits no ECI, so iOS keeps the
-    /// full spec-table 2331. `qrByteModeCeilingIsExactAtTheBoundary` pins the number
-    /// against the live generator.
+    /// **Deliberately one byte above Android's 2330**: Android's UTF-8 ECI header costs
+    /// one byte of v40-M capacity; the CoreImage generator emits no ECI (ios-pjs.20, ADR
+    /// `passes-ui-2`). `qrByteModeCeilingIsExactAtTheBoundary` pins the number against
+    /// the live generator.
     ///
     /// **Mode-scoped.** QR's numeric and alphanumeric modes have larger ceilings (~5,596
     /// digits, ~3,391 alphanumeric chars at v40-M). The encoder gates this byte-mode
