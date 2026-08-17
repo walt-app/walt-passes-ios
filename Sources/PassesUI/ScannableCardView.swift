@@ -2,11 +2,10 @@ import PassesCore
 import PassesUICore
 import SwiftUI
 
-/// Renders a `ScannableCard`'s barcode as a 1-bit-per-module raster: CoreImage
-/// generators for QR + Code128, the kernel's hand-rolled
-/// `OneDimensionalBarcodeEncoder` for EAN-13 / UPC-A / Code39 (ADR
-/// `passes-ui-2`, revised). A structurally invalid 1D payload degrades to the
-/// grey placeholder so the surface still composes.
+/// Renders a `ScannableCard`'s barcode as a 1-bit-per-module raster through
+/// `PassesCore.BarcodeEncoder` (ADR `passes-ui-2`, revised). A structurally
+/// invalid 1D payload degrades to the grey placeholder so the surface still
+/// composes.
 ///
 /// Minimum on-screen sizes mirror `BarcodeView` so both barcode surfaces stay
 /// consistent at gate distance: 240 pt square for QR, 320 x 96 pt for the four

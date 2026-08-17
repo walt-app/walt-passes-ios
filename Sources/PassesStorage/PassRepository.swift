@@ -136,17 +136,24 @@ public protocol PassRepository: Sendable {
     /// point: a validation rejection bubbles up as `StorageError.scannableCardRejected`
     /// with the typed reason preserved, never as a generic infra failure, and the row
     /// never reaches disk.
+    ///
+    /// An approved input is then trial-encoded with the kernel's `BarcodeEncoder` before
+    /// the write, and an encoder refusal is rejected the same way, under
+    /// `ScannableCardRejectionReason.encoderFailure`. The length caps cannot decide this
+    /// on their own (`ScannableFormatConstraints`' ceiling doc derives why), and without
+    /// the encode such a card persists and renders blank with no reason attached.
     func createScannableCard(
         input: ScannableCardCreateInput
     ) async -> StorageResult<ScannableCardRecordId>
 
-    /// Overwrites the payload / format / label of an existing scannable-card row. Re-runs the
-    /// kernel `ScannableCardInputValidator` (the same insert-time choke point), persisting the
-    /// validator's normalized values; a rejection bubbles up as `StorageError.scannableCardRejected`
-    /// with the typed reason preserved. Validation runs before the row lookup, so an invalid input
-    /// on an unknown id surfaces as `scannableCardRejected`, not `integrityViolation` (mirrors
+    /// Overwrites the payload / format / label of an existing scannable-card row. Runs the same
+    /// validate-then-trial-encode gate as `createScannableCard` on the new `input`, persisting the
+    /// validator's normalized values; either rejection bubbles up as `StorageError.scannableCardRejected`
+    /// with the typed reason preserved, and the row is not modified on rejection — an edit cannot
+    /// turn a rendering card into a blank one. The gate runs before the row lookup, so an invalid
+    /// input on an unknown id surfaces as `scannableCardRejected`, not `integrityViolation` (mirrors
     /// `updateDocumentLabel`). Returns `integrityViolation` when no row matches `id` and the input
-    /// is valid. `created_at` is preserved.
+    /// cleared the gate. `created_at` is preserved.
     func updateScannableCard(
         id: ScannableCardRecordId,
         input: ScannableCardCreateInput

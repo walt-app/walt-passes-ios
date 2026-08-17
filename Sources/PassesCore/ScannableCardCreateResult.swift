@@ -64,15 +64,17 @@ public enum LabelRejection: Sendable, Equatable {
 /// surfacing an opaque "try again" message.
 public enum EncoderFailureReason: Sendable, Equatable {
     /// The underlying writer rejected the payload at encode time. `format` identifies
-    /// which writer failed (the consumer may suggest switching to a denser symbology). The
-    /// raw encoder exception message is preserved on `detail` for the consumer's diagnostic
-    /// surface; it is not user-facing copy and may be empty when the encoder did not
-    /// provide one.
+    /// which writer failed (the consumer may suggest switching to a denser symbology).
+    /// `detail` names the refusal for the consumer's diagnostic surface; it is not
+    /// user-facing copy. On iOS every `detail` is kernel-authored wording (CoreImage
+    /// yields no reason string and the 1D encoder returns bare nil), so unlike Android's
+    /// ZXing messages it can never carry payload-derived text — `BarcodeEncoderTests`
+    /// pins that.
     ///
-    /// **Do not propagate `detail` to telemetry verbatim.** It is the only third-party
-    /// string that crosses the kernel boundary on this surface, and the underlying encoder
-    /// has historically embedded input-derived substrings in its messages. Consumers that
-    /// ship the field outside the device should hash or bucket it first.
+    /// **Still: do not propagate `detail` to telemetry verbatim.** It is the one string
+    /// that crosses the kernel boundary on this surface, and a future encoder backend
+    /// could reintroduce third-party messages. Consumers that ship the field off the
+    /// device should hash or bucket it first.
     case writerRejected(format: ScannableFormat, detail: String)
 
     /// The payload is too dense to encode at the symbology's maximum version (only QR can

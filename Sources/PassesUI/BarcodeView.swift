@@ -62,26 +62,19 @@ internal enum BarcodeRenderer {
     }
 
     static func cgImage(payload: String, format: ScannableFormat) -> CGImage? {
-        // QR + Code128 use Apple's CoreImage generators; EAN-13, UPC-A, and
-        // Code39 have no first-party filter and render through the kernel's
-        // hand-rolled `OneDimensionalBarcodeEncoder` (ADR `passes-ui-2`,
-        // revised). A structurally invalid payload for the hand-rolled trio
-        // degrades to the grey placeholder — never a wrong-scanning symbol.
-        let data = Data(payload.utf8)
-        switch format {
-        case .qr:
-            let filter = CIFilter(name: "CIQRCodeGenerator")
-            filter?.setValue(data, forKey: "inputMessage")
-            filter?.setValue("M", forKey: "inputCorrectionLevel")
-            return filter?.outputImage.flatMap { CIContext().createCGImage($0, from: $0.extent) }
-        case .code128:
-            let filter = CIFilter(name: "CICode128BarcodeGenerator")
-            filter?.setValue(data, forKey: "inputMessage")
-            return filter?.outputImage.flatMap { CIContext().createCGImage($0, from: $0.extent) }
-        case .code39, .ean13, .upcA:
-            guard let matrix = OneDimensionalBarcodeEncoder.encode(payload: payload, format: format)
-            else { return placeholderCGImage() }
+        // All five formats encode through `PassesCore.BarcodeEncoder` — the same code
+        // the storage trial-encode gate runs (ADR `passes-ui-2`, revised). Failure keeps
+        // its pre-gate visual: 1D degrades to the grey placeholder, QR/Code128 to nil.
+        switch BarcodeEncoder.encode(payload: payload, format: format) {
+        case .success(.image(let image)):
+            return image
+        case .success(.matrix(let matrix)):
             return cgImage(matrix: matrix)
+        case .failure:
+            switch format {
+            case .code39, .ean13, .upcA: return placeholderCGImage()
+            case .qr, .code128: return nil
+            }
         }
     }
 
