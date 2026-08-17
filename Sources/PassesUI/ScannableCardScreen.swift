@@ -10,8 +10,8 @@ import SwiftUI
 ///
 /// The white backing is sized to the code plus the quiet-zone margin, not to
 /// the whole screen (wpass-1wu.2): the rest of the surface is transparent so
-/// the host's background shows through. The card is fixed white rather than Android's
-/// adaptive `colorScheme.surface`: the CoreImage raster bakes an opaque white
+/// the host's background shows through. Untinted, the card is fixed white rather than
+/// Android's adaptive `colorScheme.surface`: the CoreImage raster bakes an opaque white
 /// background, so an adaptive dark card would leave a white seam around the code
 /// in dark mode. Content on the card is forced light-scheme so the payload
 /// caption stays legible on white.
@@ -59,8 +59,8 @@ public struct ScannableCardScreen: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            if faceIsTinted(faceTint), let faceTint {
-                tintedCodeCard(faceTint)
+            if let paint = Self.facePaint(faceTint) {
+                tintedCodeCard(paint)
                     .padding(Self.screenMargin)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -84,7 +84,7 @@ public struct ScannableCardScreen: View {
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
                 .truncationMode(.tail)
-                .padding(.horizontal, Self.screenMargin)
+                .padding(.horizontal, 24)
                 .padding(.vertical, 16)
                 .frame(maxWidth: .infinity)
         }
@@ -101,13 +101,11 @@ public struct ScannableCardScreen: View {
 
     /// The tinted card (Android `CodeCard`): tinted face, white code panel,
     /// then label and payload readback ON the face in luminance-derived ink.
-    private func tintedCodeCard(_ tint: ArgbColor) -> some View {
-        let ink = inkOn(tint)
-        return VStack(spacing: Self.panelToTextGap) {
-            // The label and payload below announce this card; announcing the
-            // code image too would read the label twice.
-            ScannableCardView(card: card, showPayloadCaption: false)
-                .accessibilityHidden(true)
+    private func tintedCodeCard(_ paint: FacePaint) -> some View {
+        VStack(spacing: Self.panelToTextGap) {
+            // The label and payload below announce this card (`nil` hides only
+            // the rendered image; an encode failure keeps its label).
+            ScannableCodeImage(card: card, imageDescription: nil)
                 .padding(Self.codeQuietZone)
                 .background(
                     Self.scanCodePanel, in: RoundedRectangle(cornerRadius: Self.panelRadius)
@@ -117,7 +115,7 @@ public struct ScannableCardScreen: View {
                 if showLabel {
                     Text(isolated(card.label))
                         .font(.title3.weight(.semibold))
-                        .foregroundStyle(ink)
+                        .foregroundStyle(paint.ink)
                         .multilineTextAlignment(.center)
                         .lineLimit(2)
                         .truncationMode(.tail)
@@ -127,13 +125,29 @@ public struct ScannableCardScreen: View {
                 // the flip's worst case leaves no headroom for alpha.
                 Text(isolated(card.payload))
                     .font(.system(.footnote, design: .monospaced))
-                    .foregroundStyle(ink)
+                    .foregroundStyle(paint.ink)
                     .multilineTextAlignment(.center)
                     .textSelection(.enabled)
             }
         }
         .padding(Self.cardPadding)
-        .background(tint.swiftUIColor, in: RoundedRectangle(cornerRadius: Self.cardRadius))
+        .background(paint.face, in: RoundedRectangle(cornerRadius: Self.cardRadius))
+    }
+
+    /// The tinted face's resolved paint pair.
+    struct FacePaint: Equatable {
+        let face: Color
+        let ink: Color
+    }
+
+    /// Pure paint decision for the face, routed through the shared
+    /// `faceIsTinted` gate so the body cannot skip it — `nil` means "render
+    /// the untinted surface". Internal so a test pins BOTH directions (the
+    /// wpass-80y.5 lesson: pinning only the fallback leaves "ignores faceTint
+    /// entirely" green).
+    static func facePaint(_ faceTint: ArgbColor?) -> FacePaint? {
+        guard faceIsTinted(faceTint), let faceTint else { return nil }
+        return FacePaint(face: faceTint.swiftUIColor, ink: inkOn(faceTint))
     }
 
     /// Exhaustive over the placement (mirror of Android's `when`): a future
@@ -158,12 +172,12 @@ public struct ScannableCardScreen: View {
     static let scanCodePanel = Color.white
 
     // Tinted-face registers (26.08.08 design card anatomy; wpass-80y.1).
-    static let screenMargin: CGFloat = 24
-    static let cardRadius: CGFloat = 20
-    static let cardPadding: CGFloat = 18
-    static let panelRadius: CGFloat = 16
-    static let panelToTextGap: CGFloat = 16
-    static let labelToPayloadGap: CGFloat = 4
+    private static let screenMargin: CGFloat = 24
+    private static let cardRadius: CGFloat = 20
+    private static let cardPadding: CGFloat = 18
+    private static let panelRadius: CGFloat = 16
+    private static let panelToTextGap: CGFloat = 16
+    private static let labelToPayloadGap: CGFloat = 4
 }
 
 /// Contrast-derived ink for text sitting on the tinted face. Consumers may pass

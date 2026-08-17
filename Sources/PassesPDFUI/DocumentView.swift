@@ -112,25 +112,46 @@ public struct DocumentView: View {
     }
 
     /// The frame the page render sits on (showing through the fit letterbox
-    /// bars). Background only — it never clips or filters the page, which is
-    /// what makes the frame-not-content constraint structural. The rounded
-    /// card shape arrives with the tint: an untinted frame is the host's own
-    /// `laneBackground` tone bleeding to the slot edge, and rounding it would
-    /// change every consumer already shipping the surface.
+    /// bars), hoisted from the per-page background to the pager container —
+    /// the same painted region, matching Android's slot placement. Background
+    /// only: it never clips or filters the page, which is what makes the
+    /// frame-not-content constraint structural. The rounded card shape arrives
+    /// with the tint: an untinted frame is the host's own `laneBackground`
+    /// tone bleeding to the slot edge, and rounding it would change every
+    /// consumer already shipping the surface.
     @ViewBuilder
     private func documentFace(style: DocumentSemantics) -> some View {
-        if faceIsTinted(faceTint), let faceTint {
+        if let tint = Self.resolvedFace(faceTint) {
             RoundedRectangle(cornerRadius: Self.faceRadius)
-                .fill(faceTint.swiftUIColor)
+                .fill(tint.swiftUIColor)
         } else {
             style.laneBackground.swiftUIColor
         }
     }
 
+    /// Pure face decision routed through the shared `faceIsTinted` gate so the
+    /// body cannot skip it — `nil` means "keep the flush laneBackground frame".
+    /// Internal so a test pins BOTH directions (the wpass-80y.5 lesson).
+    static func resolvedFace(_ faceTint: ArgbColor?) -> ArgbColor? {
+        faceIsTinted(faceTint) ? faceTint : nil
+    }
+
     /// Card radius from the 26.08.08 design's card anatomy spec. Duplicated as
     /// `cardRadius` in `PassesUI`'s `ScannableCardScreen` (the Android wpass-nbr
     /// shared-token hoist is still open there too).
-    static let faceRadius: CGFloat = 20
+    private static let faceRadius: CGFloat = 20
+
+    /// Render target for one page: the layout slot, floored at the baseline
+    /// budget. Pure and tint-blind BY TYPE — `faceTint` cannot reach it, which
+    /// is the structural half of "the tint reaches the frame and nothing
+    /// else"; `DocumentFaceTintTests` pins the derivation.
+    static func pageRenderTarget(page: Int, slot: CGSize) -> ThumbnailRenderTarget {
+        ThumbnailRenderTarget(
+            page: page,
+            widthPx: max(max(Int(slot.width), 1), DocumentPage.targetPageWidthPx),
+            heightPx: max(max(Int(slot.height), 1), DocumentPage.targetPageHeightPx)
+        )
+    }
 }
 
 /// Docked discoverability hint below the pager. When the consumer provides
@@ -167,18 +188,12 @@ private struct DocumentPage: View {
 
     var body: some View {
         GeometryReader { geo in
-            let widthPx = max(Int(geo.size.width), 1)
-            let heightPx = max(Int(geo.size.height), 1)
             content
                 .onAppear {
                     viewModel.start(
                         document: document,
                         pdfData: pdfData,
-                        target: ThumbnailRenderTarget(
-                            page: pageIndex,
-                            widthPx: max(widthPx, Self.targetPageWidthPx),
-                            heightPx: max(heightPx, Self.targetPageHeightPx)
-                        ),
+                        target: DocumentView.pageRenderTarget(page: pageIndex, slot: geo.size),
                         context: ThumbnailRenderContext(renderer: renderer, telemetry: telemetry, cache: cache)
                     )
                 }

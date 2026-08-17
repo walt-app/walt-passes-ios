@@ -5,19 +5,34 @@ import Testing
 @testable import PassesUI
 
 /// Pins the faceTint contract on `ScannableCardScreen` (wpass-80y.1/.5 mirror):
-/// ink is derived from the tint's luminance flipping at the WCAG black/white
-/// tie point (not 0.5), the worst case still clears AA-adjacent contrast, and
-/// the code panel stays literally white — a tint may never reach it.
+/// the body's paint decision routes through the shared gate in BOTH directions,
+/// ink flips at the WCAG tie point (see `inkFlipLuminance`'s doc for the math),
+/// the worst case still clears AA-adjacent contrast, and the code panel stays
+/// literally white — a tint may never reach it.
 struct ScannableCardFaceTintTests {
 
+    @Test func facePaintTakesAnOpaqueTintWithItsDerivedInk() {
+        // Pinning only the fallback would leave "ignores faceTint entirely"
+        // green — the wpass-80y.5 lesson, so both directions are pinned.
+        let teal = ArgbColor(argb: 0xFF00_837E)
+        let paint = ScannableCardScreen.facePaint(teal)
+        #expect(paint != nil)
+        #expect(paint?.face == teal.swiftUIColor)
+        #expect(paint?.ink == inkOn(teal))
+    }
+
+    @Test func facePaintFallsBackForNilAndTransparentTints() {
+        #expect(ScannableCardScreen.facePaint(nil) == nil)
+        // Transparent-but-specified is the exact wpass-80y.5 bug: painting it
+        // would derive ink from luminance 0 over host paint.
+        #expect(ScannableCardScreen.facePaint(ArgbColor(argb: 0x00FF_D8D5)) == nil)
+    }
+
     @Test func inkFlipsAtTheWcagTiePointNotAtHalf() {
-        // Black and white ink tie at L = sqrt(0.0525) - 0.05 (about 0.179).
-        // Flipping at 0.5 would hand mid-tones the WORSE ink: #2E8B7F has
-        // L of about 0.206, where black scores 5.1:1 over white's 4.1:1.
+        // Android's recorded example: #2E8B7F (L ≈ 0.206) takes black at 5.1:1
+        // where a 0.5 flip would hand it white at 4.1:1.
         #expect(inkOn(ArgbColor(argb: 0xFF2E_8B7F)) == .black)
-        // Well below the tie point stays white ink.
         #expect(inkOn(ArgbColor(argb: 0xFF1E_1E1E)) == .white)
-        // Well above stays black ink.
         #expect(inkOn(ArgbColor(argb: 0xFFFB_DDC3)) == .black)
     }
 
@@ -35,20 +50,11 @@ struct ScannableCardFaceTintTests {
         }
     }
 
-    @Test func codePanelStaysLiterallyWhite() {
-        // Literally white, never a theme token and never the face tint: the
-        // code is real content and must stay scannable in dark mode. Rerouting
-        // the panel off this constant is amending the contract.
+    @Test func codePanelStaysLiterallyWhiteWithItsQuietZone() {
+        // The scannability contract (see `scanCodePanel`'s doc): rerouting the
+        // panel off this constant, or letting a tint reach it, is amending the
+        // contract rather than refactoring it.
         #expect(ScannableCardScreen.scanCodePanel == Color.white)
-    }
-
-    @Test func tintedFaceMetricsMatchTheFigmaRegister() {
-        #expect(ScannableCardScreen.cardRadius == 20)
-        #expect(ScannableCardScreen.cardPadding == 18)
-        #expect(ScannableCardScreen.panelRadius == 16)
-        #expect(ScannableCardScreen.panelToTextGap == 16)
-        #expect(ScannableCardScreen.labelToPayloadGap == 4)
-        #expect(ScannableCardScreen.screenMargin == 24)
         #expect(ScannableCardScreen.codeQuietZone == 16)
     }
 

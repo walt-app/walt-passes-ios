@@ -2,11 +2,8 @@ import Testing
 
 @testable import PassesUICore
 
-/// Mirror of Android `FaceTintTest` (wpass-80y.5): the shared gate for the
-/// consumer-supplied face tints on the scannable face and the document frame.
-/// `nil` is the iOS analogue of Compose's `Color.Unspecified`; a specified but
-/// fully transparent tint must read as "no tint" — painting it would leave ink
-/// derived from luminance 0 over host paint the kernel cannot see.
+/// Mirror of Android `FaceTintTest` (wpass-80y.5). The transparent case and
+/// why it must read as "no tint" — see `FaceTint.swift`, the canonical copy.
 struct FaceTintTests {
 
     @Test func nilIsNotTinted() {
