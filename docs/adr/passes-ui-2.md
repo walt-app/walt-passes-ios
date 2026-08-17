@@ -29,3 +29,15 @@ failure — the grey placeholder survives only as the detail surfaces' render-fa
 and the compact path keeps its white failure tile. Correctness is pinned by structural table
 tests plus a Vision decode round-trip per symbology (`OneDimensionalBarcodeEncoderTests`,
 `OneDRoundTripTests`). The create picker ships all five formats (consumer bead ios-sjf.26).
+
+## Update 2026-08-17 (ios-pjs.19): one encode entry point, shared with the storage gate
+
+`PassesCore.BarcodeEncoder` is now the single encode entry for the whole roster: the 1D trio
+still encodes through `OneDimensionalBarcodeEncoder`, and the QR / Code128 CoreImage
+generator calls moved down from `PassesUI.BarcodeRenderer` into the encoder. Both render
+paths (`BarcodeRenderer.cgImage(payload:format:)` and `CompactCodeView.renderImage`) route
+through it, and so does the new trial-encode gate on the storage layer's scannable-card
+write paths (wpass-1kg analogue) — so save-time approval and draw-time render judge
+encodability with the same code and cannot diverge. Failure visuals are unchanged: the 1D
+trio degrades to the grey placeholder on detail surfaces; QR / Code128 and the compact path
+keep their failure tiles.

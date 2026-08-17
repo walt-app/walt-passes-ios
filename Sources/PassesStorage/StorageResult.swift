@@ -53,9 +53,11 @@ public enum StorageError: Sendable, Equatable {
     /// never reaches disk.
     case documentRejected(kind: DocumentStorageRejectedKind)
 
-    /// A scannable-card insert was rejected by the kernel validator. Carries the typed
-    /// kernel rejection so the consumer's error UI can localize a specific message
-    /// without re-running validation. The row never reaches disk.
+    /// A scannable-card write was rejected by the kernel validator
+    /// (`ScannableCardInputValidator`) or by the trial encode that follows it
+    /// (`BarcodeEncoder`). Carries the typed kernel rejection so the consumer's error UI
+    /// can localize a specific message without re-running validation. The row never
+    /// reaches disk.
     case scannableCardRejected(reason: ScannableCardRejectionReason)
 
     /// A pass-side update (today: `user_label`) was refused by a storage-layer bound check.
@@ -79,12 +81,13 @@ public enum StorageError: Sendable, Equatable {
     case unknown(kind: UnknownStorageFailureKind)
 }
 
-/// Why a `createScannableCard` call was refused. The first two arms mirror what the
-/// kernel validator produces today (structural payload and label checks). The latter
-/// two cover the kernel result family's remaining arms; the validator does not produce
-/// them in the current build, but typing them here keeps the defensive path loud rather
-/// than collapsing them into `StorageError.unknown` on the day the kernel does start
-/// surfacing one.
+/// Why a `createScannableCard` or `updateScannableCard` call was refused. The first two
+/// arms mirror what the kernel validator produces (structural payload and label checks);
+/// `encoderFailure` comes from the trial encode the repository runs before persisting,
+/// which is the only check that can see a payload no encoder can render.
+/// `unsupportedFormat` is the one arm nothing produces in the current build — typed here
+/// so a decode-only format reaching the create path stays loud rather than collapsing
+/// into `StorageError.unknown`.
 public enum ScannableCardRejectionReason: Sendable, Equatable {
     case invalidLabel(reason: LabelRejection)
     case invalidPayload(reason: PayloadRejection)

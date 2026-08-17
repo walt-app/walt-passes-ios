@@ -62,26 +62,23 @@ internal enum BarcodeRenderer {
     }
 
     static func cgImage(payload: String, format: ScannableFormat) -> CGImage? {
-        // QR + Code128 use Apple's CoreImage generators; EAN-13, UPC-A, and
-        // Code39 have no first-party filter and render through the kernel's
-        // hand-rolled `OneDimensionalBarcodeEncoder` (ADR `passes-ui-2`,
-        // revised). A structurally invalid payload for the hand-rolled trio
-        // degrades to the grey placeholder — never a wrong-scanning symbol.
-        let data = Data(payload.utf8)
-        switch format {
-        case .qr:
-            let filter = CIFilter(name: "CIQRCodeGenerator")
-            filter?.setValue(data, forKey: "inputMessage")
-            filter?.setValue("M", forKey: "inputCorrectionLevel")
-            return filter?.outputImage.flatMap { CIContext().createCGImage($0, from: $0.extent) }
-        case .code128:
-            let filter = CIFilter(name: "CICode128BarcodeGenerator")
-            filter?.setValue(data, forKey: "inputMessage")
-            return filter?.outputImage.flatMap { CIContext().createCGImage($0, from: $0.extent) }
-        case .code39, .ean13, .upcA:
-            guard let matrix = OneDimensionalBarcodeEncoder.encode(payload: payload, format: format)
-            else { return placeholderCGImage() }
+        // One encode path per symbology: `PassesCore.BarcodeEncoder` owns both the
+        // CoreImage generators (QR, Code128) and the hand-rolled 1D trio (ADR
+        // `passes-ui-2`, revised), and the storage layer's trial-encode gate runs the
+        // same code — so save-time approval and draw-time render cannot diverge
+        // (wpass-1kg). A failed encode keeps its pre-gate visual: the 1D trio degrades
+        // to the grey placeholder — never a wrong-scanning symbol — while QR/Code128
+        // return nil (the "failed to render" tile).
+        switch BarcodeEncoder.encode(payload: payload, format: format) {
+        case .success(.image(let image)):
+            return image
+        case .success(.matrix(let matrix)):
             return cgImage(matrix: matrix)
+        case .failure:
+            switch format {
+            case .code39, .ean13, .upcA: return placeholderCGImage()
+            case .qr, .code128: return nil
+            }
         }
     }
 

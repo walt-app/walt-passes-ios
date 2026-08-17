@@ -259,19 +259,10 @@ public final class GrdbPassRepository: PassRepository, @unchecked Sendable {
     ) async -> StorageResult<ScannableCardRecordId> {
         guard ensureOpen() else { return .failure(error: .databaseLocked) }
         let now = clock()
-        // The validator is the single insert-time choke point: a rejection bubbles up as
-        // .scannableCardRejected (the row never reaches disk), never a generic infra error.
-        // The id here is a placeholder for validation only; storage owns the real row id.
-        let validation = ScannableCardInputValidator.validate(
-            input: input,
-            id: ScannableCardId("0"),
-            createdAt: PassInstant(epochMillis: now)
-        )
-        guard case .success(let validated) = validation else {
-            return .failure(
-                error: .scannableCardRejected(
-                    reason: validation.storageRejectionReason ?? .invalidPayload(reason: .empty)
-                ))
+        let validated: ScannableCard
+        switch approveScannableCard(input: input, nowEpochMs: now) {
+        case .success(let approved): validated = approved
+        case .failure(let error): return .failure(error: error)
         }
         do {
             // Persist the validator's trimmed, normalized values, not the raw input.
@@ -294,18 +285,13 @@ public final class GrdbPassRepository: PassRepository, @unchecked Sendable {
     ) async -> StorageResult<Void> {
         guard ensureOpen() else { return .failure(error: .databaseLocked) }
         let now = clock()
-        // Re-validate through the same choke point as create; a rejection bubbles up before
-        // the row lookup, so an invalid input on an unknown id surfaces as .scannableCardRejected.
-        let validation = ScannableCardInputValidator.validate(
-            input: input,
-            id: ScannableCardId("0"),
-            createdAt: PassInstant(epochMillis: now)
-        )
-        guard case .success(let validated) = validation else {
-            return .failure(
-                error: .scannableCardRejected(
-                    reason: validation.storageRejectionReason ?? .invalidPayload(reason: .empty)
-                ))
+        // The same approval gate as create, run before the row lookup — an invalid input
+        // on an unknown id surfaces as .scannableCardRejected, and a rejected edit cannot
+        // turn a rendering card into a blank one.
+        let validated: ScannableCard
+        switch approveScannableCard(input: input, nowEpochMs: now) {
+        case .success(let approved): validated = approved
+        case .failure(let error): return .failure(error: error)
         }
         do {
             let matched = try await dbQueue.write { db in
@@ -352,6 +338,56 @@ public final class GrdbPassRepository: PassRepository, @unchecked Sendable {
 
     public func observeScannableCards() -> AsyncStream<[ScannableCard]> {
         scannableBroadcaster.stream()
+    }
+
+    /// The approval gate both scannable-card write paths share: kernel validation, then a
+    /// trial encode of what the validator approved (wpass-1kg analogue). The trial encode
+    /// is what keeps a card nothing can render off disk — a payload can clear
+    /// `ScannableCardInputValidator` and still overflow its symbology (the length caps
+    /// count characters while writer capacity is spent in bytes; see
+    /// `ScannableFormatConstraints`' ceiling doc), and without an encode here the row
+    /// persists and first surfaces as a blank barcode with no reason attached.
+    ///
+    /// The encoder refusal re-enters the kernel result family as
+    /// `ScannableCardCreateResult.encoderFailure`, so the existing single
+    /// `storageRejectionReason` mapping covers every arm — validator and encoder alike.
+    /// The encoded symbol is discarded (the renderer re-encodes at draw time); cost is
+    /// one encode per save on a non-hot path.
+    ///
+    /// The `ScannableCardId` is a placeholder: the validator does not read it, and both
+    /// write paths take only payload / format / label off the approved card — storage
+    /// mints the real id at insert and preserves it across an update.
+    private func approveScannableCard(
+        input: ScannableCardCreateInput, nowEpochMs: Int64
+    ) -> StorageResult<ScannableCard> {
+        let validation = ScannableCardInputValidator.validate(
+            input: input,
+            id: ScannableCardId("0"),
+            createdAt: PassInstant(epochMillis: nowEpochMs)
+        )
+        // Only an approved card is worth an encode; every other arm passes through
+        // untouched to the single mapping below.
+        let approval: ScannableCardCreateResult
+        if case .success(let card) = validation {
+            approval = trialEncode(card)
+        } else {
+            approval = validation
+        }
+        guard case .success(let approved) = approval else {
+            return .failure(
+                error: .scannableCardRejected(
+                    reason: approval.storageRejectionReason ?? .invalidPayload(reason: .empty)
+                ))
+        }
+        return .success(value: approved)
+    }
+
+    /// Re-approves `card` only if its `(payload, format)` actually encodes.
+    private func trialEncode(_ card: ScannableCard) -> ScannableCardCreateResult {
+        switch BarcodeEncoder.encode(payload: card.payload, format: card.format) {
+        case .success: return .success(card: card)
+        case .failure(let reason): return .encoderFailure(reason: reason)
+        }
     }
 
     private func refreshScannableCards() async {
