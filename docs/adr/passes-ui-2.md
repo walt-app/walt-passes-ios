@@ -32,7 +32,9 @@ tests plus a Vision decode round-trip per symbology (`OneDimensionalBarcodeEncod
 
 ## Update 2026-08-17 (ios-pjs.19): one encode entry point, shared with the storage gate
 
-`PassesCore.BarcodeEncoder` is now the single encode entry for the whole roster: the 1D trio
+`PassesCore.BarcodeEncoder` is now the single encode entry for the whole roster (since
+ios-pjs.15 two roster members — PDF417 and Aztec — are decode-only, and the encoder
+refuses them until ios-pjs.16 wires their writer arms): the 1D trio
 still encodes through `OneDimensionalBarcodeEncoder`, and the QR / Code128 CoreImage
 generator calls moved down from `PassesUI.BarcodeRenderer` into the encoder. Both render
 paths (`BarcodeRenderer.cgImage(payload:format:)` and `CompactCodeView.renderImage`) route

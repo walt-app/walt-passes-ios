@@ -1,6 +1,6 @@
 import Foundation
 
-/// The barcode formats a `ScannableCard` may render. The v1 roster covers the long tail of
+/// The barcode formats a `ScannableCard` may render. The roster covers the long tail of
 /// physical-world cards real users actually hold:
 ///
 ///  - `code128` — most modern membership/loyalty cards (alphanumeric, variable length)
@@ -8,9 +8,13 @@ import Foundation
 ///  - `upcA` — North American retail barcodes (12 numeric digits)
 ///  - `code39` — older institutional cards (alphanumeric, fixed charset)
 ///  - `qr` — modern QR-based loyalty / event / payment cards
+///  - `pdf417` — boarding passes and event tickets (stacked 2D)
+///  - `aztec` — boarding passes (IATA BCBP) and transit tickets (square 2D)
 ///
-/// Pdf417 and Aztec are intentionally absent from v1: they are largely vendor-issued
-/// (boarding passes, transit) and arrive via PKPASS already.
+/// `pdf417` and `aztec` joined decode-only with ios-pjs.15 (users import boarding passes
+/// as screenshots, which have no PKPASS to arrive in); their writer arms land with
+/// ios-pjs.16. DataMatrix stays out deliberately. Full record: ADR `barcode-decode-1`,
+/// 2026-08-17 update.
 ///
 /// Distinct type from `BarcodeFormat` (the PKPASS-pass barcode enum). The two are
 /// deliberately not unified — a verified PKPASS barcode and a user-typed card barcode are
@@ -23,4 +27,17 @@ public enum ScannableFormat: Sendable, CaseIterable {
     case upcA
     case code39
     case qr
+    case pdf417
+    case aztec
+}
+
+extension ScannableFormat {
+    /// Whether a user can create a `ScannableCard` in this format — i.e. whether this
+    /// build can render one. **Consumers building a format picker must filter on this**;
+    /// an unfiltered picker offers a choice whose Save fails on every tap, and nothing
+    /// about a decode-only member breaks a consumer's build. Backed by the same set the
+    /// validator and encoder read, so the three cannot disagree.
+    public func isCreatable() -> Bool {
+        !ScannableFormatConstraints.decodeOnly.contains(self)
+    }
 }

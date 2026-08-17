@@ -322,3 +322,52 @@ So the mirror claim is scoped rather than upheld: the two kernels mirror each ot
 same result shape, same roster clamp, same faithful-payload posture — and their failure taxonomies may
 diverge where the process models do. `README.md` says so. This is the rule for the next divergence
 too, which is why the saturation arm weighed above was declined rather than debated again.
+
+## Update 2026-08-17 (ios-pjs.15): roster grows to Aztec + PDF417, decode-only
+
+Mirror of Android wpass-pl7.1: boarding passes are imported as SCREENSHOTS, which have no
+PKPASS to arrive in, so the two boarding-pass symbologies were unreachable at any input
+scale. `RosterSymbology.requested` grows to
+`[.qr, .code128, .ean13, .code39, .aztec, .pdf417]` — still an allowlist, still the only
+place the roster is defined. DataMatrix stays out deliberately (same scope decision as
+Android): it widens the same surface for no reported user need, and the allowlist-contents
+pin (`requestedAllowlistIsExactlyTheRosterSymbologies`) is what keeps it unreachable.
+
+**Threat-model acceptance (Android Threat 14 analogue).** The allowlist width is what
+bounds both the hostile-image parser surface and the misread-ambiguity risk, so growing it
+by two symbologies re-weights that acceptance. Accepted, with the same reasoning (a
+boarding-pass screenshot otherwise decodes to nothing) and the surviving bounds: the
+roster clamp, the bounded still-image decode, the faithful-payload posture, and the
+consumer's confirm-before-create gate — which is **QR-scoped today**, so ios-pjs.16
+carries the C4 forward obligation: when the byte-capable 2D pair becomes creatable, the
+URI-scheme confirmation gate must widen to them, or a hostile Aztec/PDF417 image reaches
+persistence on a path QR does not. The added symbologies also ride Apple's system Vision
+framework rather than adding third-party parser code to Walt's own sources (the original
+decision's containment premise; not re-verified here).
+
+Payload-cap derivation for the two members (the numbers `ScannableFormatConstraints`
+carries): PDF417 holds ~1,100 bytes and Aztec ~1,900 at MINIMUM error correction, both
+shrinking as EC rises, so the 800 / 1,500 character caps sit under the spec maxima at any
+plausible EC level. An IATA BCBP payload runs ~60 characters per leg, nowhere near either.
+ios-pjs.16 pins the EC defaults; anything below PDF417 level 5 or Aztec 23% re-derives
+these caps.
+
+**Read/write asymmetry (transitional).** Both new members are decode-only:
+`ScannableFormatConstraints.decodeOnly` is read by the validator (refuses to mint a card as
+`unsupportedFormat`, before field checks), the encoder (refuses to encode), and
+`ScannableFormat.isCreatable()` (the consumer picker filter), so create and encode cannot
+drift apart. ios-pjs.16 wires the writer arms and empties the set.
+
+**Android-specific machinery deliberately NOT ported, with the measurements that decided it:**
+
+- **No multi-scale rescale ladder (wpass-pl7.2).** Android needed one because ZXing is
+  single-scale (its probe artifact decoded only at <=1600px). Vision does its own
+  multi-scale detection: a ~3000px screenshot-scale Aztec render decodes directly, pinned
+  by `largeScreenshotScaleDecodesWithoutARescaleLadder`.
+- **No live-path roster cost concern (wpass-pl7.3).** Android measured ~30ms per no-symbol
+  720p frame against its 33ms frame interval with the widened ZXing roster. Vision on an
+  M-series Mac measures ~4.3ms per no-symbol 720p frame with the 6-symbology roster and
+  ~4.4ms with the previous 4-symbology roster — the width is free within noise, because
+  Vision's detection stage dominates and the symbology list barely matters. Absolute
+  iPhone numbers will be higher, but the roster-width *delta* is the quantity this
+  decision needed; the live-scan PDF417 resolution floor is ios-pjs.21's business.

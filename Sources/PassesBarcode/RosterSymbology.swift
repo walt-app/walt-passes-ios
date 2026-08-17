@@ -2,9 +2,9 @@ import PassesCore
 import Vision
 
 /// The symbology ALLOWLIST that clamps the iOS decoder to the full ``ScannableFormat`` roster
-/// (ADR `barcode-decode-1`, revised 2026-07-27 — the re-escalatable "Android symbol parity"
-/// decision was taken, human-approved: QR / Code128 / EAN-13 / UPC-A / Code39, matching
-/// Android's ZXing `POSSIBLE_FORMATS` pin). Restricting `VNDetectBarcodesRequest.symbologies`
+/// (ADR `barcode-decode-1`, revised 2026-07-27 for the five-format Android-parity expansion
+/// and 2026-08-17 for the Aztec + PDF417 decode-only growth, matching Android's ZXing
+/// `POSSIBLE_FORMATS` pin). Restricting `VNDetectBarcodesRequest.symbologies`
 /// still narrows both the work Vision does and the parser surface a hostile image can reach.
 ///
 /// UPC-A has no `VNBarcodeSymbology` of its own: Vision reports it as EAN-13 with a leading
@@ -14,7 +14,7 @@ import Vision
 enum RosterSymbology {
     /// The exact symbologies handed to `VNDetectBarcodesRequest`. Nothing outside this set is
     /// ever requested, so Vision cannot return an out-of-roster symbol.
-    static let requested: [VNBarcodeSymbology] = [.qr, .code128, .ean13, .code39]
+    static let requested: [VNBarcodeSymbology] = [.qr, .code128, .ean13, .code39, .aztec, .pdf417]
 
     /// Fold a Vision observation onto the ``ScannableFormat`` Walt renders (plus the payload,
     /// which the UPC-A arm rewrites). `nil` for anything outside the clamp — unreachable while
@@ -28,6 +28,8 @@ enum RosterSymbology {
         case .qr: return (.qr, payload)
         case .code128: return (.code128, payload)
         case .code39: return (.code39, payload)
+        case .aztec: return (.aztec, payload)
+        case .pdf417: return (.pdf417, payload)
         case .ean13:
             // A leading-zero EAN-13 IS a UPC-A code (GS1); report it the way
             // Android's ZXing does so cross-platform scans of the same card

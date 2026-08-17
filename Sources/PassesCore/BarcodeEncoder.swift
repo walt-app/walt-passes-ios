@@ -58,6 +58,12 @@ public enum BarcodeEncoder {
                     reason: .writerRejected(format: format, detail: Detail.structuralRecheckFailed))
             }
             return .success(symbol: .matrix(matrix))
+        case .pdf417, .aztec:
+            // Decode-only in this build (the validator refuses these upstream; this arm is
+            // defense in depth). The writer arms, with their pinned error-correction and
+            // compaction parameters, land with ios-pjs.16.
+            return .failure(
+                reason: .writerRejected(format: format, detail: Detail.decodeOnlyFormat))
         }
     }
 
@@ -101,7 +107,7 @@ public enum BarcodeEncoder {
         case .code128:
             filter = CIFilter(name: "CICode128BarcodeGenerator")
             filter?.setValue(data, forKey: "inputMessage")
-        case .ean13, .upcA, .code39:
+        case .ean13, .upcA, .code39, .pdf417, .aztec:
             return nil
         }
         guard let output = filter?.outputImage else { return nil }
@@ -121,6 +127,7 @@ public enum BarcodeEncoder {
         static let emptyPayload = "Empty payload"
         static let generatorRefused = "CoreImage generator refused the payload"
         static let structuralRecheckFailed = "1D structural re-check failed"
+        static let decodeOnlyFormat = "Decode-only format in this build"
     }
 }
 

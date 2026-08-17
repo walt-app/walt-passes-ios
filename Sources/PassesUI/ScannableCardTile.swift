@@ -61,8 +61,8 @@ public struct ScannableCardTile: View {
 extension ScannableFormat {
     fileprivate var previewSize: (CGFloat, CGFloat) {
         switch self {
-        case .qr: return (96, 96)
-        case .code128, .ean13, .upcA, .code39: return (132, 40)
+        case .qr, .aztec: return (96, 96)
+        case .code128, .ean13, .upcA, .code39, .pdf417: return (132, 40)
         }
     }
 }

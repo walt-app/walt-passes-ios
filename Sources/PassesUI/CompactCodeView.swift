@@ -80,7 +80,8 @@ public struct CompactCodeView: View {
             .resizable()
         Group {
             switch format {
-            case .qr:
+            // 2D symbols carry data on both axes: never stretch.
+            case .qr, .aztec, .pdf417:
                 image.aspectRatio(contentMode: .fit)
             case .code128, .ean13, .upcA, .code39:
                 image
@@ -134,8 +135,8 @@ extension ScannableFormat {
     /// arbitrary sizes.
     internal var compactMinSize: (CGFloat, CGFloat) {
         switch self {
-        case .qr: return (48, 48)
-        case .code128, .ean13, .upcA, .code39: return (96, 32)
+        case .qr, .aztec: return (48, 48)
+        case .code128, .ean13, .upcA, .code39, .pdf417: return (96, 32)
         }
     }
 }

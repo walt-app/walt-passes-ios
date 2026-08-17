@@ -62,9 +62,10 @@ internal enum BarcodeRenderer {
     }
 
     static func cgImage(payload: String, format: ScannableFormat) -> CGImage? {
-        // All five formats encode through `PassesCore.BarcodeEncoder` — the same code
-        // the storage trial-encode gate runs (ADR `passes-ui-2`, revised). Failure keeps
-        // its pre-gate visual: 1D degrades to the grey placeholder, QR/Code128 to nil.
+        // Every format routes through `PassesCore.BarcodeEncoder` — the same code the
+        // storage trial-encode gate runs (ADR `passes-ui-2`, revised; the decode-only
+        // pair refuses there). Failure keeps its pre-gate visual: 1D degrades to the
+        // grey placeholder, 2D formats to nil.
         switch BarcodeEncoder.encode(payload: payload, format: format) {
         case .success(.image(let image)):
             return image
@@ -73,7 +74,7 @@ internal enum BarcodeRenderer {
         case .failure:
             switch format {
             case .code39, .ean13, .upcA: return placeholderCGImage()
-            case .qr, .code128: return nil
+            case .qr, .code128, .pdf417, .aztec: return nil
             }
         }
     }

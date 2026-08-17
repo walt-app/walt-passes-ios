@@ -8,6 +8,12 @@ import Foundation
 /// "is this character allowed" off of this object directly. Bidi / control-character checks
 /// live in the validator because they apply uniformly across all formats.
 enum ScannableFormatConstraints {
+    /// Roster members this build decodes but cannot render (ios-pjs.15; ios-pjs.16 wires
+    /// the writers and empties this set). Read by the validator, the encoder, and
+    /// `ScannableFormat.isCreatable()` so the three cannot drift into
+    /// creatable-but-unrenderable.
+    static let decodeOnly: Set<ScannableFormat> = [.pdf417, .aztec]
+
     /// Soft cap on payload length per symbology. Numeric symbologies use their exact length.
     static func maxPayloadLength(_ format: ScannableFormat) -> Int {
         switch format {
@@ -16,6 +22,8 @@ enum ScannableFormatConstraints {
         case .ean13: return ean13Length
         case .upcA: return upcALength
         case .qr: return qrMax
+        case .pdf417: return pdf417Max
+        case .aztec: return aztecMax
         }
     }
 
@@ -43,7 +51,8 @@ enum ScannableFormatConstraints {
             return code39Allowed.contains(char)
         case .ean13, .upcA:
             return ("0"..."9").contains(char)
-        case .qr:
+        // Byte-capable 2D symbologies: any character the payload survives as UTF-8.
+        case .qr, .pdf417, .aztec:
             return true
         }
     }
@@ -55,7 +64,7 @@ enum ScannableFormatConstraints {
         switch format {
         case .ean13: return validateEan13(payload)
         case .upcA: return validateUpcA(payload)
-        case .code128, .code39, .qr: return nil
+        case .code128, .code39, .qr, .pdf417, .aztec: return nil
         }
     }
 
@@ -135,6 +144,13 @@ enum ScannableFormatConstraints {
     private static let ean13Length = 13
     private static let upcALength = 12
     private static let qrMax = 2000
+
+    /// Soft caps for the two ios-pjs.15 symbologies, in characters (like `qrMax`). Both
+    /// sit under the spec maxima at any plausible error-correction level; ios-pjs.16 pins
+    /// the EC defaults and must re-derive these against that pin (derivation in ADR
+    /// `barcode-decode-1`, 2026-08-17).
+    private static let pdf417Max = 800
+    private static let aztecMax = 1500
     private static let printableAsciiMin = 0x20
     private static let printableAsciiMax = 0x7E
 

@@ -95,6 +95,8 @@ extension ScannableFormat {
         case .upcA: return "upcA"
         case .code39: return "code39"
         case .qr: return "qr"
+        case .pdf417: return "pdf417"
+        case .aztec: return "aztec"
         }
     }
 
