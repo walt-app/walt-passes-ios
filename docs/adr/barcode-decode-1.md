@@ -371,3 +371,41 @@ drift apart. ios-pjs.16 wires the writer arms and empties the set.
   Vision's detection stage dominates and the symbology list barely matters. Absolute
   iPhone numbers will be higher, but the roster-width *delta* is the quantity this
   decision needed; the live-scan PDF417 resolution floor is ios-pjs.21's business.
+
+## Update 2026-08-17 (ios-pjs.16 / ios-pjs.17): writer arms land; Latin-1 charset posture; C4 discharged
+
+Mirror of Android wpass-pl7.6 + wlt-9o3x, landed together (as Android did) so the create
+gates never open ahead of the widened confirm gate. `decodeOnly` is now empty — every
+roster member encodes — and the mechanism stays for a future decode-first addition.
+
+**Pinned parameters (CoreImage vocabulary):** Aztec `inputCorrectionLevel` 33 (spec
+recommendation and Android's pin; CoreImage's own default is 23); PDF417
+`inputCorrectionLevel` 3 (ISO/IEC 15438's recommendation at boarding-pass codeword
+counts; Android's pin). Compaction and margins stay on CoreImage defaults; measured
+PDF417 aspect is 2.7-3.5:1 across the payload range, from which the 320 x 90 render
+floor derives.
+
+**Latin-1 charset posture (§7-approved 2026-08-17).** Unlike QR — where Vision
+auto-detects UTF-8 and the ios-pjs.20 posture holds — Vision decodes ECI-less Aztec and
+PDF417 bytes as ISO-8859-1: a UTF-8-encoded "café" scans back as "cafÃ©" on Walt's own
+decoder, the wrong-scanning-symbol class, universally. CoreImage exposes no ECI knob, so
+the kernel encodes ISO-8859-1 bytes (the spec default every reader agrees on; verified
+round-trip-verbatim through the production path, high-Latin-1 range included) and the
+validator admits only Latin-1-representable characters for these two formats, using the
+same `data(using: .isoLatin1)` conversion the encoder performs. Deviation from Android,
+which accepts full Unicode via ZXing's ECI emission: an iOS user cannot create a
+CJK-payload Aztec/PDF417 card (clear `wrongCharset` error at typing time); scanning one
+created elsewhere still works, since the ECI declaration travels with the symbol. BCBP
+and ticket payloads — the use case — are ASCII.
+
+**Caps re-derived (forward obligation 2).** Measured by binary search against the live
+generators at the pins: Aztec holds 2,674 single-byte chars, PDF417 1,823 — both above
+the 1,500 / 800 caps, and under the Latin-1 posture every admitted character is one
+byte, so a cap-length payload always encodes (`writersEncodeAtTheFullCap` pins it). The
+multibyte-overflow arm QR needs cannot arise here.
+
+**C4 discharged (forward obligation 1).** `requiresCreateConfirmation` now takes the
+format and keys off the new `ScannableFormat.canCarryActionablePayload()` (QR / PDF417 /
+Aztec true; 1D false) — the app must call the kernel predicate, never carry a copy. The
+confirm sheet's copy drops its QR-specific wording ("this code", matching Android's
+pl7.6 string change).

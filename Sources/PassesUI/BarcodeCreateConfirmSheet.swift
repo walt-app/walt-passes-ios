@@ -2,7 +2,8 @@ import PassesCore
 import PassesUICore
 import SwiftUI
 
-/// Create-time URI-scheme confirmation gate for a QR `ScannableCard`. Inverts
+/// Create-time URI-scheme confirmation gate for an actionable-format `ScannableCard`
+/// (QR / PDF417 / Aztec — see `canCarryActionablePayload()`). Inverts
 /// the button prominence relative to `B3UrlConfirmSheet`: Cancel is the focused
 /// filled action, Confirm is the lower-emphasis text button. A payload
 /// classified as auto-acting cannot land in the wallet without an explicit
@@ -110,7 +111,7 @@ private struct BarcodeCreateBody: View {
             default: return false
             }
         }()
-        Text("Confirm this QR")
+        Text("Confirm this code")
             .font(.title2)
             .foregroundColor((emphasis?.bodyForeground ?? ArgbColor(argb: 0xFF202020)).swiftUIColor)
         Text(message)
@@ -137,21 +138,21 @@ private struct BarcodeCreateBody: View {
     static func message(for kind: QrPayloadKind) -> String {
         switch kind {
         case .plainText: return ""
-        case .url: return "When scanned, this QR will open a website:"
-        case .phone: return "When scanned, this QR will dial:"
-        case .sms: return "When scanned, this QR will start a text message to:"
-        case .mailto: return "When scanned, this QR will start an email to:"
-        case .geo: return "When scanned, this QR will open a map location:"
+        case .url: return "When scanned, this code will open a website:"
+        case .phone: return "When scanned, this code will dial:"
+        case .sms: return "When scanned, this code will start a text message to:"
+        case .mailto: return "When scanned, this code will start an email to:"
+        case .geo: return "When scanned, this code will open a map location:"
         case .wifi(let ssid):
             return ssid != nil
-                ? "When scanned, this QR will offer to join a wifi network:"
-                : "When scanned, this QR will offer to join an unnamed wifi network."
-        case .bitcoin: return "When scanned, this QR will request a Bitcoin payment to:"
-        case .ethereum: return "When scanned, this QR will request an Ethereum payment to:"
-        case .magnet: return "When scanned, this QR will open a torrent magnet link."
-        case .market: return "When scanned, this QR will open the Play Store:"
-        case .intent: return "When scanned, this QR will launch an Android app intent:"
-        case .unknownScheme: return "When scanned, this QR uses an unrecognized scheme:"
+                ? "When scanned, this code will offer to join a wifi network:"
+                : "When scanned, this code will offer to join an unnamed wifi network."
+        case .bitcoin: return "When scanned, this code will request a Bitcoin payment to:"
+        case .ethereum: return "When scanned, this code will request an Ethereum payment to:"
+        case .magnet: return "When scanned, this code will open a torrent magnet link."
+        case .market: return "When scanned, this code will open the Play Store:"
+        case .intent: return "When scanned, this code will launch an Android app intent:"
+        case .unknownScheme: return "When scanned, this code uses an unrecognized scheme:"
         }
     }
 
@@ -177,9 +178,17 @@ private struct BarcodeCreateBody: View {
 }
 
 extension QrPayloadKind {
-    /// Whether `BarcodeCreateConfirmSheet` should be invoked. Returns false
-    /// only for `plainText`.
-    public var requiresCreateConfirmation: Bool {
+    /// Whether `BarcodeCreateConfirmSheet` should be invoked for this payload in
+    /// `format`. False for `plainText` (nothing to confirm) and for the 1D symbologies
+    /// (no scanner auto-acts on them). `format` is a parameter rather than an assumed QR
+    /// because PDF417 and Aztec carry the same actionable URIs QR does, and assuming the
+    /// format is the C4 gate's silent-bypass risk (ios-pjs.17, wlt-9o3x analogue) —
+    /// taking it here puts the decision behind `canCarryActionablePayload()`'s exhaustive
+    /// switch, so a roster addition is a compile error at one kernel site rather than a
+    /// gate that quietly stops covering a format. The app must call this, never carry a
+    /// copy.
+    public func requiresCreateConfirmation(format: ScannableFormat) -> Bool {
+        guard format.canCarryActionablePayload() else { return false }
         if case .plainText = self { return false }
         return true
     }

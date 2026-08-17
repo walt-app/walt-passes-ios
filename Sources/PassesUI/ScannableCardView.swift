@@ -91,10 +91,12 @@ enum CodeRenderPolicy: Equatable {
     case stretchToWidth(barHeight: CGFloat)
     /// Wide 2D symbol (stacked rows — PDF417): preserve aspect since data
     /// rides both axes, bounded by the parent width (the ios-ra9 rule),
-    /// letterboxing down to at least `minHeight`. Provisional sizing — no
-    /// card in this build can carry the format; ios-pjs.16 must verify it
-    /// with the writers, including `ScannableCardTile`'s hard 132 x 40
-    /// preview frame, which is smaller than this floor.
+    /// letterboxing down to at least `minHeight`. Floor derived from the
+    /// writer's measured output at the pinned EC (2.7-3.5:1 across the
+    /// payload range): 320 wide yields 91-117 natural height, so the 90
+    /// floor never distorts and only guards a degenerate parent.
+    /// `ScannableCardTile`'s hard 132 x 40 frame letterboxes the same range
+    /// to =46pt height, within its bounds.
     case fitToWidth(minHeight: CGFloat)
 }
 
@@ -112,10 +114,11 @@ extension ScannableFormat {
 
     var minRenderSize: (CGFloat, CGFloat) {
         switch self {
-        // Square 2D symbols share the QR gate-distance floor; PDF417 shares the wide
-        // 320 x 96 floor the pkpass surface uses for the same symbology.
+        // Square 2D symbols share the QR gate-distance floor. PDF417's height floor
+        // follows the writer's measured aspect (see `fitToWidth`), not the 1D bar band.
         case .qr, .aztec: return (240, 240)
-        case .code128, .ean13, .upcA, .code39, .pdf417: return (320, 96)
+        case .code128, .ean13, .upcA, .code39: return (320, 96)
+        case .pdf417: return (320, 90)
         }
     }
 

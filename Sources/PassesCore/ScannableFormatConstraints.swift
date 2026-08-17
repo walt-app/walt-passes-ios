@@ -8,11 +8,12 @@ import Foundation
 /// "is this character allowed" off of this object directly. Bidi / control-character checks
 /// live in the validator because they apply uniformly across all formats.
 enum ScannableFormatConstraints {
-    /// Roster members this build decodes but cannot render (ios-pjs.15; ios-pjs.16 wires
-    /// the writers and empties this set). Read by the validator, the encoder, and
-    /// `ScannableFormat.isCreatable()` so the three cannot drift into
-    /// creatable-but-unrenderable.
-    static let decodeOnly: Set<ScannableFormat> = [.pdf417, .aztec]
+    /// Roster members this build decodes but cannot render. Empty — every member encodes.
+    /// Kept as the create-boundary refusal a decode-first roster addition needs: put a
+    /// format here and the validator refuses to mint the card while `isCreatable()`
+    /// filters consumer pickers; the encoder's compiler-exhaustive switch is the
+    /// encode-side guard.
+    static let decodeOnly: Set<ScannableFormat> = []
 
     /// Soft cap on payload length per symbology. Numeric symbologies use their exact length.
     static func maxPayloadLength(_ format: ScannableFormat) -> Int {
@@ -51,9 +52,15 @@ enum ScannableFormatConstraints {
             return code39Allowed.contains(char)
         case .ean13, .upcA:
             return ("0"..."9").contains(char)
-        // Byte-capable 2D symbologies: any character the payload survives as UTF-8.
-        case .qr, .pdf417, .aztec:
+        // QR: any character (UTF-8 auto-detection holds, ios-pjs.20 posture).
+        case .qr:
             return true
+        // PDF417/Aztec: Latin-1-representable only (ios-pjs.16 posture, §7-approved
+        // 2026-08-17) — the same conversion the encoder performs, so the two cannot
+        // drift. ECI-less readers, Vision included, decode these symbologies as
+        // ISO-8859-1; a character outside it would scan as mojibake everywhere.
+        case .pdf417, .aztec:
+            return String(char).data(using: .isoLatin1) != nil
         }
     }
 
@@ -145,10 +152,12 @@ enum ScannableFormatConstraints {
     private static let upcALength = 12
     private static let qrMax = 2000
 
-    /// Soft caps for the two ios-pjs.15 symbologies, in characters (like `qrMax`). Both
-    /// sit under the spec maxima at any plausible error-correction level; ios-pjs.16 pins
-    /// the EC defaults and must re-derive these against that pin (derivation in ADR
-    /// `barcode-decode-1`, 2026-08-17).
+    /// Soft caps for the two 2D symbologies, in characters (like `qrMax`). Derived
+    /// against the encoder's pinned EC levels, measured by binary-searching the largest
+    /// payload each CoreImage generator accepts: PDF417 at level 3 holds 1,823 chars and
+    /// Aztec at 33% holds 2,674 — and under the Latin-1 posture every admitted character
+    /// is one byte, so a cap-length payload always encodes (pinned by
+    /// `writersEncodeAtTheFullCap`). Re-derive if an EC pin rises.
     private static let pdf417Max = 800
     private static let aztecMax = 1500
     private static let printableAsciiMin = 0x20

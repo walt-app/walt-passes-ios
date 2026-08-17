@@ -36,18 +36,17 @@ public enum BarcodeEncoder {
             return .failure(reason: refusal)
         }
         switch format {
-        case .qr, .code128:
+        case .qr, .code128, .pdf417, .aztec:
             guard let image = coreImageSymbol(payload: payload, format: format) else {
-                // CoreImage reports refusal as a nil `outputImage`, never a reason. For QR
-                // the only payload-caused nil is over-capacity at v40-M (the proactive
-                // check below catches the multibyte case; this arm is the belt-and-
-                // suspenders for anything that slips past it). Code128 nil means the
-                // generator refused the bytes (non-ASCII reaches here only when the
-                // upstream validator was bypassed).
+                // CoreImage reports refusal as a nil `outputImage`, never a reason. For
+                // the byte-capable 2D formats the only payload-caused nil left after the
+                // pre-writer refusals is over-capacity (QR at v40-M; Aztec/PDF417 at
+                // their pinned EC). Code128 nil means the generator refused the bytes
+                // (non-ASCII reaches here only when the upstream validator was bypassed).
                 let reason: EncoderFailureReason =
-                    format == .qr
-                    ? .payloadTooDense
-                    : .writerRejected(format: format, detail: Detail.generatorRefused)
+                    format == .code128
+                    ? .writerRejected(format: format, detail: Detail.generatorRefused)
+                    : .payloadTooDense
                 return .failure(reason: reason)
             }
             return .success(symbol: .image(image))
@@ -58,12 +57,6 @@ public enum BarcodeEncoder {
                     reason: .writerRejected(format: format, detail: Detail.structuralRecheckFailed))
             }
             return .success(symbol: .matrix(matrix))
-        case .pdf417, .aztec:
-            // Decode-only in this build (the validator refuses these upstream; this arm is
-            // defense in depth). The writer arms, with their pinned error-correction and
-            // compaction parameters, land with ios-pjs.16.
-            return .failure(
-                reason: .writerRejected(format: format, detail: Detail.decodeOnlyFormat))
         }
     }
 
@@ -84,6 +77,11 @@ public enum BarcodeEncoder {
     ) -> EncoderFailureReason? {
         if payload.isEmpty {
             return .writerRejected(format: format, detail: Detail.emptyPayload)
+        }
+        // Latin-1 posture for the ECI-less 2D pair (validator blocks these upstream;
+        // defensive here so the encoder can never mint a mojibake-scanning symbol).
+        if format == .pdf417 || format == .aztec, payload.data(using: .isoLatin1) == nil {
+            return .writerRejected(format: format, detail: Detail.nonLatin1Payload)
         }
         guard format == .qr else { return nil }
         let needsByteMode = payload.contains { !ScannableFormatConstraints.isQrAlphanumericChar($0) }
@@ -107,7 +105,17 @@ public enum BarcodeEncoder {
         case .code128:
             filter = CIFilter(name: "CICode128BarcodeGenerator")
             filter?.setValue(data, forKey: "inputMessage")
-        case .ean13, .upcA, .code39, .pdf417, .aztec:
+        case .pdf417:
+            guard let latin1 = payload.data(using: .isoLatin1) else { return nil }
+            filter = CIFilter(name: "CIPDF417BarcodeGenerator")
+            filter?.setValue(latin1, forKey: "inputMessage")
+            filter?.setValue(Pin.pdf417CorrectionLevel, forKey: "inputCorrectionLevel")
+        case .aztec:
+            guard let latin1 = payload.data(using: .isoLatin1) else { return nil }
+            filter = CIFilter(name: "CIAztecCodeGenerator")
+            filter?.setValue(latin1, forKey: "inputMessage")
+            filter?.setValue(Pin.aztecCorrectionPercent, forKey: "inputCorrectionLevel")
+        case .ean13, .upcA, .code39:
             return nil
         }
         guard let output = filter?.outputImage else { return nil }
@@ -127,7 +135,18 @@ public enum BarcodeEncoder {
         static let emptyPayload = "Empty payload"
         static let generatorRefused = "CoreImage generator refused the payload"
         static let structuralRecheckFailed = "1D structural re-check failed"
-        static let decodeOnlyFormat = "Decode-only format in this build"
+        static let nonLatin1Payload = "Payload is not Latin-1 representable"
+    }
+
+    /// The EC pins the caps were derived against (`ScannableFormatConstraints`' 2D cap
+    /// doc): PDF417 level 3 (ISO/IEC 15438's recommendation for the boarding-pass
+    /// codeword range; matches Android's ZXing pin) and Aztec 33% (the spec-recommended
+    /// level and Android's pin; CoreImage's own default is 23). Compaction and sizing
+    /// stay on CoreImage defaults — measured aspect 2.7-3.5:1 across the payload range.
+    /// Changing a pin means re-deriving the caps.
+    private enum Pin {
+        static let pdf417CorrectionLevel = 3
+        static let aztecCorrectionPercent = 33
     }
 }
 

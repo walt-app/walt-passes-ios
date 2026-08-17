@@ -28,10 +28,10 @@ struct CodeRenderPolicyTests {
     }
 
     @Test func newTwoDimensionalArmsNeverStretch() {
-        // Provisional sizing (ios-pjs.15; ios-pjs.16 verifies with the writers), but the
-        // policy class is load-bearing already: data rides both axes on both formats.
+        // Data rides both axes on both formats; the PDF417 floor is derived from the
+        // writer's measured 2.7-3.5:1 aspect at the pinned EC (ios-pjs.16).
         #expect(ScannableFormat.aztec.renderPolicy == .fitSquare(minSide: 240))
-        #expect(ScannableFormat.pdf417.renderPolicy == .fitToWidth(minHeight: 96))
+        #expect(ScannableFormat.pdf417.renderPolicy == .fitToWidth(minHeight: 90))
     }
 
     @Test func policyStaysDerivedFromThePinnedGateDistanceSizes() {
