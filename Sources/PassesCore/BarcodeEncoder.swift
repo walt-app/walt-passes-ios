@@ -24,6 +24,16 @@ import Foundation
 /// ceiling was derived against that pin; changing one means re-deriving the other, and
 /// the pkpass `Barcode` path (`BarcodeRenderer.cgImage(message:format:)`) carries its
 /// own generator calls and its own level-M pin that must move in lockstep.
+///
+/// **QR charset posture (ios-pjs.20, human-approved 2026-08-17).** `CIQRCodeGenerator`
+/// encodes the raw UTF-8 bytes with no ECI declaration and exposes no ECI knob, and the
+/// kernel deliberately keeps that: UTF-8-without-ECI is the de-facto mobile convention
+/// (verified round-trip-verbatim through Vision in `QrCharsetRoundTripTests`), and the
+/// alternative is a hand-rolled QR encoder. Deviation from Android, which pins ZXing's
+/// CHARACTER_SET to UTF-8 *with* the ECI header (wpass-qj6); consequence: the byte-mode
+/// ceiling here stays 2331 where Android's ECI header lowers it to 2330. Residual risk:
+/// strictly spec-conformant readers default ECI-less symbols to Latin-1 and mojibake
+/// non-ASCII payloads.
 public enum BarcodeEncoder {
 
     public static func encode(payload: String, format: ScannableFormat) -> EncodeResult {

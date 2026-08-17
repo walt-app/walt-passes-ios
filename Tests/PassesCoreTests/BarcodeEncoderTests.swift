@@ -134,3 +134,28 @@ struct BarcodeEncoderTests {
         }
     }
 }
+
+// MARK: - Byte-mode ceiling boundary (ios-pjs.20)
+
+extension BarcodeEncoderTests {
+    @Test func qrByteModeCeilingIsExactAtTheBoundary() {
+        // Pins the measured 2331-byte v40-M constant against the live generator so a
+        // CoreImage capacity change fails loudly instead of letting the constant go
+        // stale (Android's qrByteModeCeilingIsExactAtTheBoundary analogue). Lowercase
+        // ASCII forces byte mode at one byte per char. iOS's ceiling is 2331, one byte
+        // MORE than Android's 2330: no ECI header is emitted here (ios-pjs.20 posture),
+        // so the 12-bit header cost Android pays does not apply.
+        let atCeiling = BarcodeEncoder.encode(
+            payload: String(repeating: "a", count: 2_331), format: .qr)
+        guard case .success = atCeiling else {
+            Issue.record("2331 byte-mode bytes should fit v40-M, got \(atCeiling)")
+            return
+        }
+        let overCeiling = BarcodeEncoder.encode(
+            payload: String(repeating: "a", count: 2_332), format: .qr)
+        guard case .failure(.payloadTooDense) = overCeiling else {
+            Issue.record("2332 byte-mode bytes should be payloadTooDense, got \(overCeiling)")
+            return
+        }
+    }
+}
