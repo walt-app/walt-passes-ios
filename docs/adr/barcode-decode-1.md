@@ -336,11 +336,21 @@ pin (`requestedAllowlistIsExactlyTheRosterSymbologies`) is what keeps it unreach
 **Threat-model acceptance (Android Threat 14 analogue).** The allowlist width is what
 bounds both the hostile-image parser surface and the misread-ambiguity risk, so growing it
 by two symbologies re-weights that acceptance. Accepted, with the same reasoning (a
-boarding-pass screenshot otherwise decodes to nothing) and the same surviving bounds: the
+boarding-pass screenshot otherwise decodes to nothing) and the surviving bounds: the
 roster clamp, the bounded still-image decode, the faithful-payload posture, and the
-consumer's format-agnostic confirm-before-create gate. Vision runs decode out of process in
-system services, so the added parser code does not enter Walt's address space — the
-respect in which the iOS posture is stronger than Android's in-process ZXing here.
+consumer's confirm-before-create gate — which is **QR-scoped today**, so ios-pjs.16
+carries the C4 forward obligation: when the byte-capable 2D pair becomes creatable, the
+URI-scheme confirmation gate must widen to them, or a hostile Aztec/PDF417 image reaches
+persistence on a path QR does not. The added symbologies also ride Apple's system Vision
+framework rather than adding third-party parser code to Walt's own sources (the original
+decision's containment premise; not re-verified here).
+
+Payload-cap derivation for the two members (the numbers `ScannableFormatConstraints`
+carries): PDF417 holds ~1,100 bytes and Aztec ~1,900 at MINIMUM error correction, both
+shrinking as EC rises, so the 800 / 1,500 character caps sit under the spec maxima at any
+plausible EC level. An IATA BCBP payload runs ~60 characters per leg, nowhere near either.
+ios-pjs.16 pins the EC defaults; anything below PDF417 level 5 or Aztec 23% re-derives
+these caps.
 
 **Read/write asymmetry (transitional).** Both new members are decode-only:
 `ScannableFormatConstraints.decodeOnly` is read by the validator (refuses to mint a card as

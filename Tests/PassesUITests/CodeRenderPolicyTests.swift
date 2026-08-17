@@ -27,6 +27,13 @@ struct CodeRenderPolicyTests {
         #expect(ScannableFormat.qr.renderPolicy == .fitSquare(minSide: 240))
     }
 
+    @Test func newTwoDimensionalArmsNeverStretch() {
+        // Provisional sizing (ios-pjs.15; ios-pjs.16 verifies with the writers), but the
+        // policy class is load-bearing already: data rides both axes on both formats.
+        #expect(ScannableFormat.aztec.renderPolicy == .fitSquare(minSide: 240))
+        #expect(ScannableFormat.pdf417.renderPolicy == .fitToWidth(minHeight: 96))
+    }
+
     @Test func policyStaysDerivedFromThePinnedGateDistanceSizes() {
         // renderPolicy reads minRenderSize so the scanability numbers have one
         // source of truth; this fails if the two drift apart.
@@ -34,5 +41,11 @@ struct CodeRenderPolicyTests {
         #expect(
             ScannableFormat.code128.renderPolicy
                 == .stretchToWidth(barHeight: ScannableFormat.code128.minRenderSize.1))
+        #expect(
+            ScannableFormat.aztec.renderPolicy
+                == .fitSquare(minSide: ScannableFormat.aztec.minRenderSize.0))
+        #expect(
+            ScannableFormat.pdf417.renderPolicy
+                == .fitToWidth(minHeight: ScannableFormat.pdf417.minRenderSize.1))
     }
 }

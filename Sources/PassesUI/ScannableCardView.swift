@@ -92,8 +92,9 @@ enum CodeRenderPolicy: Equatable {
     /// Wide 2D symbol (stacked rows — PDF417): preserve aspect since data
     /// rides both axes, bounded by the parent width (the ios-ra9 rule),
     /// letterboxing down to at least `minHeight`. Provisional sizing — no
-    /// card in this build can carry the format; ios-pjs.16 verifies it with
-    /// the writers.
+    /// card in this build can carry the format; ios-pjs.16 must verify it
+    /// with the writers, including `ScannableCardTile`'s hard 132 x 40
+    /// preview frame, which is smaller than this floor.
     case fitToWidth(minHeight: CGFloat)
 }
 

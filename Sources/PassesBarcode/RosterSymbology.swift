@@ -2,9 +2,9 @@ import PassesCore
 import Vision
 
 /// The symbology ALLOWLIST that clamps the iOS decoder to the full ``ScannableFormat`` roster
-/// (ADR `barcode-decode-1`, revised 2026-07-27 — the re-escalatable "Android symbol parity"
-/// decision was taken, human-approved: QR / Code128 / EAN-13 / UPC-A / Code39, matching
-/// Android's ZXing `POSSIBLE_FORMATS` pin). Restricting `VNDetectBarcodesRequest.symbologies`
+/// (ADR `barcode-decode-1`, revised 2026-07-27 for the five-format Android-parity expansion
+/// and 2026-08-17 for the Aztec + PDF417 decode-only growth, matching Android's ZXing
+/// `POSSIBLE_FORMATS` pin). Restricting `VNDetectBarcodesRequest.symbologies`
 /// still narrows both the work Vision does and the parser surface a hostile image can reach.
 ///
 /// UPC-A has no `VNBarcodeSymbology` of its own: Vision reports it as EAN-13 with a leading

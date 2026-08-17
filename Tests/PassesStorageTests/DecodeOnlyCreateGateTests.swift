@@ -56,3 +56,25 @@ struct DecodeOnlyCreateGateTests {
         #expect(card.payload == "WALT-0042")
     }
 }
+
+/// The read-side twin: rehydration runs the same validator, so a raw decode-only row
+/// (hand-crafted, or left behind by a rollback after a future build made the format
+/// creatable) is dropped from the list rather than surfacing as a card that renders blank.
+@Suite("Decode-only hydration gate")
+struct DecodeOnlyHydrationGateTests {
+    @Test func rawDecodeOnlyRowIsDroppedOnRead() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("walt_decode_only_read_\(UUID().uuidString).db")
+        let queue = try GrdbDatabaseFactory.open(at: url)
+        try await queue.write { db in
+            try db.execute(
+                sql: "INSERT INTO scannable_cards (payload, format, label, created_at_epoch_ms) "
+                    + "VALUES (?, ?, ?, ?)",
+                arguments: ["M1SYNTHETIC/BCBP", "aztec", "Flight", 1_000]
+            )
+            _ = try GrdbScannableCardStore.listAll(db)
+        }
+        let cards = try await queue.read { try GrdbScannableCardStore.listAll($0) }
+        #expect(cards.isEmpty, "a decode-only row must be dropped on read, not rendered blank")
+    }
+}

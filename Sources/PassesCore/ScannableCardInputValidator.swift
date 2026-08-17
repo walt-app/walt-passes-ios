@@ -22,8 +22,9 @@ public enum ScannableCardInputValidator {
         createdAt: PassInstant
     ) -> ScannableCardCreateResult {
         // Decode-only formats are refused before the field checks: the format is unusable
-        // regardless of what was typed, and leaving this to the consumer would put a
-        // trust-claim decision outside the kernel (wpass-pl7.1 lesson).
+        // regardless of what was typed (wpass-pl7.1 lesson). Storage rehydrates rows
+        // through this validator too, so decode-only deliberately gates reads as well —
+        // a row demoted to decode-only drops from the list rather than rendering blank.
         if ScannableFormatConstraints.decodeOnly.contains(input.format) {
             return .unsupportedFormat(format: input.format)
         }

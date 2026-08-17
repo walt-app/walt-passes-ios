@@ -8,11 +8,10 @@ import Foundation
 /// "is this character allowed" off of this object directly. Bidi / control-character checks
 /// live in the validator because they apply uniformly across all formats.
 enum ScannableFormatConstraints {
-    /// Roster members this build decodes but cannot render: ios-pjs.15 added them to the
-    /// decode allowlist, and the writer arms land with ios-pjs.16. Read by the validator
-    /// (refuses to mint a card), the encoder (refuses to encode), and
-    /// `ScannableFormat.isCreatable()` so the three cannot drift into a state where a card
-    /// is creatable but unrenderable. ios-pjs.16 empties this set.
+    /// Roster members this build decodes but cannot render (ios-pjs.15; ios-pjs.16 wires
+    /// the writers and empties this set). Read by the validator, the encoder, and
+    /// `ScannableFormat.isCreatable()` so the three cannot drift into
+    /// creatable-but-unrenderable.
     static let decodeOnly: Set<ScannableFormat> = [.pdf417, .aztec]
 
     /// Soft cap on payload length per symbology. Numeric symbologies use their exact length.
@@ -146,13 +145,10 @@ enum ScannableFormatConstraints {
     private static let upcALength = 12
     private static let qrMax = 2000
 
-    /// Soft caps for the two 2D symbologies added with ios-pjs.15, in characters (same
-    /// unit as `qrMax`; the byte-exact ceiling is an encoder concern). Both sit well under
-    /// the spec maxima at any plausible error-correction level — PDF417 holds ~1,100 bytes
-    /// and Aztec ~1,900 at MINIMUM EC, and both shrink as EC rises. ios-pjs.16 pins the EC
-    /// defaults; if it picks anything below PDF417 level 5 or Aztec 23%, re-derive these
-    /// against that pin. A boarding pass, the sizing case that matters, is nowhere near
-    /// either: an IATA BCBP payload runs ~60 characters per leg.
+    /// Soft caps for the two ios-pjs.15 symbologies, in characters (like `qrMax`). Both
+    /// sit under the spec maxima at any plausible error-correction level; ios-pjs.16 pins
+    /// the EC defaults and must re-derive these against that pin (derivation in ADR
+    /// `barcode-decode-1`, 2026-08-17).
     private static let pdf417Max = 800
     private static let aztecMax = 1500
     private static let printableAsciiMin = 0x20
