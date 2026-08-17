@@ -24,6 +24,11 @@ import Foundation
 /// ceiling was derived against that pin; changing one means re-deriving the other, and
 /// the pkpass `Barcode` path (`BarcodeRenderer.cgImage(message:format:)`) carries its
 /// own generator calls and its own level-M pin that must move in lockstep.
+///
+/// **QR charset posture (ios-pjs.20, human-approved 2026-08-17).** `CIQRCodeGenerator`
+/// encodes raw UTF-8 with no ECI declaration, and the kernel deliberately keeps that —
+/// full record in ADR `passes-ui-2`; the capacity consequence lives on
+/// `ScannableFormatConstraints.qrByteCeilingEccMByteMode`.
 public enum BarcodeEncoder {
 
     public static func encode(payload: String, format: ScannableFormat) -> EncodeResult {

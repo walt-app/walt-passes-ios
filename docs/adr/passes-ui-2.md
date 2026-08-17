@@ -47,3 +47,24 @@ never be empty, so this is reachable only with a caller-constructed in-memory ca
 
 Rows already on disk that clear the validator but fail the encode (the CJK-density case)
 are not backfilled: they degrade to the failure tile and stay editable to a valid payload.
+
+## Update 2026-08-17 (ios-pjs.20): QR ships UTF-8 without an ECI header, deliberately
+
+Android pins ZXing's QR CHARACTER_SET to UTF-8 with an ECI header (wpass-qj6) because
+ZXing otherwise transliterated non-Latin-1 payloads. The iOS defect shape is inverted:
+`CIQRCodeGenerator` always encodes raw UTF-8 bytes and exposes no ECI knob, so the choice
+was accept-and-document versus hand-rolling a complete QR encoder (Reed-Solomon, masking,
+mode segmentation) just to emit the header. Human decision 2026-08-17: **accept
+UTF-8-without-ECI** as the de-facto mobile convention.
+
+Evidence: `QrCharsetRoundTripTests` round-trips Android's original defect payload
+("café — naïve — 東京"), CJK-only, and supplementary-plane payloads verbatim through the
+production `BarcodeEncoder` -> Vision path — proving the two ends agree on UTF-8. The
+ECI-absence claim itself is pinned by `qrByteModeCeilingIsExactAtTheBoundary`: its
+2331-byte success arm fails if the generator ever spends capacity on an ECI header
+(Vision decodes symbols with and without the header alike, so the round-trip suite
+cannot detect one). Residual, accepted risk: a strictly spec-conformant reader
+defaults ECI-less symbols to Latin-1 and shows mojibake for non-ASCII payloads (ASCII is
+unambiguous everywhere). Capacity consequence: the v40-M byte-mode ceiling stays 2331 on
+iOS where Android's ECI header lowers it to 2330 — `qrByteModeCeilingIsExactAtTheBoundary`
+pins the number against the live generator so a CoreImage capacity change fails loudly.

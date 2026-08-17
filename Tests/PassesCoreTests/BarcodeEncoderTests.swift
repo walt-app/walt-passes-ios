@@ -133,4 +133,43 @@ struct BarcodeEncoderTests {
             #expect(!detail.contains(payload), "\(format) detail must not echo the payload")
         }
     }
+
+    // MARK: - Byte-mode ceiling boundary (ios-pjs.20)
+
+    @Test func qrByteModeCeilingIsExactAtTheBoundary() {
+        // The at-ceiling arm is the live-generator pin — and the one assertion in the
+        // repo that fails if CoreImage ever starts emitting an ECI header, which would
+        // cost this 2331st byte (iOS keeps 2331 where Android's ECI header means 2330).
+        // The over arm pins the proactive refuseBeforeWriter refusal, not the generator.
+        let atCeiling = BarcodeEncoder.encode(
+            payload: String(repeating: "a", count: 2_331), format: .qr)
+        guard case .success = atCeiling else {
+            Issue.record("2331 byte-mode bytes should fit v40-M, got \(atCeiling)")
+            return
+        }
+        let overCeiling = BarcodeEncoder.encode(
+            payload: String(repeating: "a", count: 2_332), format: .qr)
+        guard case .failure(.payloadTooDense) = overCeiling else {
+            Issue.record("2332 byte-mode bytes should be payloadTooDense, got \(overCeiling)")
+            return
+        }
+    }
+
+    @Test func qrMultibyteCeilingEdgeIsExactInsideTheValidatorCap() {
+        // The production-reachable edge: 2331 lowercase chars exceed the validator's
+        // 2000-char cap, but CJK reaches the byte ceiling well inside it — 777 chars are
+        // exactly 2331 bytes (fits), 778 are 2334 (refused).
+        let atCeiling = BarcodeEncoder.encode(
+            payload: String(repeating: "東", count: 777), format: .qr)
+        guard case .success = atCeiling else {
+            Issue.record("777 CJK chars (2331 bytes) should fit v40-M, got \(atCeiling)")
+            return
+        }
+        let overCeiling = BarcodeEncoder.encode(
+            payload: String(repeating: "東", count: 778), format: .qr)
+        guard case .failure(.payloadTooDense) = overCeiling else {
+            Issue.record("778 CJK chars (2334 bytes) should be payloadTooDense, got \(overCeiling)")
+            return
+        }
+    }
 }

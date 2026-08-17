@@ -33,6 +33,13 @@ enum BarcodeImageFactory {
         return cgImage(from: filter.outputImage, scale: scale)
     }
 
+    /// PNG-encode an already-encoded symbol (e.g. the production `BarcodeEncoder`'s
+    /// output), upscaled so Vision has readable module sizes. Lets a posture test drive
+    /// the REAL encoder instead of this factory's test-local generator.
+    static func png(symbol: CGImage, scale: CGFloat = 12) -> Data {
+        encode(cgImage(from: CIImage(cgImage: symbol), scale: scale), as: .png)
+    }
+
     /// The Code128 symbol as a `CGImage`. Code128's generator accepts only Latin-1; keep ASCII.
     static func code128CGImage(_ payload: String, scale: CGFloat = 3) -> CGImage {
         let filter = CIFilter.code128BarcodeGenerator()
