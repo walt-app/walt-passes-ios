@@ -103,9 +103,11 @@ public enum BarcodeEncoder {
         return ciContext.createCGImage(output, from: output.extent)
     }
 
-    /// Shared context: construction costs real resources on every save otherwise, and
-    /// `CIContext` is documented thread-safe.
-    private static let ciContext = CIContext()
+    /// Shared context: construction costs real resources on every save otherwise.
+    /// `nonisolated(unsafe)` because the SDK annotation lags the documentation —
+    /// Core Image documents `CIContext` as immutable and safe to share across
+    /// threads, but the macOS 15.5 SDK does not yet mark it `Sendable`.
+    private nonisolated(unsafe) static let ciContext = CIContext()
 
     /// Kernel-authored refusal wording. Unlike Android, no third-party message exists to
     /// carry: CoreImage yields no reason and the 1D encoder returns bare nil, so `detail`
