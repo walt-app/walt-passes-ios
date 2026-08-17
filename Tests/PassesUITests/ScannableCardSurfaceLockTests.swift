@@ -1,4 +1,5 @@
 import PassesCore
+import PassesUICore
 import SwiftUI
 import Testing
 
@@ -35,18 +36,20 @@ struct ScannableCardSurfaceLockTests {
         _ = lockedInit()
     }
 
-    @Test func screenExposesExactlyThreePublicInitialiserParameters() {
-        // (card, showLabel, trustCaption). `showLabel` (wpass-1wu.1) gates ONLY
-        // the top label Text; `trustCaption` (wpass-gv6) is the ONE audited way
-        // the kernel caption is omitted — `.hostedTypeRow` shifts the C2 claim
-        // to the host's "Pass type" row, pinned consumer-side in walt-ios.
-        // Android counts four (the extra is `modifier`). The exact-arity
+    @Test func screenExposesExactlyFourPublicInitialiserParameters() {
+        // (card, showLabel, trustCaption, faceTint). `showLabel` (wpass-1wu.1)
+        // gates ONLY the top label Text; `trustCaption` (wpass-gv6) is the ONE
+        // audited way the kernel caption is omitted — `.hostedTypeRow` shifts
+        // the C2 claim to the host's "Pass type" row, pinned consumer-side in
+        // walt-ios. `faceTint` (wpass-80y.1) colors the card face only; it can
+        // suppress neither the code, the payload readback, nor the caption.
+        // Android counts five (the extra is `modifier`). The exact-arity
         // function reference fails to compile if any parameter is added,
         // removed, renamed, or retyped — even a defaulted addition, which a
         // plain call would let through; review the threat model before
         // changing this initialiser.
-        let lockedInit: (ScannableCard, Bool, TrustCaptionPlacement) -> ScannableCardScreen =
-            ScannableCardScreen.init(card:showLabel:trustCaption:)
+        let lockedInit: (ScannableCard, Bool, TrustCaptionPlacement, ArgbColor?) -> ScannableCardScreen =
+            ScannableCardScreen.init(card:showLabel:trustCaption:faceTint:)
         _ = lockedInit
     }
 
