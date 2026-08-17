@@ -72,6 +72,11 @@ public struct ScannableCardView: View {
             image
                 .frame(maxWidth: .infinity)
                 .frame(height: barHeight)
+        case .fitToWidth(let minHeight):
+            image
+                .aspectRatio(contentMode: .fit)
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: minHeight)
         }
     }
 }
@@ -84,6 +89,12 @@ enum CodeRenderPolicy: Equatable {
     /// than its parent, so the surrounding layout cannot be dragged
     /// off-screen (ios-ra9).
     case stretchToWidth(barHeight: CGFloat)
+    /// Wide 2D symbol (stacked rows — PDF417): preserve aspect since data
+    /// rides both axes, bounded by the parent width (the ios-ra9 rule),
+    /// letterboxing down to at least `minHeight`. Provisional sizing — no
+    /// card in this build can carry the format; ios-pjs.16 verifies it with
+    /// the writers.
+    case fitToWidth(minHeight: CGFloat)
 }
 
 extension ScannableFormat {
@@ -91,16 +102,19 @@ extension ScannableFormat {
     /// the single source of truth.
     var renderPolicy: CodeRenderPolicy {
         switch self {
-        case .qr: return .fitSquare(minSide: minRenderSize.0)
+        case .qr, .aztec: return .fitSquare(minSide: minRenderSize.0)
         case .code128, .ean13, .upcA, .code39:
             return .stretchToWidth(barHeight: minRenderSize.1)
+        case .pdf417: return .fitToWidth(minHeight: minRenderSize.1)
         }
     }
 
     var minRenderSize: (CGFloat, CGFloat) {
         switch self {
-        case .qr: return (240, 240)
-        case .code128, .ean13, .upcA, .code39: return (320, 96)
+        // Square 2D symbols share the QR gate-distance floor; PDF417 shares the wide
+        // 320 x 96 floor the pkpass surface uses for the same symbology.
+        case .qr, .aztec: return (240, 240)
+        case .code128, .ean13, .upcA, .code39, .pdf417: return (320, 96)
         }
     }
 

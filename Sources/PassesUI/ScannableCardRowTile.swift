@@ -76,6 +76,8 @@ extension ScannableFormat {
         case .ean13: return "EAN-13"
         case .upcA: return "UPC-A"
         case .qr: return "QR"
+        case .pdf417: return "PDF417"
+        case .aztec: return "Aztec"
         }
     }
 }

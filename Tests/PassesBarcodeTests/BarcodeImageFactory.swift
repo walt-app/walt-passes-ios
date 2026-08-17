@@ -48,6 +48,20 @@ enum BarcodeImageFactory {
         return cgImage(from: filter.outputImage, scale: scale)
     }
 
+    /// Encode `payload` as an Aztec symbol (IATA-boarding-pass symbology) and return PNG bytes.
+    static func aztecPNG(_ payload: String, scale: CGFloat = 8) -> Data {
+        let filter = CIFilter.aztecCodeGenerator()
+        filter.message = Data(payload.utf8)
+        return encode(cgImage(from: filter.outputImage, scale: scale), as: .png)
+    }
+
+    /// Encode `payload` as a PDF417 symbol (stacked 2D) and return PNG bytes.
+    static func pdf417PNG(_ payload: String, scale: CGFloat = 6) -> Data {
+        let filter = CIFilter.pdf417BarcodeGenerator()
+        filter.message = Data(payload.utf8)
+        return encode(cgImage(from: filter.outputImage, scale: scale), as: .png)
+    }
+
     /// Build a valid solid-white image of exactly `width` x `height` in `type` — a decodable
     /// container carrying no symbol. Doubles as a header-cap fixture (size it past the dimension
     /// limits) and, with a `type` outside the still-image roster (e.g. `.gif`), as the

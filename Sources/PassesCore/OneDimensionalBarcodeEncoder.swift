@@ -38,7 +38,7 @@ public enum OneDimensionalBarcodeEncoder {
             return ean13Symbol("0" + payload).map { matrix(quietPadded($0, left: 9, right: 9)) }
         case .code39:
             return code39Row(payload).map(matrix)
-        case .qr, .code128:
+        case .qr, .code128, .pdf417, .aztec:
             return nil
         }
     }

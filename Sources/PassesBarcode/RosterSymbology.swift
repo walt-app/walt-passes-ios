@@ -14,7 +14,7 @@ import Vision
 enum RosterSymbology {
     /// The exact symbologies handed to `VNDetectBarcodesRequest`. Nothing outside this set is
     /// ever requested, so Vision cannot return an out-of-roster symbol.
-    static let requested: [VNBarcodeSymbology] = [.qr, .code128, .ean13, .code39]
+    static let requested: [VNBarcodeSymbology] = [.qr, .code128, .ean13, .code39, .aztec, .pdf417]
 
     /// Fold a Vision observation onto the ``ScannableFormat`` Walt renders (plus the payload,
     /// which the UPC-A arm rewrites). `nil` for anything outside the clamp — unreachable while
@@ -28,6 +28,8 @@ enum RosterSymbology {
         case .qr: return (.qr, payload)
         case .code128: return (.code128, payload)
         case .code39: return (.code39, payload)
+        case .aztec: return (.aztec, payload)
+        case .pdf417: return (.pdf417, payload)
         case .ean13:
             // A leading-zero EAN-13 IS a UPC-A code (GS1); report it the way
             // Android's ZXing does so cross-platform scans of the same card

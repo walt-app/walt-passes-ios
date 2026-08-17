@@ -21,6 +21,12 @@ public enum ScannableCardInputValidator {
         id: ScannableCardId,
         createdAt: PassInstant
     ) -> ScannableCardCreateResult {
+        // Decode-only formats are refused before the field checks: the format is unusable
+        // regardless of what was typed, and leaving this to the consumer would put a
+        // trust-claim decision outside the kernel (wpass-pl7.1 lesson).
+        if ScannableFormatConstraints.decodeOnly.contains(input.format) {
+            return .unsupportedFormat(format: input.format)
+        }
         let trimmedLabel = input.label.trimmingCharacters(in: .whitespacesAndNewlines)
         if let rejection = validateLabel(trimmedLabel) {
             return .invalidLabel(reason: rejection)

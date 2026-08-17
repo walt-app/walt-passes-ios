@@ -73,7 +73,7 @@ internal enum BarcodeRenderer {
         case .failure:
             switch format {
             case .code39, .ean13, .upcA: return placeholderCGImage()
-            case .qr, .code128: return nil
+            case .qr, .code128, .pdf417, .aztec: return nil
             }
         }
     }
