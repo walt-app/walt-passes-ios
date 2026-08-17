@@ -11,10 +11,11 @@ import Foundation
 ///  - `pdf417` — boarding passes and event tickets (stacked 2D)
 ///  - `aztec` — boarding passes (IATA BCBP) and transit tickets (square 2D)
 ///
-/// `pdf417` and `aztec` joined decode-only with ios-pjs.15 (users import boarding passes
-/// as screenshots, which have no PKPASS to arrive in); their writer arms land with
-/// ios-pjs.16. DataMatrix stays out deliberately. Full record: ADR `barcode-decode-1`,
-/// 2026-08-17 update.
+/// `pdf417` and `aztec` joined with ios-pjs.15 (users import boarding passes as
+/// screenshots, which have no PKPASS to arrive in); ios-pjs.16 wired their writers, with
+/// a Latin-1 payload charset (§7-approved — the CoreImage generators cannot declare a
+/// charset, so ISO-8859-1, the ECI-less spec default, is the one encoding every reader
+/// agrees on). DataMatrix stays out deliberately. Full record: ADR `barcode-decode-1`.
 ///
 /// Distinct type from `BarcodeFormat` (the PKPASS-pass barcode enum). The two are
 /// deliberately not unified — a verified PKPASS barcode and a user-typed card barcode are
@@ -39,5 +40,19 @@ extension ScannableFormat {
     /// validator and encoder read, so the three cannot disagree.
     public func isCreatable() -> Bool {
         !ScannableFormatConstraints.decodeOnly.contains(self)
+    }
+
+    /// Whether a symbol in this format can carry a payload a scanner may ACT on (URIs:
+    /// links, dialers, wallets). The C4 confirm-before-create gate keys off this
+    /// (ios-pjs.17, wlt-9o3x analogue): QR, PDF417 and Aztec are byte-capable and carry
+    /// the same actionable schemes; the 1D trio cannot express them in practice and no
+    /// scanner auto-acts on 1D content. Exhaustive here so a roster addition is a
+    /// compile-time decision at one kernel site, not a gate that quietly stops covering
+    /// a format.
+    public func canCarryActionablePayload() -> Bool {
+        switch self {
+        case .qr, .pdf417, .aztec: return true
+        case .code128, .code39, .ean13, .upcA: return false
+        }
     }
 }

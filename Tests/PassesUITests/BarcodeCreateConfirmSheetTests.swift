@@ -66,10 +66,24 @@ struct BarcodeCreateConfirmSheetTests {
     }
 
     @Test func plainTextRequiresNoConfirmation() {
-        #expect(!QrPayloadKind.plainText.requiresCreateConfirmation)
+        for format: ScannableFormat in [.qr, .pdf417, .aztec] {
+            #expect(!QrPayloadKind.plainText.requiresCreateConfirmation(format: format))
+        }
     }
 
-    @Test func nonPlainTextRequiresConfirmation() {
-        #expect(QrPayloadKind.phone(number: "+1").requiresCreateConfirmation)
+    @Test func actionablePayloadRequiresConfirmationOnEveryActionableFormat() {
+        // The C4 gate (ios-pjs.17): PDF417 and Aztec carry the same actionable URIs QR
+        // does, so the confirmation must not be QR-scoped.
+        for format: ScannableFormat in [.qr, .pdf417, .aztec] {
+            #expect(QrPayloadKind.phone(number: "+1").requiresCreateConfirmation(format: format))
+        }
+    }
+
+    @Test func oneDimensionalFormatsNeverConfirm() {
+        // No scanner auto-acts on a 1D symbol; a no-op sheet would train users to
+        // dismiss the real one.
+        for format: ScannableFormat in [.code128, .ean13, .upcA, .code39] {
+            #expect(!QrPayloadKind.phone(number: "+1").requiresCreateConfirmation(format: format))
+        }
     }
 }
