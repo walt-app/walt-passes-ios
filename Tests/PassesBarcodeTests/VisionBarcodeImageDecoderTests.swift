@@ -87,4 +87,17 @@ struct VisionBarcodeImageDecoderTests {
         defer { try? FileManager.default.removeItem(at: url) }
         #expect(await decoder.decode(source: .fileURL(url)) == .decodedBarcode(payload: "FROM-FILE-URL", format: .qr))
     }
+
+    /// The Android wpass-07h lesson: a second decode of the same source must not read zero
+    /// bytes off a shared open-file-description parked at EOF. iOS reads through a fresh
+    /// per-call `FileHandle`, so the same `BarcodeImageSource` value decodes twice.
+    @Test func decodingTheSameSourceTwiceIsIdempotent() async throws {
+        let png = BarcodeImageFactory.qrPNG("READ-TWICE")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).png")
+        try png.write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let source = BarcodeImageSource.fileURL(url)
+        #expect(await decoder.decode(source: source) == .decodedBarcode(payload: "READ-TWICE", format: .qr))
+        #expect(await decoder.decode(source: source) == .decodedBarcode(payload: "READ-TWICE", format: .qr))
+    }
 }

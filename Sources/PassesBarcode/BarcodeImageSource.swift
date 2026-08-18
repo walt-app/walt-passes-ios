@@ -11,6 +11,12 @@ import Foundation
 /// already reached the main-process heap. iOS drops that containment premise (it has no isolated
 /// child; Vision decodes out-of-process instead), so `.data` is acceptable — and the app's
 /// `PHPicker` path naturally yields either in-memory `Data` or a temporary file `URL`.
+///
+/// **Decoding the same source twice is idempotent** (the Android wpass-07h lesson, where a second
+/// decode re-using a shared open-file-description read zero bytes at EOF). Both arms are stateless
+/// values: `.data` holds the bytes, and every `.fileURL` read opens a fresh `FileHandle` at offset
+/// 0 and closes it before returning. Neither arm may ever carry an open handle or stream — pinned
+/// by `VisionBarcodeImageDecoderTests.decodingTheSameSourceTwiceIsIdempotent`.
 public enum BarcodeImageSource: Sendable {
     /// The image already resident in memory (e.g. a `PHPickerResult` in-memory representation).
     case data(Data)
