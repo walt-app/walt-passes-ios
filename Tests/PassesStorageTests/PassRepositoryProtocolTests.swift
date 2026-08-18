@@ -288,6 +288,14 @@ private final class FakePassRepository: PassRepository, @unchecked Sendable {
         .success(value: ())
     }
 
+    func insertDocumentPageRaster(
+        id: DocumentRecordId,
+        page: Int,
+        raster: DocumentPageRasterBlob
+    ) async -> StorageResult<Void> {
+        .success(value: ())
+    }
+
     func observeDocuments() -> AsyncStream<[DocumentRow]> {
         AsyncStream { continuation in
             continuation.yield([])

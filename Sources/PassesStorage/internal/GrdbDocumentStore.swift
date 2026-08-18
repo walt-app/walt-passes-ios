@@ -67,15 +67,25 @@ enum GrdbDocumentStore {
         _ db: Database
     ) throws {
         for (index, raster) in rasters.enumerated() {
-            try db.execute(
-                sql: """
-                    INSERT OR REPLACE INTO \(Schema.Tables.documentPageRasters)
-                        (document_id, page_index, bytes, width_px, height_px)
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
-                arguments: [documentId, index, raster.bytes, raster.widthPx, raster.heightPx]
-            )
+            try writePageRaster(documentId: documentId, page: index, raster, db)
         }
+    }
+
+    /// Insert-or-replace one page's raster row (the per-page self-heal backfill).
+    static func writePageRaster(
+        documentId: Int64,
+        page: Int,
+        _ raster: DocumentPageRasterBlob,
+        _ db: Database
+    ) throws {
+        try db.execute(
+            sql: """
+                INSERT OR REPLACE INTO \(Schema.Tables.documentPageRasters)
+                    (document_id, page_index, bytes, width_px, height_px)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+            arguments: [documentId, page, raster.bytes, raster.widthPx, raster.heightPx]
+        )
     }
 
     static func loadPageRaster(
@@ -154,20 +164,29 @@ enum GrdbDocumentStore {
     }
 
     /// Render-once completeness + bound check (ios-dts.16): the raster set must cover
-    /// exactly `pageCount` pages and every raster must be within
-    /// `DocumentBounds.maxRasterPixels` with positive dimensions.
+    /// exactly `pageCount` pages and every raster must pass `rasterRejection`.
     static func pageRasterRejection(
         pageRasters: [DocumentPageRasterBlob],
         pageCount: Int
     ) -> DocumentStorageRejectedKind? {
         if pageRasters.count != pageCount { return .pageRastersInvalidAtStorage }
         for raster in pageRasters {
-            if raster.widthPx <= 0 || raster.heightPx <= 0 {
-                return .pageRastersInvalidAtStorage
-            }
-            if Int64(raster.widthPx) * Int64(raster.heightPx) > DocumentBounds.maxRasterPixels {
-                return .pageRastersInvalidAtStorage
-            }
+            if let kind = rasterRejection(raster) { return kind }
+        }
+        return nil
+    }
+
+    /// Per-raster bound check: positive dimensions, the 4 MP pixel cap, and the encoded
+    /// byte cap (the pixel cap alone leaves `bytes` the unbounded axis).
+    static func rasterRejection(_ raster: DocumentPageRasterBlob) -> DocumentStorageRejectedKind? {
+        if raster.widthPx <= 0 || raster.heightPx <= 0 {
+            return .pageRastersInvalidAtStorage
+        }
+        if Int64(raster.widthPx) * Int64(raster.heightPx) > DocumentBounds.maxRasterPixels {
+            return .pageRastersInvalidAtStorage
+        }
+        if Int64(raster.bytes.count) > DocumentBounds.maxRasterBytes {
+            return .pageRastersInvalidAtStorage
         }
         return nil
     }

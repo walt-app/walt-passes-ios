@@ -131,13 +131,25 @@ public protocol PassRepository: Sendable {
         page: Int
     ) async -> StorageResult<DocumentPageRasterBlob?>
 
-    /// Backfills (insert-or-replace) the full raster set for an existing document —
-    /// the lazy migration path for pre-v6 rows. Same completeness and pixel-bound
-    /// validation as `insertDocument`; rejected sets leave existing rows untouched.
-    /// Returns `integrityViolation` when no document row matches `id`.
+    /// Backfills (insert-or-replace) the full raster set for an existing document.
+    /// Same completeness and per-raster bound validation as `insertDocument`; rejected
+    /// sets leave existing rows untouched. Returns `integrityViolation` when no document
+    /// row matches `id`.
     func insertDocumentPageRasters(
         id: DocumentRecordId,
         pageRasters: [DocumentPageRasterBlob]
+    ) async -> StorageResult<Void>
+
+    /// Backfills (insert-or-replace) ONE page's raster — the lazy self-heal path for
+    /// pre-v6 rows, where pages recover one open at a time and a full set is never
+    /// available in one call (`RerenderOnMissPageSource.persistRaster` wires here).
+    /// Validates `0 <= page < page_count` and the per-raster pixel/byte bounds
+    /// (`pageRastersInvalidAtStorage` on violation, checked in the same transaction as
+    /// the stored `page_count` read); `integrityViolation` when no document matches `id`.
+    func insertDocumentPageRaster(
+        id: DocumentRecordId,
+        page: Int,
+        raster: DocumentPageRasterBlob
     ) async -> StorageResult<Void>
 
     /// Irreversible delete of a document row and its cascaded thumbnail and page-raster

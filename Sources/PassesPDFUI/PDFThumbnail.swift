@@ -104,13 +104,19 @@ public final class PDFThumbnailViewModel {
 
     /// Kick off a page load. Cancelling any prior load in flight first so a
     /// rapid `start(...)` -> `start(...)` rebind does not retain two tasks.
+    /// `maxPixelSize` caps the decoded bitmap's longer side (see
+    /// `decodeStoredRaster`); `nil` decodes the stored raster at full size.
     public func start(
-        document: PDFDocument, page: Int, source: any DocumentPageSource, context: ThumbnailRenderContext
+        document: PDFDocument, page: Int, source: any DocumentPageSource,
+        context: ThumbnailRenderContext, maxPixelSize: Int? = nil
     ) {
         let documentId = document.id
         loadTask?.cancel()
         loadTask = Task { [weak self] in
-            await self?.run(documentId: documentId, page: page, source: source, context: context)
+            await self?.run(
+                documentId: documentId, page: page, source: source,
+                context: context, maxPixelSize: maxPixelSize
+            )
         }
     }
 
@@ -122,7 +128,8 @@ public final class PDFThumbnailViewModel {
     }
 
     private func run(
-        documentId: PDFDocumentId, page: Int, source: any DocumentPageSource, context: ThumbnailRenderContext
+        documentId: PDFDocumentId, page: Int, source: any DocumentPageSource,
+        context: ThumbnailRenderContext, maxPixelSize: Int?
     ) async {
         if let cached = context.cache?.get(documentId: documentId, page: page) {
             state = .rendered(
@@ -137,7 +144,7 @@ public final class PDFThumbnailViewModel {
             state = .failed(kind: .rendererFailed)
             return
         }
-        guard let pageImage = decodeStoredRaster(raster) else {
+        guard let pageImage = decodeStoredRaster(raster, maxPixelSize: maxPixelSize) else {
             context.telemetry.onConsumerRenderFailed(reason: .other)
             state = .failed(kind: .rendererFailed)
             return

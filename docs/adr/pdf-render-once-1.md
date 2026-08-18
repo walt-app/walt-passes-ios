@@ -39,9 +39,14 @@ re-introduction (`import PDFKit`, `PDFDocument(data`, `PDFRendererBinder`,
 
 **One sanctioned fallback.** `RerenderOnMissPageSource` (PassesPDF) serves a
 store miss — a legacy pre-v6 document or a lost blob — with exactly one
-bounded re-render of the originals, persists the backfill, and never retries
-in a loop. Steady state: the untrusted bytes meet a PDF parser once per
-document, at import.
+bounded re-render of the originals per miss, persists the backfill through
+the **per-page** `insertDocumentPageRaster` (pre-v6 pages recover one open at
+a time; the full-set write can never be assembled from single misses), and
+never retries in a loop. Concurrent misses are coalesced per page and
+serialized across pages, so at most one parse of the originals runs at a
+time; render failures report `onConsumerRenderFailed` rather than vanishing.
+Steady state: the untrusted bytes meet a PDF parser once per document, at
+import, and a legacy document converges page by page as it is viewed.
 
 ## Consequences
 
@@ -53,7 +58,23 @@ document, at import.
   also fixes the former slot-stretch distortion — pages are now aspect-correct.
 - Storage grows by the raster set (PNG of ≤ 4 MP per page, ≤ 10 pages);
   text-heavy pages compress well, scanned-photo PDFs may exceed the original's
-  size. Accepted; revisit the codec only if real.
+  size — bounded by `DocumentBounds.maxRasterBytes` (20 MiB per raster; a PNG
+  materially above the 16 MiB raw-RGBA size is pathological). Accepted;
+  revisit the codec only if real. Import peak memory holds the full raster
+  set (≤ 10 encoded PNGs) plus one render buffer before `persist` — accepted
+  for the 10-page cap, not a shape to grow past it.
+- Display surfaces decode to what they can show: the inline pager caps the
+  decoded longer side (`DocumentView.inlineMaxPixelSize`, 1200 px — ~20 MB of
+  cache across `defaultPageWindow` instead of ~80 MB at full budget); the
+  full-screen surface decodes the stored raster at full size. Both decode the
+  same first-party bytes — render-once is untouched.
+- The fit derives from `bounds(for: .mediaBox)`, which ignores `/Rotate`,
+  while `page.draw` applies it — pre-existing behaviour, but any residual
+  squash on rotated pages is now baked into storage rather than recomputed
+  per open. The mediaBox is attacker-controlled geometry: `fittedDimensions`
+  clamps every value into `[1, maxPixels]` before integer conversion and
+  derives width from the integer budget (no correction loop), so degenerate
+  aspects cost O(1) and cannot trap.
 - **iOS-only deviation from Android** (human-approved 2026-08-18): Android
   re-renders per open inside its isolated sandbox and stores no rasters. The
   iOS schema chain therefore runs one version ahead from v6 on (iOS v7/v8

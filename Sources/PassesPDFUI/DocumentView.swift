@@ -136,6 +136,14 @@ public struct DocumentView: View {
     /// `cardRadius` in `PassesUI`'s `ScannableCardScreen` (the Android wpass-nbr
     /// shared-token hoist is still open there too).
     private static let faceRadius: CGFloat = 20
+
+    /// Longer-side cap for the inline pager's decoded pages. The stored raster
+    /// carries the full-screen 4 MP budget (~16 MB decoded); the inline card
+    /// slot never shows more than ~400 pt of width, so 1200 px covers a 3x
+    /// display crisply while keeping `defaultPageWindow` pages of cache under
+    /// ~20 MB where the uncapped decode would hold ~80 MB. Internal so the
+    /// decode-budget test pins against the source of truth.
+    static let inlineMaxPixelSize: Int = 1200
 }
 
 /// Docked discoverability hint below the pager. When the consumer provides
@@ -176,7 +184,8 @@ private struct DocumentPage: View {
                     document: document,
                     page: pageIndex,
                     source: pages,
-                    context: ThumbnailRenderContext(telemetry: telemetry, cache: cache)
+                    context: ThumbnailRenderContext(telemetry: telemetry, cache: cache),
+                    maxPixelSize: DocumentView.inlineMaxPixelSize
                 )
             }
             .onDisappear { viewModel.stop() }

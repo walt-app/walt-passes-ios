@@ -102,8 +102,12 @@ package struct PDFKitRenderer: PDFRendererBinder {
         guard let pdfPage = doc.page(at: page) else {
             return .rejected(kind: .rendererFailed)
         }
+        // The mediaBox is attacker-controlled geometry: require positive, FINITE sides
+        // before any arithmetic (an infinite side would poison the aspect into NaN).
         let bounds = pdfPage.bounds(for: .mediaBox)
-        guard bounds.width > 0, bounds.height > 0 else {
+        guard bounds.width > 0, bounds.height > 0,
+            bounds.width.isFinite, bounds.height.isFinite
+        else {
             return .rejected(kind: .rendererFailed)
         }
         let dims = Self.fittedDimensions(
@@ -111,6 +115,10 @@ package struct PDFKitRenderer: PDFRendererBinder {
             pageHeight: Double(bounds.height),
             maxPixels: maxPixels
         )
+        // Belt over the fit math: never hand rasterise dimensions outside the budget.
+        guard Int64(dims.widthPx) * Int64(dims.heightPx) <= maxPixels else {
+            return .rejected(kind: .rendererFailed)
+        }
         return rasterise(
             page: pdfPage,
             widthPx: dims.widthPx,
@@ -120,24 +128,33 @@ package struct PDFKitRenderer: PDFRendererBinder {
     }
 
     /// Aspect-correct output dimensions filling `maxPixels` as closely as possible without
-    /// exceeding it. Pure so the fit math is testable without PDFKit; floors guarantee the
-    /// product never exceeds the budget, and each side is at least 1.
+    /// exceeding it. Pure so the fit math is testable without PDFKit.
+    ///
+    /// The inputs derive from attacker-controlled page geometry, so every Double is
+    /// clamped into `[1, maxPixels]` BEFORE the `Int` conversion (an unclamped conversion
+    /// traps on values above `Int.max`), and the width is derived from the integer budget
+    /// (`maxPixels / h`) rather than corrected by a loop — a degenerate aspect like
+    /// 1e9 : 1e-6 must cost O(1), never a per-pixel walk.
     package static func fittedDimensions(
         pageWidth: Double,
         pageHeight: Double,
         maxPixels: Int64
     ) -> (widthPx: Int, heightPx: Int) {
+        let budget = Double(maxPixels)
         let aspect = pageWidth / pageHeight
-        let height = (Double(maxPixels) / aspect).squareRoot()
+        guard aspect.isFinite, aspect > 0 else { return (1, 1) }
+        let height = (budget / aspect).squareRoot()
         let width = height * aspect
-        var w = max(Int(width), 1)
-        var h = max(Int(height), 1)
-        // Flooring both sides already keeps w*h <= maxPixels for any real page shape;
-        // the loop is a belt for degenerate aspects where a side floored to 1.
-        while Int64(w) * Int64(h) > maxPixels {
-            if w >= h { w = max(w - 1, 1) } else { h = max(h - 1, 1) }
-        }
+        let h = clampToBudget(height, maxPixels: maxPixels)
+        let w = min(clampToBudget(width, maxPixels: maxPixels), max(Int(maxPixels) / h, 1))
         return (w, h)
+    }
+
+    /// One side of the fit, floored into `[1, maxPixels]` with the range check done in
+    /// Double space so the `Int` conversion cannot trap.
+    private static func clampToBudget(_ side: Double, maxPixels: Int64) -> Int {
+        guard side.isFinite, side >= 1 else { return 1 }
+        return Int(min(side, Double(maxPixels)))
     }
 
     private func rasterise(

@@ -106,6 +106,29 @@ struct RenderOnceTests {
         #expect(dims.widthPx >= 1 && dims.heightPx >= 1)
         #expect(Int64(dims.widthPx) * Int64(dims.heightPx) <= 1024)
     }
+
+    /// Hostile mediaBox geometry (the review-1 blocker): extreme aspects must cost O(1)
+    /// and never trap the `Int` conversion — these inputs previously drove a ~6.5e9
+    /// iteration loop and a fatal-error conversion respectively.
+    @Test func fittedDimensionsSurvivesHostileGeometry() {
+        let budget: Int64 = 4 * 1024 * 1024
+        for (w, h): (Double, Double) in [
+            (1_000_000_000, 0.000_1),  // former per-pixel-walk shape
+            (1_000_000_000, 0.000_001),  // former Int-conversion trap shape
+            (0.000_001, 1_000_000_000),
+            (Double.greatestFiniteMagnitude, 1),
+            (1, Double.greatestFiniteMagnitude),
+        ] {
+            let dims = PDFKitRenderer.fittedDimensions(pageWidth: w, pageHeight: h, maxPixels: budget)
+            #expect(dims.widthPx >= 1 && dims.heightPx >= 1)
+            #expect(Int64(dims.widthPx) * Int64(dims.heightPx) <= budget)
+        }
+        // Non-finite aspect folds to the 1x1 floor rather than propagating NaN.
+        let nan = PDFKitRenderer.fittedDimensions(
+            pageWidth: .infinity, pageHeight: .infinity, maxPixels: budget
+        )
+        #expect(nan.widthPx == 1 && nan.heightPx == 1)
+    }
     #endif
 
     // MARK: - RerenderOnMissPageSource
@@ -150,20 +173,61 @@ struct RenderOnceTests {
         #expect(counters.count("persist") == 1)
     }
 
-    @Test func failedRerenderReturnsNilAndPersistsNothing() async {
+    @Test func failedRerenderReturnsNilPersistsNothingAndReportsTelemetry() async {
         let counters = Counters()
+        let telemetry = ConsumerFailureRecordingTelemetry()
         let source = RerenderOnMissPageSource(
             loadStored: { _ in nil },
             loadOriginalBytes: { TestFixtures.validPDFBytes },
             renderer: CountingBinder(counters: counters, result: .rejected(kind: .rendererFailed)),
             encoder: StubRasterEncoder(),
-            persistRaster: { _, _ in counters.bump("persist") }
+            persistRaster: { _, _ in counters.bump("persist") },
+            telemetry: telemetry
         )
         let raster = await source.pageRaster(page: 0)
         #expect(raster == nil)
-        // Exactly one render attempt per call, no retry loop, nothing persisted.
+        // Exactly one render attempt per call, no retry loop, nothing persisted —
+        // and the failure is visible to telemetry rather than silent.
         #expect(counters.count("render") == 1)
         #expect(counters.count("persist") == 0)
+        #expect(telemetry.consumerFailures == 1)
+    }
+
+    @Test func concurrentMissesOfTheSamePageRenderOnce() async {
+        let counters = Counters()
+        let gate = SlowBinder(counters: counters, result: Self.okRender())
+        let source = RerenderOnMissPageSource(
+            loadStored: { _ in nil },
+            loadOriginalBytes: { TestFixtures.validPDFBytes },
+            renderer: gate,
+            encoder: StubRasterEncoder(),
+            persistRaster: { _, _ in }
+        )
+        // Two concurrent requests for the same page must coalesce onto one render.
+        async let first = source.pageRaster(page: 0)
+        async let second = source.pageRaster(page: 0)
+        let results = await [first, second]
+        #expect(results.compactMap { $0 }.count == 2)
+        #expect(counters.count("render") == 1)
+    }
+
+    @Test func concurrentMissesOfDifferentPagesSerializeTheParses() async {
+        let counters = Counters()
+        let gate = SlowBinder(counters: counters, result: Self.okRender())
+        let source = RerenderOnMissPageSource(
+            loadStored: { _ in nil },
+            loadOriginalBytes: { TestFixtures.validPDFBytes },
+            renderer: gate,
+            encoder: StubRasterEncoder(),
+            persistRaster: { _, _ in }
+        )
+        // Adjacent pager pages miss together: both render, but never concurrently —
+        // SlowBinder records the peak number of in-flight renders.
+        async let first = source.pageRaster(page: 0)
+        async let second = source.pageRaster(page: 1)
+        _ = await [first, second]
+        #expect(counters.count("render") == 2)
+        #expect(gate.peakConcurrency == 1)
     }
 }
 
@@ -236,6 +300,61 @@ private struct CountingBinder: PDFRendererBinder {
 
 private struct StubRasterEncoder: PageRasterEncoding {
     func encode(render: RenderResult) throws -> Data { Data([0x89, 0x50, 0x4E, 0x47]) }
+}
+
+/// Fitted renders take a beat and record how many run at once, so the
+/// serialization claim is observable rather than assumed.
+private final class SlowBinder: PDFRendererBinder, @unchecked Sendable {
+    private let lock = NSLock()
+    private let counters: Counters
+    private let result: RenderResult
+    private var inFlight = 0
+    private var _peak = 0
+
+    init(counters: Counters, result: RenderResult) {
+        self.counters = counters
+        self.result = result
+    }
+
+    var peakConcurrency: Int {
+        syncLocked(lock) { _peak }
+    }
+
+    func probe(pdf: Data) async -> ProbeResult { .rejected(kind: .rendererFailed) }
+
+    func render(
+        pdf: Data, page: Int, widthPx: Int, heightPx: Int, sourceRect: RenderSourceRect
+    ) async -> RenderResult {
+        result
+    }
+
+    func renderFitted(pdf: Data, page: Int, maxPixels: Int64) async -> RenderResult {
+        counters.bump("render")
+        syncLocked(lock) {
+            inFlight += 1
+            _peak = max(_peak, inFlight)
+        }
+        try? await Task.sleep(for: .milliseconds(20))
+        syncLocked(lock) { inFlight -= 1 }
+        return result
+    }
+}
+
+/// Counts `onConsumerRenderFailed` calls from the self-heal failure arm.
+private final class ConsumerFailureRecordingTelemetry: DocumentTelemetryGuard, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _consumerFailures = 0
+
+    var consumerFailures: Int {
+        syncLocked(lock) { _consumerFailures }
+    }
+
+    func onImportStarted() {}
+    func onImportSucceeded(event: DocumentImportSucceededEvent) {}
+    func onImportFailed(event: DocumentImportFailedEvent) {}
+    func onConsumerRenderFailed(reason: ConsumerRenderFailure) {
+        syncLocked(lock) { _consumerFailures += 1 }
+    }
 }
 
 /// First `encode` succeeds (the page-zero thumbnail), later calls throw —

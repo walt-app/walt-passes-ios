@@ -189,115 +189,6 @@ public final class GrdbPassRepository: PassRepository, @unchecked Sendable {
         }
     }
 
-    public func loadDocumentPageRaster(
-        id: DocumentRecordId,
-        page: Int
-    ) async -> StorageResult<DocumentPageRasterBlob?> {
-        guard ensureOpen() else { return .failure(error: .databaseLocked) }
-        do {
-            // A missing raster is only "no raster yet" when the document itself exists;
-            // an unknown document id stays an integrity violation like the other loads.
-            let (exists, raster) = try await dbQueue.read { db in
-                (
-                    try GrdbDocumentStore.pageCount(id: id, db) != nil,
-                    try GrdbDocumentStore.loadPageRaster(id: id, page: page, db)
-                )
-            }
-            guard exists else { return .failure(error: .integrityViolation(recordId: .document(id))) }
-            return .success(value: raster)
-        } catch {
-            return .failure(error: StorageErrorMapper.map(error))
-        }
-    }
-
-    public func insertDocumentPageRasters(
-        id: DocumentRecordId,
-        pageRasters: [DocumentPageRasterBlob]
-    ) async -> StorageResult<Void> {
-        guard ensureOpen() else { return .failure(error: .databaseLocked) }
-        // The stored page_count is the validation reference, so the lookup and the write
-        // share one transaction (the count cannot change between them).
-        enum BackfillOutcome {
-            case written
-            case documentMissing
-            case rejected(DocumentStorageRejectedKind)
-        }
-        do {
-            let outcome: BackfillOutcome = try await dbQueue.write { db in
-                guard let pageCount = try GrdbDocumentStore.pageCount(id: id, db) else {
-                    return .documentMissing
-                }
-                if let kind = GrdbDocumentStore.pageRasterRejection(
-                    pageRasters: pageRasters, pageCount: pageCount
-                ) {
-                    return .rejected(kind)
-                }
-                try GrdbDocumentStore.writePageRasters(documentId: id.value, pageRasters, db)
-                return .written
-            }
-            switch outcome {
-            case .documentMissing:
-                return .failure(error: .integrityViolation(recordId: .document(id)))
-            case .rejected(let kind):
-                return .failure(error: .documentRejected(kind: kind))
-            case .written:
-                return .success(value: ())
-            }
-        } catch {
-            return .failure(error: StorageErrorMapper.map(error))
-        }
-    }
-
-    public func updateDocumentLabel(id: DocumentRecordId, label: String) async -> StorageResult<Void> {
-        guard ensureOpen() else { return .failure(error: .databaseLocked) }
-        // Normalize like updatePassUserLabel: trim, measure the cap against the trimmed
-        // value (mirror of Android). Blank folds to "" — empty labels are allowed here.
-        // Cap checked before the row lookup, so a too-long label on an unknown id surfaces
-        // as `.documentRejected`, not `.integrityViolation`.
-        let normalized = label.trimmingCharacters(in: .whitespacesAndNewlines)
-        if normalized.count > DocumentBounds.maxLabelChars {
-            return .failure(error: .documentRejected(kind: .labelTooLongAtStorage))
-        }
-        do {
-            let matched = try await dbQueue.write { db in
-                try GrdbDocumentStore.updateLabel(id: id, label: normalized, db)
-            }
-            guard matched else { return .failure(error: .integrityViolation(recordId: .document(id))) }
-            await refreshDocuments()
-            return .success(value: ())
-        } catch {
-            return .failure(error: StorageErrorMapper.map(error))
-        }
-    }
-
-    public func observeDocuments() -> AsyncStream<[DocumentRow]> {
-        documentsBroadcaster.stream()
-    }
-
-    public func loadDocumentBytes(id: DocumentRecordId) async -> StorageResult<Data> {
-        guard ensureOpen() else { return .failure(error: .databaseLocked) }
-        do {
-            guard let bytes = try await dbQueue.read({ try GrdbDocumentStore.loadBytes(id: id, $0) }) else {
-                return .failure(error: .integrityViolation(recordId: .document(id)))
-            }
-            return .success(value: bytes)
-        } catch {
-            return .failure(error: StorageErrorMapper.map(error))
-        }
-    }
-
-    public func loadDocumentThumbnail(id: DocumentRecordId) async -> StorageResult<Data> {
-        guard ensureOpen() else { return .failure(error: .databaseLocked) }
-        do {
-            guard let bytes = try await dbQueue.read({ try GrdbDocumentStore.loadThumbnail(id: id, $0) }) else {
-                return .failure(error: .integrityViolation(recordId: .document(id)))
-            }
-            return .success(value: bytes)
-        } catch {
-            return .failure(error: StorageErrorMapper.map(error))
-        }
-    }
-
     public func deleteDocument(id: DocumentRecordId) async -> StorageResult<Void> {
         guard ensureOpen() else { return .failure(error: .databaseLocked) }
         do {
@@ -461,5 +352,158 @@ public final class GrdbPassRepository: PassRepository, @unchecked Sendable {
         passesBroadcaster.finish()
         documentsBroadcaster.finish()
         scannableBroadcaster.finish()
+    }
+}
+
+// MARK: - Document page rasters (ios-dts.16 render-once)
+
+extension GrdbPassRepository {
+    public func loadDocumentPageRaster(
+        id: DocumentRecordId,
+        page: Int
+    ) async -> StorageResult<DocumentPageRasterBlob?> {
+        guard ensureOpen() else { return .failure(error: .databaseLocked) }
+        do {
+            // A missing raster is only "no raster yet" when the document itself exists;
+            // an unknown document id stays an integrity violation like the other loads.
+            let (exists, raster) = try await dbQueue.read { db in
+                (
+                    try GrdbDocumentStore.pageCount(id: id, db) != nil,
+                    try GrdbDocumentStore.loadPageRaster(id: id, page: page, db)
+                )
+            }
+            guard exists else { return .failure(error: .integrityViolation(recordId: .document(id))) }
+            return .success(value: raster)
+        } catch {
+            return .failure(error: StorageErrorMapper.map(error))
+        }
+    }
+
+    public func insertDocumentPageRasters(
+        id: DocumentRecordId,
+        pageRasters: [DocumentPageRasterBlob]
+    ) async -> StorageResult<Void> {
+        guard ensureOpen() else { return .failure(error: .databaseLocked) }
+        // The stored page_count is the validation reference, so the lookup and the write
+        // share one transaction (the count cannot change between them).
+        enum BackfillOutcome {
+            case written
+            case documentMissing
+            case rejected(DocumentStorageRejectedKind)
+        }
+        do {
+            let outcome: BackfillOutcome = try await dbQueue.write { db in
+                guard let pageCount = try GrdbDocumentStore.pageCount(id: id, db) else {
+                    return .documentMissing
+                }
+                if let kind = GrdbDocumentStore.pageRasterRejection(
+                    pageRasters: pageRasters, pageCount: pageCount
+                ) {
+                    return .rejected(kind)
+                }
+                try GrdbDocumentStore.writePageRasters(documentId: id.value, pageRasters, db)
+                return .written
+            }
+            switch outcome {
+            case .documentMissing:
+                return .failure(error: .integrityViolation(recordId: .document(id)))
+            case .rejected(let kind):
+                return .failure(error: .documentRejected(kind: kind))
+            case .written:
+                return .success(value: ())
+            }
+        } catch {
+            return .failure(error: StorageErrorMapper.map(error))
+        }
+    }
+
+    public func insertDocumentPageRaster(
+        id: DocumentRecordId,
+        page: Int,
+        raster: DocumentPageRasterBlob
+    ) async -> StorageResult<Void> {
+        guard ensureOpen() else { return .failure(error: .databaseLocked) }
+        // Same one-transaction shape as the full-set backfill: the stored page_count is
+        // the range reference for `page`, so the lookup and the write cannot race.
+        enum PageOutcome {
+            case written
+            case documentMissing
+            case rejected(DocumentStorageRejectedKind)
+        }
+        do {
+            let outcome: PageOutcome = try await dbQueue.write { db in
+                guard let pageCount = try GrdbDocumentStore.pageCount(id: id, db) else {
+                    return .documentMissing
+                }
+                if page < 0 || page >= pageCount {
+                    return .rejected(.pageRastersInvalidAtStorage)
+                }
+                if let kind = GrdbDocumentStore.rasterRejection(raster) {
+                    return .rejected(kind)
+                }
+                try GrdbDocumentStore.writePageRaster(documentId: id.value, page: page, raster, db)
+                return .written
+            }
+            switch outcome {
+            case .documentMissing:
+                return .failure(error: .integrityViolation(recordId: .document(id)))
+            case .rejected(let kind):
+                return .failure(error: .documentRejected(kind: kind))
+            case .written:
+                return .success(value: ())
+            }
+        } catch {
+            return .failure(error: StorageErrorMapper.map(error))
+        }
+    }
+
+    public func updateDocumentLabel(id: DocumentRecordId, label: String) async -> StorageResult<Void> {
+        guard ensureOpen() else { return .failure(error: .databaseLocked) }
+        // Normalize like updatePassUserLabel: trim, measure the cap against the trimmed
+        // value (mirror of Android). Blank folds to "" — empty labels are allowed here.
+        // Cap checked before the row lookup, so a too-long label on an unknown id surfaces
+        // as `.documentRejected`, not `.integrityViolation`.
+        let normalized = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalized.count > DocumentBounds.maxLabelChars {
+            return .failure(error: .documentRejected(kind: .labelTooLongAtStorage))
+        }
+        do {
+            let matched = try await dbQueue.write { db in
+                try GrdbDocumentStore.updateLabel(id: id, label: normalized, db)
+            }
+            guard matched else { return .failure(error: .integrityViolation(recordId: .document(id))) }
+            await refreshDocuments()
+            return .success(value: ())
+        } catch {
+            return .failure(error: StorageErrorMapper.map(error))
+        }
+    }
+
+    public func observeDocuments() -> AsyncStream<[DocumentRow]> {
+        documentsBroadcaster.stream()
+    }
+
+    public func loadDocumentBytes(id: DocumentRecordId) async -> StorageResult<Data> {
+        guard ensureOpen() else { return .failure(error: .databaseLocked) }
+        do {
+            guard let bytes = try await dbQueue.read({ try GrdbDocumentStore.loadBytes(id: id, $0) }) else {
+                return .failure(error: .integrityViolation(recordId: .document(id)))
+            }
+            return .success(value: bytes)
+        } catch {
+            return .failure(error: StorageErrorMapper.map(error))
+        }
+    }
+
+    public func loadDocumentThumbnail(id: DocumentRecordId) async -> StorageResult<Data> {
+        guard ensureOpen() else { return .failure(error: .databaseLocked) }
+        do {
+            guard let bytes = try await dbQueue.read({ try GrdbDocumentStore.loadThumbnail(id: id, $0) }) else {
+                return .failure(error: .integrityViolation(recordId: .document(id)))
+            }
+            return .success(value: bytes)
+        } catch {
+            return .failure(error: StorageErrorMapper.map(error))
+        }
     }
 }

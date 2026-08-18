@@ -21,6 +21,10 @@ public enum DocumentBounds {
     /// bound (`PDFKitRenderer.maxPixels`); storage re-checks it so a caller bug cannot
     /// land an unbounded first-party blob.
     public static let maxRasterPixels: Int64 = 4 * 1024 * 1024
+    /// Per-page raster byte cap — the pixel cap alone leaves the encoded size unbounded.
+    /// A 4 MP RGBA raw buffer is 16 MiB; a PNG materially above that is pathological
+    /// (PNG of noise ≈ raw + filter overhead), so 20 MiB admits every legitimate encode.
+    public static let maxRasterBytes: Int64 = 20 * 1024 * 1024
 }
 
 /// One Walt-produced page raster as stored in `document_page_rasters` (ios-dts.16

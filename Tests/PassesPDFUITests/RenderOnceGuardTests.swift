@@ -32,8 +32,10 @@ struct RenderOnceGuardTests {
         let files = try #require(
             FileManager.default.enumerator(at: sourcesDir, includingPropertiesForKeys: nil)
         )
+        // `\b` keeps `import PassesPDFCore` legal while catching `import PassesPDF`
+        // anywhere — including as a file's final unterminated line.
         let forbidden = [
-            "import PassesPDF\n",  // the renderer module (newline: PassesPDFCore is fine)
+            #"import\s+PassesPDF\b"#,
             "import PDFKit",
             "PDFDocument(data",
             "PDFRendererBinder",
@@ -45,7 +47,7 @@ struct RenderOnceGuardTests {
             scanned += 1
             for needle in forbidden {
                 #expect(
-                    !text.contains(needle),
+                    text.range(of: needle, options: .regularExpression) == nil,
                     "\(url.lastPathComponent) reintroduces a document-parse path: \(needle)"
                 )
             }
@@ -132,6 +134,25 @@ struct StoredRasterLoadTests {
             return
         }
         #expect(telemetry.consumerFailures == [.other])
+    }
+
+    @Test func decodeCapBoundsTheLongerSideAndNilDecodesFull() {
+        // 8x12 stored PNG: capped at 6 the longer side lands at 6; nil keeps 12.
+        let raster = StoredPageRaster(pngBytes: Self.tinyPng(width: 8, height: 12), widthPx: 8, heightPx: 12)
+        let capped = decodeStoredRaster(raster, maxPixelSize: 6)
+        #expect(capped != nil)
+        if let capped {
+            #expect(max(capped.cgImage.width, capped.cgImage.height) <= 6)
+        }
+        let full = decodeStoredRaster(raster)
+        #expect(full?.cgImage.width == 8)
+        #expect(full?.cgImage.height == 12)
+    }
+
+    @Test func inlineCapIsWellBelowTheStoredBudget() {
+        // The inline pager must not pay the full-screen 4 MP decode per page.
+        #expect(DocumentView.inlineMaxPixelSize <= 1200)
+        #expect(DocumentView.inlineMaxPixelSize >= 600)
     }
 
     @Test func decodedRasterIsServedFromTheCacheOnRestart() async {
