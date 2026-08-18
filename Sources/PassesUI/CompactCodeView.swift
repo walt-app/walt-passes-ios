@@ -5,9 +5,10 @@ import SwiftUI
 /// Row-scale code render for wallet-list card faces (ipass-65p.1; consumer epic
 /// ios-te9). Where `ScannableCardView` enforces gate-distance minimum sizes for
 /// the detail surface, this surface renders the same `(payload, format)` pair
-/// compactly — the redesign's neutral list cards show a scannable's ACTUAL code
-/// on the card face (a ~66 pt QR tile, or a full-width 1D band), so the code is
-/// usable at a reader straight from the list.
+/// compactly, for a host that chooses to show a scannable's ACTUAL code at list
+/// scale (a ~66 pt QR tile, or a full-width 1D band), usable at a reader
+/// straight from the list. Walt no longer does — see the dormant-concession
+/// note under Trust posture below.
 ///
 /// The blessed-path guarantees, so consumers do not hand-roll them per card face:
 ///
@@ -35,11 +36,12 @@ import SwiftUI
 ///
 /// This is mechanism, not chrome: no label, no eyebrow, no trust caption, no
 /// signature affordance can be composed here. The C1/C2 list-surface
-/// distinctions (class eyebrow, neutral card surface — see
-/// `SCANNABLE_CARD_THREAT_MODEL.md` and the `ScannableCardRowTile` lineage)
-/// stay on the consumer's card, and kernel trust captions stay on detail
-/// surfaces. C5 posture is unchanged: this path only re-renders through the
-/// kernel's encoder-only `BarcodeRenderer`; it adds no decode surface.
+/// distinctions (class eyebrow, class-tinted card surface — see
+/// `SCANNABLE_CARD_THREAT_MODEL.md` and `docs/adr/passes-ui-7.md`, which
+/// records this concession as dormant) stay on the consumer's card, and kernel
+/// trust captions stay on detail surfaces. C5 posture is unchanged: this path
+/// only re-renders through the kernel's encoder-only `BarcodeRenderer`; it
+/// adds no decode surface.
 /// `contentDescription` exists because the code is usually the card face's
 /// dominant visual: the consumer passes its merged card description (or nil
 /// when a parent element already carries it).

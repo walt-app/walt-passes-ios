@@ -161,7 +161,6 @@ struct ViewConstructionSmokeTests {
         #expect(type(of: tinted.body) != Never.self)
         _ = ScannableCardView(card: card)
         _ = ScannableCardView(card: card, showPayloadCaption: true)
-        _ = ScannableCardRowTile(card: card, onTap: {})
     }
 
     @Test func scannableCardViewWithCaptionConstructs() {
