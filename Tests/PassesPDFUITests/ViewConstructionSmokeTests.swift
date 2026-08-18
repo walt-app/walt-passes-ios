@@ -63,6 +63,19 @@ struct ViewConstructionSmokeTests {
         #expect(type(of: v.body) != Never.self)
     }
 
+    @Test func documentViewConstructsWithFaceTint() {
+        // The tinted branch has no consumer yet, so this is its only body
+        // evaluation until the app wires ios-pjs.8. Also the one construction
+        // of the per-page -> container background hoist.
+        let v = DocumentView(
+            doc: Self.doc,
+            pdfData: Self.pdfData,
+            renderer: Self.renderer,
+            faceTint: ArgbColor(argb: 0xFFCE_E6FF)
+        )
+        #expect(type(of: v.body) != Never.self)
+    }
+
     @Test func documentViewConstructsWithFullScreenCallback() {
         let v = DocumentView(
             doc: Self.doc,

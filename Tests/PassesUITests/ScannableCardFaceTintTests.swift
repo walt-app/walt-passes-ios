@@ -38,8 +38,8 @@ struct ScannableCardFaceTintTests {
 
     @Test func chosenInkClearsTheWorstCaseContrastOnEveryGrey() {
         // The tie point is also the worst case: no tint scores below ~4.58:1
-        // against the ink chosen for it. Sweep the grey axis to pin that the
-        // flip never picks the losing ink.
+        // against the ink chosen for it. The grey axis suffices because inkOn
+        // depends on luminance alone and greys realize every luminance.
         for value in 0...255 {
             let channel = UInt32(value)
             let tint = ArgbColor(argb: 0xFF00_0000 | channel << 16 | channel << 8 | channel)

@@ -12,5 +12,7 @@
 /// Mirror of Android `is.walt.passes.ui.core.faceIsTinted`.
 public func faceIsTinted(_ faceTint: ArgbColor?) -> Bool {
     guard let faceTint else { return false }
+    // The alpha > 0 boundary is Android's (`alpha > 0f`): partial alpha is
+    // accepted and documented consumer-side as "pass an opaque color".
     return faceTint.alpha > 0
 }

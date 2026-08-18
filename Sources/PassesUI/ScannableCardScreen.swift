@@ -13,8 +13,9 @@ import SwiftUI
 /// the host's background shows through. Untinted, the card is fixed white rather than
 /// Android's adaptive `colorScheme.surface`: the CoreImage raster bakes an opaque white
 /// background, so an adaptive dark card would leave a white seam around the code
-/// in dark mode. Content on the card is forced light-scheme so the payload
-/// caption stays legible on white.
+/// in dark mode. Content on the untinted card is forced light-scheme so the
+/// payload caption stays legible on white; on a tinted face the readback sits
+/// outside that scope and takes the luminance-derived ink instead.
 ///
 /// `faceTint` (wpass-80y.1 mirror) draws a card face behind the white code
 /// panel and moves the label + payload readback onto it; the panel behind the
@@ -110,6 +111,8 @@ public struct ScannableCardScreen: View {
                 .background(
                     Self.scanCodePanel, in: RoundedRectangle(cornerRadius: Self.panelRadius)
                 )
+                // Defensive: keeps the white panel a light-scheme island if
+                // anything scheme-aware is ever added inside it.
                 .environment(\.colorScheme, .light)
             VStack(spacing: Self.labelToPayloadGap) {
                 if showLabel {
@@ -171,11 +174,14 @@ public struct ScannableCardScreen: View {
     /// is amending the contract rather than refactoring it.
     static let scanCodePanel = Color.white
 
-    // Tinted-face registers (26.08.08 design card anatomy; wpass-80y.1).
+    // Shared by BOTH arms deliberately: the screen inset and panel corner
+    // predate the tint and the 26.08.08 anatomy assigns them the same values.
     private static let screenMargin: CGFloat = 24
+    private static let panelRadius: CGFloat = 16
+
+    // Tinted-face registers (26.08.08 design card anatomy; wpass-80y.1).
     private static let cardRadius: CGFloat = 20
     private static let cardPadding: CGFloat = 18
-    private static let panelRadius: CGFloat = 16
     private static let panelToTextGap: CGFloat = 16
     private static let labelToPayloadGap: CGFloat = 4
 }

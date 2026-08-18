@@ -4,7 +4,7 @@ import SwiftUI
 
 /// Renders a `ScannableCard`'s barcode as a 1-bit-per-module raster through
 /// `PassesCore.BarcodeEncoder` (ADR `passes-ui-2`, revised). A structurally
-/// invalid 1D payload degrades to the grey placeholder so the surface still
+/// invalid 1D payload degrades to the clear placeholder so the surface still
 /// composes.
 ///
 /// Minimum on-screen sizes mirror `BarcodeView` so both barcode surfaces stay

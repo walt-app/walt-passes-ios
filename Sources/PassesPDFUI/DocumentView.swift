@@ -148,10 +148,16 @@ public struct DocumentView: View {
     static func pageRenderTarget(page: Int, slot: CGSize) -> ThumbnailRenderTarget {
         ThumbnailRenderTarget(
             page: page,
-            widthPx: max(max(Int(slot.width), 1), DocumentPage.targetPageWidthPx),
-            heightPx: max(max(Int(slot.height), 1), DocumentPage.targetPageHeightPx)
+            widthPx: max(max(Int(slot.width), 1), Self.targetPageWidthPx),
+            heightPx: max(max(Int(slot.height), 1), Self.targetPageHeightPx)
         )
     }
+
+    /// Render budget defaults (mirror of Android's 360 / 480 dp baseline);
+    /// the request adopts whichever is larger between the slot and these.
+    /// Internal so `DocumentFaceTintTests` pins against the source of truth.
+    static let targetPageWidthPx: Int = 360
+    static let targetPageHeightPx: Int = 480
 }
 
 /// Docked discoverability hint below the pager. When the consumer provides
@@ -216,10 +222,4 @@ private struct DocumentPage: View {
         }
     }
 
-    /// Render budget defaults. Mirror of Android's 360 / 480 dp baseline.
-    /// The actual request adopts whichever is larger between the layout
-    /// slot and these constants, so a small consumer slot still gets a
-    /// crisp baseline render.
-    static let targetPageWidthPx: Int = 360
-    static let targetPageHeightPx: Int = 480
 }

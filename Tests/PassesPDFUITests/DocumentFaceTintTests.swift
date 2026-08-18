@@ -30,8 +30,8 @@ struct DocumentFaceTintTests {
         // a slot below the baseline budget (floored) and one above (adopted).
         let small = DocumentView.pageRenderTarget(page: 2, slot: CGSize(width: 200, height: 300))
         #expect(small.page == 2)
-        #expect(small.widthPx == 360)
-        #expect(small.heightPx == 480)
+        #expect(small.widthPx == DocumentView.targetPageWidthPx)
+        #expect(small.heightPx == DocumentView.targetPageHeightPx)
 
         let large = DocumentView.pageRenderTarget(page: 0, slot: CGSize(width: 800, height: 1000))
         #expect(large.widthPx == 800)

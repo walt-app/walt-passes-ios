@@ -1,4 +1,5 @@
 import PassesCore
+import PassesUICore
 import SwiftUI
 import Testing
 
@@ -154,6 +155,10 @@ struct ViewConstructionSmokeTests {
         _ = ScannableCardTile(card: card, onTap: {})
         _ = ScannableCardScreen(card: card)
         _ = ScannableCardScreen(card: card, showLabel: false)
+        // The tinted branch has no consumer yet, so this is its only body
+        // evaluation until the app wires ios-pjs.8.
+        let tinted = ScannableCardScreen(card: card, faceTint: ArgbColor(argb: 0xFF00_837E))
+        #expect(type(of: tinted.body) != Never.self)
         _ = ScannableCardView(card: card)
         _ = ScannableCardView(card: card, showPayloadCaption: true)
         _ = ScannableCardRowTile(card: card, onTap: {})
