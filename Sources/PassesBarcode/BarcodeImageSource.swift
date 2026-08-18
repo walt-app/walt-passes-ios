@@ -15,8 +15,10 @@ import Foundation
 /// **Decoding the same source twice is idempotent** (the Android wpass-07h lesson, where a second
 /// decode re-using a shared open-file-description read zero bytes at EOF). Both arms are stateless
 /// values: `.data` holds the bytes, and every `.fileURL` read opens a fresh `FileHandle` at offset
-/// 0 and closes it before returning. Neither arm may ever carry an open handle or stream — pinned
-/// by `VisionBarcodeImageDecoderTests.decodingTheSameSourceTwiceIsIdempotent`.
+/// 0 and closes it before returning. Do not add an arm that carries an open handle or stream:
+/// `Sendable` already rejects a stream, but a `FileHandle` arm would compile — the decode-twice
+/// and exhaustive-arms tests in `VisionBarcodeImageDecoderTests` are what a new arm must reconcile.
+/// `PDFImportSource` carries the same contract for the PDF lane.
 public enum BarcodeImageSource: Sendable {
     /// The image already resident in memory (e.g. a `PHPickerResult` in-memory representation).
     case data(Data)

@@ -367,6 +367,44 @@ struct PDFImporterTests {
         }
         #expect(persists.snapshot.first?.byteSize == TestFixtures.validPDFBytes.count)
     }
+
+    /// Pins the re-read idempotency contract on `PDFImportSource` (wpass-07h):
+    /// a second import of the same source value must drain the same bytes, not
+    /// zero bytes off a shared open-file-description parked at EOF.
+    @Test func importingTheSameSourceTwiceIsIdempotent() async throws {
+        let tmpURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("walt-test-\(UUID().uuidString).pdf")
+        try TestFixtures.validPDFBytes.write(to: tmpURL)
+        defer { try? FileManager.default.removeItem(at: tmpURL) }
+
+        let persists = PersistRecorder()
+        for _ in 0..<2 {
+            let factory = RecordingSessionFactory(
+                binder: StaticBinder(
+                    probeResult: .ok(pageCount: 1),
+                    renderResult: .ok(
+                        pixels: TestFixtures.defaultThumbPixelBuffer(),
+                        widthPx: TestFixtures.defaultThumbW,
+                        heightPx: TestFixtures.defaultThumbH,
+                        pageAspect: 1
+                    )
+                )
+            )
+            let result = try await makeTestImporter(sessionFactory: factory).import(
+                source: .fileURL(tmpURL),
+                displayLabel: "twice.pdf",
+                persist: { _, bytes, _, _ in
+                    persists.append(label: "", byteSize: bytes.count, pages: 0, thumbSize: 0)
+                }
+            )
+            if case .imported = result {
+            } else {
+                Issue.record("Expected .imported, got \(result)")
+            }
+        }
+        let expectedSizes = Array(repeating: TestFixtures.validPDFBytes.count, count: 2)
+        #expect(persists.snapshot.map(\.byteSize) == expectedSizes)
+    }
 }
 
 /// Records persist arguments for inspection from tests; lock-protected so
