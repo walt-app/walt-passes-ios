@@ -30,4 +30,12 @@ package struct RejectingRenderer: PDFRendererBinder {
     ) async -> RenderResult {
         .rejected(kind: kind)
     }
+
+    package func renderFitted(
+        pdf: Data,
+        page: Int,
+        maxPixels: Int64
+    ) async -> RenderResult {
+        .rejected(kind: kind)
+    }
 }

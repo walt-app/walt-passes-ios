@@ -17,6 +17,30 @@ public enum DocumentBounds {
     public static let maxBytes: Int64 = 25 * 1024 * 1024
     public static let maxPages: Int = 10
     public static let maxLabelChars: Int = 256
+    /// Per-page raster pixel cap (width * height). Mirrors the renderer's 4 MP output
+    /// bound (`PDFKitRenderer.maxPixels`); storage re-checks it so a caller bug cannot
+    /// land an unbounded first-party blob.
+    public static let maxRasterPixels: Int64 = 4 * 1024 * 1024
+}
+
+/// One Walt-produced page raster as stored in `document_page_rasters` (ios-dts.16
+/// render-once). `bytes` is the PNG encode of the page rendered once at import;
+/// `widthPx`/`heightPx` are the raster's own aspect-correct dimensions. The storage
+/// layer never decodes the blob — it round-trips opaque, like `pdf_bytes`.
+///
+/// Deliberately a storage-local type (not `PassesPDFCore.StoredPageRaster`):
+/// `PassesStorage` does not depend on the PDF modules, and the mapping between the two
+/// shapes is the consumer's seam.
+public struct DocumentPageRasterBlob: Sendable, Equatable {
+    public let bytes: Data
+    public let widthPx: Int
+    public let heightPx: Int
+
+    public init(bytes: Data, widthPx: Int, heightPx: Int) {
+        self.bytes = bytes
+        self.widthPx = widthPx
+        self.heightPx = heightPx
+    }
 }
 
 /// The list-view projection of a stored PDF document. Mirrors the indexed columns of the
@@ -54,4 +78,8 @@ public enum DocumentStorageRejectedKind: Sendable, CaseIterable {
     case oversizedAtStorage
     case tooManyPagesAtStorage
     case labelTooLongAtStorage
+    /// The page-raster set does not line up with the document: wrong count (must equal
+    /// `pageCount`) or a raster exceeding `DocumentBounds.maxRasterPixels`. Render-once
+    /// (ios-dts.16) requires a complete, bounded raster set at insert.
+    case pageRastersInvalidAtStorage
 }

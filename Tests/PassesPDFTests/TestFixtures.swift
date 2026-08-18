@@ -86,6 +86,10 @@ final class RecordingSession: RendererSession, @unchecked Sendable {
 struct StaticBinder: PDFRendererBinder {
     var probeResult: ProbeResult = .rejected(kind: .rendererFailed)
     var renderResult: RenderResult = .rejected(kind: .rendererFailed)
+    /// Result for the per-page fitted render (ios-dts.16). Defaults to
+    /// `renderResult` unless a test sets it apart, so happy-path fixtures keep
+    /// one knob.
+    var fittedResult: RenderResult?
 
     func probe(pdf: Data) async -> ProbeResult { probeResult }
 
@@ -97,6 +101,14 @@ struct StaticBinder: PDFRendererBinder {
         sourceRect: RenderSourceRect
     ) async -> RenderResult {
         renderResult
+    }
+
+    func renderFitted(
+        pdf: Data,
+        page: Int,
+        maxPixels: Int64
+    ) async -> RenderResult {
+        fittedResult ?? renderResult
     }
 }
 
@@ -128,6 +140,14 @@ final class RecordingBinder: PDFRendererBinder, @unchecked Sendable {
     ) async -> RenderResult {
         syncLocked(lock) { _lastSourceRect = sourceRect }
         return renderResult
+    }
+
+    func renderFitted(
+        pdf: Data,
+        page: Int,
+        maxPixels: Int64
+    ) async -> RenderResult {
+        renderResult
     }
 }
 

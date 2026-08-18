@@ -158,7 +158,8 @@ public final class GrdbPassRepository: PassRepository, @unchecked Sendable {
         label: String,
         pdfBytes: Data,
         pageCount: Int,
-        thumbnailBytes: Data
+        thumbnailBytes: Data,
+        pageRasters: [DocumentPageRasterBlob]
     ) async -> StorageResult<DocumentRecordId> {
         guard ensureOpen() else { return .failure(error: .databaseLocked) }
         // Same label normalization as updateDocumentLabel, so both paths writing
@@ -167,19 +168,81 @@ public final class GrdbPassRepository: PassRepository, @unchecked Sendable {
         if let kind = GrdbDocumentStore.rejection(pdfBytes: pdfBytes, pageCount: pageCount, label: label) {
             return .failure(error: .documentRejected(kind: kind))
         }
+        if let kind = GrdbDocumentStore.pageRasterRejection(pageRasters: pageRasters, pageCount: pageCount) {
+            return .failure(error: .documentRejected(kind: kind))
+        }
         let now = clock()
         do {
             let id = try await dbQueue.write { db in
                 try GrdbDocumentStore.insert(
                     GrdbDocumentStore.Insert(
                         label: label, pdfBytes: pdfBytes, pageCount: pageCount,
-                        thumbnailBytes: thumbnailBytes, nowEpochMs: now
+                        thumbnailBytes: thumbnailBytes, pageRasters: pageRasters, nowEpochMs: now
                     ),
                     db
                 )
             }
             await refreshDocuments()
             return .success(value: id)
+        } catch {
+            return .failure(error: StorageErrorMapper.map(error))
+        }
+    }
+
+    public func loadDocumentPageRaster(
+        id: DocumentRecordId,
+        page: Int
+    ) async -> StorageResult<DocumentPageRasterBlob?> {
+        guard ensureOpen() else { return .failure(error: .databaseLocked) }
+        do {
+            // A missing raster is only "no raster yet" when the document itself exists;
+            // an unknown document id stays an integrity violation like the other loads.
+            let (exists, raster) = try await dbQueue.read { db in
+                (
+                    try GrdbDocumentStore.pageCount(id: id, db) != nil,
+                    try GrdbDocumentStore.loadPageRaster(id: id, page: page, db)
+                )
+            }
+            guard exists else { return .failure(error: .integrityViolation(recordId: .document(id))) }
+            return .success(value: raster)
+        } catch {
+            return .failure(error: StorageErrorMapper.map(error))
+        }
+    }
+
+    public func insertDocumentPageRasters(
+        id: DocumentRecordId,
+        pageRasters: [DocumentPageRasterBlob]
+    ) async -> StorageResult<Void> {
+        guard ensureOpen() else { return .failure(error: .databaseLocked) }
+        // The stored page_count is the validation reference, so the lookup and the write
+        // share one transaction (the count cannot change between them).
+        enum BackfillOutcome {
+            case written
+            case documentMissing
+            case rejected(DocumentStorageRejectedKind)
+        }
+        do {
+            let outcome: BackfillOutcome = try await dbQueue.write { db in
+                guard let pageCount = try GrdbDocumentStore.pageCount(id: id, db) else {
+                    return .documentMissing
+                }
+                if let kind = GrdbDocumentStore.pageRasterRejection(
+                    pageRasters: pageRasters, pageCount: pageCount
+                ) {
+                    return .rejected(kind)
+                }
+                try GrdbDocumentStore.writePageRasters(documentId: id.value, pageRasters, db)
+                return .written
+            }
+            switch outcome {
+            case .documentMissing:
+                return .failure(error: .integrityViolation(recordId: .document(id)))
+            case .rejected(let kind):
+                return .failure(error: .documentRejected(kind: kind))
+            case .written:
+                return .success(value: ())
+            }
         } catch {
             return .failure(error: StorageErrorMapper.map(error))
         }

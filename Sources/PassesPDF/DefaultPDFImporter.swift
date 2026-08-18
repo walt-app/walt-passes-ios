@@ -68,6 +68,13 @@ package final class DefaultPDFImporter: PDFImporter {
     package static let thumbWidthPx: Int = 600
     package static let thumbHeightPx: Int = 800
 
+    /// Pixel budget for each persisted page raster (ios-dts.16 render-once).
+    /// Matches `PDFKitRenderer.maxPixels` and the full-screen surface's former
+    /// live-render ceiling, so stored rasters carry the same fidelity the
+    /// display path used to request — import is now the ONLY place the
+    /// original bytes meet a PDF parser.
+    package static let pageRasterMaxPixels: Int64 = 4 * 1024 * 1024
+
     package static let headerBytes: Int = 8
     /// Read buffer for the materialization loop. 64 KiB matches a typical
     /// `InputStream.copyTo` default and keeps allocation overhead low.
@@ -85,7 +92,10 @@ package final class DefaultPDFImporter: PDFImporter {
         source: PDFImportSource,
         displayLabel: String,
         persist:
-            @Sendable (_ label: String, _ pdfBytes: Data, _ pageCount: Int, _ thumbnailBytes: Data) async throws -> Void
+            @Sendable (
+                _ label: String, _ pdfBytes: Data, _ pageCount: Int, _ thumbnailBytes: Data,
+                _ pageRasters: [StoredPageRaster]
+            ) async throws -> Void
     ) async throws -> PDFImportResult {
         let startedAt = deps.now()
         config.telemetryGuard.onImportStarted()
@@ -185,7 +195,10 @@ package final class DefaultPDFImporter: PDFImporter {
         bytes: Data,
         displayLabel: String,
         persist:
-            @Sendable (_ label: String, _ pdfBytes: Data, _ pageCount: Int, _ thumbnailBytes: Data) async throws -> Void,
+            @Sendable (
+                _ label: String, _ pdfBytes: Data, _ pageCount: Int, _ thumbnailBytes: Data,
+                _ pageRasters: [StoredPageRaster]
+            ) async throws -> Void,
         startedAt: Int64
     ) async throws -> PDFImportResult {
         let pages: Int
@@ -223,8 +236,37 @@ package final class DefaultPDFImporter: PDFImporter {
             return rejectAndReport(.encoderFailed, startedAt: startedAt)
         }
 
+        // Render-once (ios-dts.16): every page is rasterised here, at import,
+        // and persisted; display consumes the stored rasters and never hands
+        // the original bytes to a PDF parser again. A failure on ANY page
+        // rejects the whole import — a partially-rasterised document would
+        // reintroduce the re-parse path it exists to remove.
+        var pageRasters: [StoredPageRaster] = []
+        pageRasters.reserveCapacity(pages)
+        for page in 0..<pages {
+            let fitted = await session.client.renderFitted(
+                pdf: bytes,
+                page: page,
+                maxPixels: Self.pageRasterMaxPixels
+            )
+            guard case .ok(_, let widthPx, let heightPx, _) = fitted else {
+                if case .rejected(let kind) = fitted {
+                    return rejectAndReport(kind, startedAt: startedAt)
+                }
+                return rejectAndReport(.rendererFailed, startedAt: startedAt)
+            }
+            do {
+                let pngBytes = try deps.thumbnailEncoder.encode(render: fitted)
+                pageRasters.append(StoredPageRaster(pngBytes: pngBytes, widthPx: widthPx, heightPx: heightPx))
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                return rejectAndReport(.encoderFailed, startedAt: startedAt)
+            }
+        }
+
         do {
-            try await persist(displayLabel, bytes, pages, thumbnailBytes)
+            try await persist(displayLabel, bytes, pages, thumbnailBytes, pageRasters)
         } catch is CancellationError {
             throw CancellationError()
         } catch {

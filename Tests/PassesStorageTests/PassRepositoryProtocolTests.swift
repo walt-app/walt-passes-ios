@@ -91,7 +91,8 @@ struct PassRepositoryProtocolTests {
             label: "x",
             pdfBytes: Data(),
             pageCount: 1,
-            thumbnailBytes: Data()
+            thumbnailBytes: Data(),
+            pageRasters: [DocumentPageRasterBlob(bytes: Data([0x01]), widthPx: 1, heightPx: 1)]
         )
         switch result {
         case .success:
@@ -267,9 +268,24 @@ private final class FakePassRepository: PassRepository, @unchecked Sendable {
         label: String,
         pdfBytes: Data,
         pageCount: Int,
-        thumbnailBytes: Data
+        thumbnailBytes: Data,
+        pageRasters: [DocumentPageRasterBlob]
     ) async -> StorageResult<DocumentRecordId> {
         insertDocumentResult
+    }
+
+    func loadDocumentPageRaster(
+        id: DocumentRecordId,
+        page: Int
+    ) async -> StorageResult<DocumentPageRasterBlob?> {
+        .success(value: nil)
+    }
+
+    func insertDocumentPageRasters(
+        id: DocumentRecordId,
+        pageRasters: [DocumentPageRasterBlob]
+    ) async -> StorageResult<Void> {
+        .success(value: ())
     }
 
     func observeDocuments() -> AsyncStream<[DocumentRow]> {

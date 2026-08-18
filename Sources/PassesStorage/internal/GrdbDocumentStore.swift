@@ -32,12 +32,13 @@ enum GrdbDocumentStore {
         let pdfBytes: Data
         let pageCount: Int
         let thumbnailBytes: Data
+        let pageRasters: [DocumentPageRasterBlob]
         let nowEpochMs: Int64
     }
 
-    /// Inserts the document + thumbnail in one transaction and returns the new id. The
-    /// persisted `byte_count` is derived from `pdfBytes.count` (not caller-asserted), so a
-    /// stale size cannot bypass the cap.
+    /// Inserts the document + thumbnail + page rasters in one transaction and returns the
+    /// new id. The persisted `byte_count` is derived from `pdfBytes.count` (not
+    /// caller-asserted), so a stale size cannot bypass the cap.
     static func insert(_ doc: Insert, _ db: Database) throws -> DocumentRecordId {
         let byteCount = Int64(doc.pdfBytes.count)
         try db.execute(
@@ -53,7 +54,53 @@ enum GrdbDocumentStore {
             sql: "INSERT INTO \(Schema.Tables.documentThumbnails) (document_id, bytes) VALUES (?, ?)",
             arguments: [rowId, doc.thumbnailBytes]
         )
+        try writePageRasters(documentId: rowId, doc.pageRasters, db)
         return DocumentRecordId(rowId)
+    }
+
+    /// Insert-or-replace the raster rows for `documentId`. `INSERT OR REPLACE` keys off
+    /// the `(document_id, page_index)` primary key, so a backfill over a partial set
+    /// converges to exactly the given rasters for pages 0..<count.
+    static func writePageRasters(
+        documentId: Int64,
+        _ rasters: [DocumentPageRasterBlob],
+        _ db: Database
+    ) throws {
+        for (index, raster) in rasters.enumerated() {
+            try db.execute(
+                sql: """
+                    INSERT OR REPLACE INTO \(Schema.Tables.documentPageRasters)
+                        (document_id, page_index, bytes, width_px, height_px)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                arguments: [documentId, index, raster.bytes, raster.widthPx, raster.heightPx]
+            )
+        }
+    }
+
+    static func loadPageRaster(
+        id: DocumentRecordId,
+        page: Int,
+        _ db: Database
+    ) throws -> DocumentPageRasterBlob? {
+        try Row.fetchOne(
+            db,
+            sql: "SELECT bytes, width_px, height_px FROM \(Schema.Tables.documentPageRasters) "
+                + "WHERE document_id = ? AND page_index = ?",
+            arguments: [id.value, page]
+        ).map { row in
+            DocumentPageRasterBlob(bytes: row["bytes"], widthPx: row["width_px"], heightPx: row["height_px"])
+        }
+    }
+
+    /// The `page_count` of the document row matching `id`, or `nil` when absent. Used to
+    /// validate a raster backfill against the stored page count.
+    static func pageCount(id: DocumentRecordId, _ db: Database) throws -> Int? {
+        try Row.fetchOne(
+            db,
+            sql: "SELECT page_count FROM \(Schema.Tables.documents) WHERE id = ?",
+            arguments: [id.value]
+        ).map { $0["page_count"] }
     }
 
     static func loadBytes(id: DocumentRecordId, _ db: Database) throws -> Data? {
@@ -72,7 +119,8 @@ enum GrdbDocumentStore {
         ).map { $0["bytes"] }
     }
 
-    /// Deletes the document row (cascade drops the thumbnail). Returns `false` if absent.
+    /// Deletes the document row (cascade drops the thumbnail and page rasters). Returns
+    /// `false` if absent.
     static func delete(id: DocumentRecordId, _ db: Database) throws -> Bool {
         try db.execute(
             sql: "DELETE FROM \(Schema.Tables.documents) WHERE id = ?",
@@ -102,6 +150,25 @@ enum GrdbDocumentStore {
         if Int64(pdfBytes.count) > DocumentBounds.maxBytes { return .oversizedAtStorage }
         if pageCount > DocumentBounds.maxPages { return .tooManyPagesAtStorage }
         if label.count > DocumentBounds.maxLabelChars { return .labelTooLongAtStorage }
+        return nil
+    }
+
+    /// Render-once completeness + bound check (ios-dts.16): the raster set must cover
+    /// exactly `pageCount` pages and every raster must be within
+    /// `DocumentBounds.maxRasterPixels` with positive dimensions.
+    static func pageRasterRejection(
+        pageRasters: [DocumentPageRasterBlob],
+        pageCount: Int
+    ) -> DocumentStorageRejectedKind? {
+        if pageRasters.count != pageCount { return .pageRastersInvalidAtStorage }
+        for raster in pageRasters {
+            if raster.widthPx <= 0 || raster.heightPx <= 0 {
+                return .pageRastersInvalidAtStorage
+            }
+            if Int64(raster.widthPx) * Int64(raster.heightPx) > DocumentBounds.maxRasterPixels {
+                return .pageRastersInvalidAtStorage
+            }
+        }
         return nil
     }
 }

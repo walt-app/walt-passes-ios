@@ -128,21 +128,23 @@ struct PublicApiSurfaceTests {
         #expect(labels == ["pass:1", "doc:2", "card:3"])
     }
 
-    @Test func schemaDeclaresSevenTablesAndIsAtVersionFive() {
-        #expect(Schema.version == 5)
+    @Test func schemaDeclaresEightTablesAndIsAtVersionSix() {
+        #expect(Schema.version == 6)
         #expect(Schema.Tables.schemaMeta == "schema_meta")
         #expect(Schema.Tables.passes == "passes")
         #expect(Schema.Tables.passImages == "pass_images")
         #expect(Schema.Tables.passLocales == "pass_locales")
         #expect(Schema.Tables.documents == "documents")
         #expect(Schema.Tables.documentThumbnails == "document_thumbnails")
+        #expect(Schema.Tables.documentPageRasters == "document_page_rasters")
         #expect(Schema.Tables.scannableCards == "scannable_cards")
         // schema_meta + passes (v5 shape, incl. user_label) + 3 pass-side indexes
         // + pass_images + pass_locales + documents + 1 document index
         // + document_thumbnails + scannable_cards (v4 shape, no color_argb)
-        // + 1 scannable-card index = 12 statements.
-        #expect(Schema.ddl.count == 12)
-        #expect(Set(Schema.migrations.keys) == Set([1, 2, 3, 4]))
+        // + 1 scannable-card index + document_page_rasters (v6, ios-dts.16)
+        // = 13 statements.
+        #expect(Schema.ddl.count == 13)
+        #expect(Set(Schema.migrations.keys) == Set([1, 2, 3, 4, 5]))
     }
 
     @Test func metaKeysAreThePersistenceVocabularyDocumentedInTheAdr() {
@@ -225,12 +227,13 @@ struct PublicApiSurfaceTests {
             ])
     }
 
-    @Test func documentStorageRejectedKindCoversTheThreeStorageSideArms() {
+    @Test func documentStorageRejectedKindCoversTheFourStorageSideArms() {
         #expect(
             DocumentStorageRejectedKind.allCases == [
                 .oversizedAtStorage,
                 .tooManyPagesAtStorage,
                 .labelTooLongAtStorage,
+                .pageRastersInvalidAtStorage,
             ])
     }
 

@@ -82,6 +82,64 @@ package struct PDFKitRenderer: PDFRendererBinder {
         )
     }
 
+    package func renderFitted(
+        pdf: Data,
+        page: Int,
+        maxPixels: Int64
+    ) async -> RenderResult {
+        guard maxPixels > 0, maxPixels <= Self.maxPixels else {
+            return .rejected(kind: .rendererFailed)
+        }
+        guard let doc = PDFDocument(data: pdf) else {
+            return .rejected(kind: .notAPdf)
+        }
+        if doc.isEncrypted, doc.isLocked {
+            return .rejected(kind: .encrypted)
+        }
+        guard page >= 0, page < doc.pageCount, page < maxPages else {
+            return .rejected(kind: .rendererFailed)
+        }
+        guard let pdfPage = doc.page(at: page) else {
+            return .rejected(kind: .rendererFailed)
+        }
+        let bounds = pdfPage.bounds(for: .mediaBox)
+        guard bounds.width > 0, bounds.height > 0 else {
+            return .rejected(kind: .rendererFailed)
+        }
+        let dims = Self.fittedDimensions(
+            pageWidth: Double(bounds.width),
+            pageHeight: Double(bounds.height),
+            maxPixels: maxPixels
+        )
+        return rasterise(
+            page: pdfPage,
+            widthPx: dims.widthPx,
+            heightPx: dims.heightPx,
+            sourceRect: .fullPage
+        )
+    }
+
+    /// Aspect-correct output dimensions filling `maxPixels` as closely as possible without
+    /// exceeding it. Pure so the fit math is testable without PDFKit; floors guarantee the
+    /// product never exceeds the budget, and each side is at least 1.
+    package static func fittedDimensions(
+        pageWidth: Double,
+        pageHeight: Double,
+        maxPixels: Int64
+    ) -> (widthPx: Int, heightPx: Int) {
+        let aspect = pageWidth / pageHeight
+        let height = (Double(maxPixels) / aspect).squareRoot()
+        let width = height * aspect
+        var w = max(Int(width), 1)
+        var h = max(Int(height), 1)
+        // Flooring both sides already keeps w*h <= maxPixels for any real page shape;
+        // the loop is a belt for degenerate aspects where a side floored to 1.
+        while Int64(w) * Int64(h) > maxPixels {
+            if w >= h { w = max(w - 1, 1) } else { h = max(h - 1, 1) }
+        }
+        return (w, h)
+    }
+
     private func rasterise(
         page: PDFPage,
         widthPx: Int,

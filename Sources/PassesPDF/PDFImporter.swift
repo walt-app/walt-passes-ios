@@ -31,7 +31,10 @@ public protocol PDFImporter: Sendable {
     /// of outcome.
     ///
     /// `persist` is invoked exactly once on the success path, after the
-    /// page-zero render succeeds and before the
+    /// page-zero thumbnail render and the full per-page raster pass succeed
+    /// (ios-dts.16 render-once: `pageRasters[i]` is page `i`'s Walt-produced
+    /// PNG at aspect-correct dimensions within the 4 MP budget; any page
+    /// failing to render or encode rejects the whole import) and before the
     /// ``PassesPDFCore/PDFImportResult/imported(doc:)`` arm is constructed.
     /// It is never invoked on a rejection. If `persist` throws (other than
     /// `CancellationError`, which is rethrown to preserve structured
@@ -50,7 +53,10 @@ public protocol PDFImporter: Sendable {
         source: PDFImportSource,
         displayLabel: String,
         persist:
-            @Sendable (_ label: String, _ pdfBytes: Data, _ pageCount: Int, _ thumbnailBytes: Data) async throws -> Void
+            @Sendable (
+                _ label: String, _ pdfBytes: Data, _ pageCount: Int, _ thumbnailBytes: Data,
+                _ pageRasters: [StoredPageRaster]
+            ) async throws -> Void
     ) async throws -> PDFImportResult
 }
 

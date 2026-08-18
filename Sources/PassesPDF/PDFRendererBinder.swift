@@ -22,6 +22,16 @@ public protocol PDFRendererBinder: Sendable {
         heightPx: Int,
         sourceRect: RenderSourceRect
     ) async -> RenderResult
+
+    /// Full-page render at aspect-correct dimensions fitted within `maxPixels`
+    /// (width * height). Unlike ``render(pdf:page:widthPx:heightPx:sourceRect:)``, the
+    /// output dimensions derive from the page's own geometry, so the raster is never
+    /// stretched — the shape the import-time render-once pass (ios-dts.16) persists.
+    func renderFitted(
+        pdf: Data,
+        page: Int,
+        maxPixels: Int64
+    ) async -> RenderResult
 }
 
 /// Outcome of the page-count probe. Modelled with the same enum-based
