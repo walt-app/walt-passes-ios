@@ -1,5 +1,6 @@
 import PassesPDF
 import PassesPDFCore
+import PassesUICore
 import SwiftUI
 import Testing
 
@@ -46,17 +47,18 @@ struct DocumentSurfaceLockTests {
         _ = DocumentTile(doc: Self.doc, thumbnail: nil, onTap: {})
     }
 
-    @Test func documentViewExposesExactlyFivePublicInitialiserParameters() {
-        // (doc, pdfData, renderer, telemetry, onOpenFullScreen).
-        // Android counts six (modifier sits in the middle of the slot
-        // list); the SwiftUI signature collapses the modifier slot.
-        _ = DocumentView(
-            doc: Self.doc,
-            pdfData: Self.pdfData,
-            renderer: Self.renderer,
-            telemetry: DocumentTelemetryGuardNoOp.shared,
-            onOpenFullScreen: nil
-        )
+    @Test func documentViewExposesExactlySixPublicInitialiserParameters() {
+        // (doc, pdfData, renderer, telemetry, onOpenFullScreen, faceTint).
+        // `faceTint` (wpass-80y.2) paints the frame the page sits on and
+        // nothing else. Android counts seven (modifier sits in the middle of
+        // the slot list); the SwiftUI signature collapses the modifier slot.
+        // Exact-arity reference so even a defaulted addition fails to compile.
+        let lockedInit:
+            (PDFDocument, Data, PDFRendererBinder, DocumentTelemetryGuard, (() -> Void)?, ArgbColor?)
+                -> DocumentView =
+                DocumentView.init(
+                    doc:pdfData:renderer:telemetry:onOpenFullScreen:faceTint:)
+        _ = lockedInit
     }
 
     @Test func documentsLaneExposesExactlyThreePublicInitialiserParameters() {

@@ -4,7 +4,7 @@ import SwiftUI
 
 /// Renders a `ScannableCard`'s barcode as a 1-bit-per-module raster through
 /// `PassesCore.BarcodeEncoder` (ADR `passes-ui-2`, revised). A structurally
-/// invalid 1D payload degrades to the grey placeholder so the surface still
+/// invalid 1D payload degrades to the clear placeholder so the surface still
 /// composes.
 ///
 /// Minimum on-screen sizes mirror `BarcodeView` so both barcode surfaces stay
@@ -28,26 +28,46 @@ public struct ScannableCardView: View {
     }
 
     public var body: some View {
-        let (minWidth, minHeight) = card.format.minRenderSize
         VStack(spacing: 12) {
-            Group {
-                if let cgImage = BarcodeRenderer.cgImage(payload: card.payload, format: card.format) {
-                    codeImage(cgImage)
-                        .accessibilityLabel(Text(card.label))
-                        // With the caption on, hide the image from VoiceOver so the payload
-                        // caption (the announce-worthy fallback) is not double-announced.
-                        .accessibilityHidden(showPayloadCaption)
-                } else {
-                    Color.clear
-                        .frame(minWidth: minWidth, minHeight: minHeight)
-                        .accessibilityLabel(Text("Barcode failed to render"))
-                }
-            }
+            // With the caption on, hide the rendered image from VoiceOver so the
+            // payload caption (the announce-worthy fallback) is not double-announced.
+            ScannableCodeImage(
+                card: card,
+                imageDescription: showPayloadCaption ? nil : card.label
+            )
             if showPayloadCaption {
                 Text(isolated(card.payload))
                     .font(.system(.footnote, design: .monospaced))
                     .multilineTextAlignment(.center)
                     .textSelection(.enabled)
+            }
+        }
+    }
+}
+
+/// The code raster with its failure placeholder, shared by `ScannableCardView`
+/// and the tinted `ScannableCardScreen` card (mirror of Android's
+/// `ScannableCodeImage`). `imageDescription: nil` hides the RENDERED image only
+/// — the caller's own texts announce the card; the failure arm always keeps its
+/// label, because hiding it would leave a silent blank rectangle, the worst
+/// a11y failure mode.
+struct ScannableCodeImage: View {
+    let card: ScannableCard
+    let imageDescription: String?
+
+    var body: some View {
+        let (minWidth, minHeight) = card.format.minRenderSize
+        Group {
+            if let cgImage = BarcodeRenderer.cgImage(payload: card.payload, format: card.format) {
+                if let imageDescription {
+                    codeImage(cgImage).accessibilityLabel(Text(imageDescription))
+                } else {
+                    codeImage(cgImage).accessibilityHidden(true)
+                }
+            } else {
+                Color.clear
+                    .frame(minWidth: minWidth, minHeight: minHeight)
+                    .accessibilityLabel(Text("Barcode failed to render"))
             }
         }
     }

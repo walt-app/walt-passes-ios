@@ -8,7 +8,7 @@ import PackageDescription
 //   passes-pdf     -> PassesPDF      (PDF importer; depends on PassesPDFCore)
 //   passes-pdf-ui  -> PassesPDFUI    (PDF rendering UI)
 //   passes-storage -> PassesStorage  (encrypted storage + auto-backup guards)
-//   passes-ui-core -> PassesUICore   (shared UI primitives: ArgbColor, BidiIsolation)
+//   passes-ui-core -> PassesUICore   (shared UI primitives: ArgbColor, BidiIsolation, faceIsTinted)
 //   passes-ui      -> PassesUI       (pass list/detail UI)
 //
 // Targets are scaffold-level; the per-module ports flesh them out.

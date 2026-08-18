@@ -1,5 +1,6 @@
 import PassesPDF
 import PassesPDFCore
+import PassesUICore
 import SwiftUI
 
 /// Presentation of a `PDFDocument` — a non-suppressible trust caption
@@ -23,25 +24,39 @@ import SwiftUI
 ///
 /// `pdfData` is owned by the caller. It MUST remain valid for as long as
 /// `DocumentView` is visible.
+///
+/// `faceTint` (wpass-80y.2 mirror) is presentation only — the kernel never
+/// learns why a color was chosen and stores nothing; which color an item
+/// carries is the consumer's (`WalletColorRepository`, keyed per wallet entry).
+/// The tint reaches the FRAME the page render sits on and nothing else: the
+/// rasterised page is real content and renders identically tinted or not, and
+/// identically in light and dark. The rounded card shape arrives WITH the tint
+/// (paint only, never a clip), so untinted consumers keep today's flush
+/// `laneBackground` frame; `nil` and a fully transparent tint both mean "no
+/// tint" via the shared `faceIsTinted`. Pass an opaque color: a translucent
+/// tint composites over host paint the kernel cannot see.
 public struct DocumentView: View {
     public let doc: PDFDocument
     public let pdfData: Data
     public let renderer: PDFRendererBinder
     public let telemetry: DocumentTelemetryGuard
     public let onOpenFullScreen: (() -> Void)?
+    public let faceTint: ArgbColor?
 
     public init(
         doc: PDFDocument,
         pdfData: Data,
         renderer: PDFRendererBinder,
         telemetry: DocumentTelemetryGuard = DocumentTelemetryGuardNoOp.shared,
-        onOpenFullScreen: (() -> Void)? = nil
+        onOpenFullScreen: (() -> Void)? = nil,
+        faceTint: ArgbColor? = nil
     ) {
         self.doc = doc
         self.pdfData = pdfData
         self.renderer = renderer
         self.telemetry = telemetry
         self.onOpenFullScreen = onOpenFullScreen
+        self.faceTint = faceTint
     }
 
     @State private var currentPage: Int = 0
@@ -83,18 +98,66 @@ public struct DocumentView: View {
                     telemetry: telemetry
                 )
                 .tag(page)
-                .background(style.laneBackground.swiftUIColor)
             }
         }
         #if os(iOS)
         .tabViewStyle(.page(indexDisplayMode: .never))
         #endif
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(documentFace(style: style))
         .contentShape(Rectangle())
         .onTapGesture {
             onOpenFullScreen?()
         }
     }
+
+    /// The frame the page render sits on (showing through the fit letterbox
+    /// bars), hoisted from the per-page background to the pager container —
+    /// the same painted region, matching Android's slot placement. Background
+    /// only: it never clips or filters the page, which is what makes the
+    /// frame-not-content constraint structural. The rounded card shape arrives
+    /// with the tint: an untinted frame is the host's own `laneBackground`
+    /// tone bleeding to the slot edge, and rounding it would change every
+    /// consumer already shipping the surface.
+    @ViewBuilder
+    private func documentFace(style: DocumentSemantics) -> some View {
+        if let tint = Self.resolvedFace(faceTint) {
+            RoundedRectangle(cornerRadius: Self.faceRadius)
+                .fill(tint.swiftUIColor)
+        } else {
+            style.laneBackground.swiftUIColor
+        }
+    }
+
+    /// Pure face decision routed through the shared `faceIsTinted` gate so the
+    /// body cannot skip it — `nil` means "keep the flush laneBackground frame".
+    /// Internal so a test pins BOTH directions (the wpass-80y.5 lesson).
+    static func resolvedFace(_ faceTint: ArgbColor?) -> ArgbColor? {
+        faceIsTinted(faceTint) ? faceTint : nil
+    }
+
+    /// Card radius from the 26.08.08 design's card anatomy spec. Duplicated as
+    /// `cardRadius` in `PassesUI`'s `ScannableCardScreen` (the Android wpass-nbr
+    /// shared-token hoist is still open there too).
+    private static let faceRadius: CGFloat = 20
+
+    /// Render target for one page: the layout slot, floored at the baseline
+    /// budget. Pure and tint-blind BY TYPE — `faceTint` cannot reach it, which
+    /// is the structural half of "the tint reaches the frame and nothing
+    /// else"; `DocumentFaceTintTests` pins the derivation.
+    static func pageRenderTarget(page: Int, slot: CGSize) -> ThumbnailRenderTarget {
+        ThumbnailRenderTarget(
+            page: page,
+            widthPx: max(max(Int(slot.width), 1), Self.targetPageWidthPx),
+            heightPx: max(max(Int(slot.height), 1), Self.targetPageHeightPx)
+        )
+    }
+
+    /// Render budget defaults (mirror of Android's 360 / 480 dp baseline);
+    /// the request adopts whichever is larger between the slot and these.
+    /// Internal so `DocumentFaceTintTests` pins against the source of truth.
+    static let targetPageWidthPx: Int = 360
+    static let targetPageHeightPx: Int = 480
 }
 
 /// Docked discoverability hint below the pager. When the consumer provides
@@ -131,18 +194,12 @@ private struct DocumentPage: View {
 
     var body: some View {
         GeometryReader { geo in
-            let widthPx = max(Int(geo.size.width), 1)
-            let heightPx = max(Int(geo.size.height), 1)
             content
                 .onAppear {
                     viewModel.start(
                         document: document,
                         pdfData: pdfData,
-                        target: ThumbnailRenderTarget(
-                            page: pageIndex,
-                            widthPx: max(widthPx, Self.targetPageWidthPx),
-                            heightPx: max(heightPx, Self.targetPageHeightPx)
-                        ),
+                        target: DocumentView.pageRenderTarget(page: pageIndex, slot: geo.size),
                         context: ThumbnailRenderContext(renderer: renderer, telemetry: telemetry, cache: cache)
                     )
                 }
@@ -165,10 +222,4 @@ private struct DocumentPage: View {
         }
     }
 
-    /// Render budget defaults. Mirror of Android's 360 / 480 dp baseline.
-    /// The actual request adopts whichever is larger between the layout
-    /// slot and these constants, so a small consumer slot still gets a
-    /// crisp baseline render.
-    static let targetPageWidthPx: Int = 360
-    static let targetPageHeightPx: Int = 480
 }
