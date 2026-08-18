@@ -16,6 +16,14 @@ import Foundation
 ///
 /// Ownership: the caller owns the file URL and the `Data` buffer; the
 /// importer reads but does not retain references beyond the suspend call.
+///
+/// **Importing the same source twice is idempotent** (the Android wpass-07h
+/// lesson, where a second read off a shared open-file-description returned
+/// zero bytes at EOF). Both arms are stateless values; every `.fileURL` read
+/// opens a fresh `FileHandle` at offset 0 and closes it before returning. Do
+/// not add an arm that carries an open handle or stream — pinned by
+/// `PDFImporterTests.importingTheSameSourceTwiceIsIdempotent`, and
+/// `BarcodeImageSource` carries the same contract for the barcode lane.
 public enum PDFImportSource: Sendable {
     /// A file URL the user picked from `UIDocumentPickerViewController` or the
     /// equivalent macOS open panel. Must be a `file://` URL; non-file schemes
