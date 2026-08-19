@@ -214,6 +214,12 @@ carried the pre-split 80 over from a single shared bank; the decision was re-che
 stands, since the input has to hang Apple's decoder every time. Revisit if saturation is ever observed
 in the wild.
 
+Since ios-dts.2 the still-image facade's whole pipeline — the ImageIO codec
+step AND the Vision read — runs inside the bounded wait on this bank
+(previously only the Vision half was explicit; the codec rode in lazily). The
+one check outside the wait is the I/O-free `.data` byte cap. A wedging codec
+now burns a lane slot instead of a cooperative-pool thread.
+
 **Which decodes actually hold a slot**, because the entries above use "orphaned" as shorthand for
 "wedged" and that reads far more broadly than it should. Three cases, and only the third accumulates:
 

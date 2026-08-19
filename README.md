@@ -24,7 +24,10 @@ UI target) so the logic stays testable without a UI host.
 | Target | Purpose |
 |---|---|
 | `PassesCore` | Domain types, the `PassParser` trust-claim surface, and pkpass signature verification (swift-certificates) |
-| `PassesPDFCore` | Pure PDF parsing and validation |
+| `PassesBarcode` | Bounded barcode decode (Vision) over still images and camera frames |
+| `PassesImageDecode` | Shared header-gated bounded decode mechanism (no public product) |
+| `PassesImage` | In-process bounded image decode-and-retain (§7, `image-decode-1`) |
+| `PassesPDFCore` | Pure PDF parsing/validation and the sealed `Document` model family |
 | `PassesPDF` | PDF import and bounded rendering |
 | `PassesPDFUI` | SwiftUI document views |
 | `PassesStorage` | GRDB-backed, device-only encrypted persistence (iOS Data Protection) |

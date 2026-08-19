@@ -2,7 +2,7 @@
 
 import PackageDescription
 
-// Mirrors `walt-passes-android`'s 7-module split 1:1:
+// Mirrors `walt-passes-android`'s module split:
 //   passes-core    -> PassesCore     (entity types, importer/parser surface)
 //   passes-pdf-core -> PassesPDFCore (PDF parsing primitives)
 //   passes-pdf     -> PassesPDF      (PDF importer; depends on PassesPDFCore)
@@ -22,6 +22,7 @@ let package = Package(
     products: [
         .library(name: "PassesCore", targets: ["PassesCore"]),
         .library(name: "PassesBarcode", targets: ["PassesBarcode"]),
+        .library(name: "PassesImage", targets: ["PassesImage"]),
         .library(name: "PassesPDFCore", targets: ["PassesPDFCore"]),
         .library(name: "PassesPDF", targets: ["PassesPDF"]),
         .library(name: "PassesPDFUI", targets: ["PassesPDFUI"]),
@@ -55,9 +56,23 @@ let package = Package(
             ]
         ),
         .target(
+            // Shared header-gated decode mechanism (Android passes-image-decode
+            // mirror); rationale in docs/adr/image-decode-1.md.
+            name: "PassesImageDecode",
+            dependencies: [],
+            path: "Sources/PassesImageDecode"
+        ),
+        .target(
             name: "PassesBarcode",
-            dependencies: ["PassesCore"],
+            dependencies: ["PassesCore", "PassesImageDecode"],
             path: "Sources/PassesBarcode"
+        ),
+        .target(
+            // In-process bounded image decode-and-retain (§7-approved ios-dts.2);
+            // policy + terms in docs/adr/image-decode-1.md.
+            name: "PassesImage",
+            dependencies: ["PassesImageDecode"],
+            path: "Sources/PassesImage"
         ),
         .target(
             name: "PassesPDFCore",
@@ -110,6 +125,16 @@ let package = Package(
                 // verbatim from the Android side. Regression guard for walt-passes-ios#31.
                 .copy("Fixtures"),
             ]
+        ),
+        .testTarget(
+            name: "PassesImageDecodeTests",
+            dependencies: ["PassesImageDecode"],
+            path: "Tests/PassesImageDecodeTests"
+        ),
+        .testTarget(
+            name: "PassesImageTests",
+            dependencies: ["PassesImage"],
+            path: "Tests/PassesImageTests"
         ),
         .testTarget(
             name: "PassesBarcodeTests",
