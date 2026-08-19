@@ -137,8 +137,148 @@ struct GrdbDatabaseFactoryTests {
             #expect(passesColumns.contains("user_label"))
             // v5->v6 added document_page_rasters (ios-dts.16 render-once).
             #expect(hasRasters)
+            // v6->v7 added the format discriminator + image dimensions; v7->v8
+            // the composite barcode pair (Android v6/v7 mirrors, ios-dts.1).
+            let documentColumns = try queue.read { db in
+                try db.columns(in: Schema.Tables.documents).map(\.name)
+            }
+            #expect(documentColumns.contains("format"))
+            #expect(documentColumns.contains("width_px"))
+            #expect(documentColumns.contains("height_px"))
+            #expect(documentColumns.contains("barcode_payload"))
+            #expect(documentColumns.contains("barcode_format"))
         }
     }
+
+    /// A document row imported before v7 must read back as a PDF with no
+    /// dimensions and no barcode after the chain walk (the column defaults are
+    /// the migration's only writers).
+    @Test func preV7DocumentRowMigratesToPdfFormatWithNullKindColumns() throws {
+        try withTempDatabase { url in
+            let queue = try DatabaseQueue(path: url.path)
+            try queue.write { db in
+                for statement in Self.historicalV1Ddl {
+                    try db.execute(sql: statement)
+                }
+                for statement in Schema.v2DocumentTables {
+                    try db.execute(sql: statement)
+                }
+                try db.execute(
+                    sql: """
+                        INSERT INTO documents
+                            (display_label, pdf_bytes, byte_count, page_count, imported_at_epoch_ms)
+                        VALUES ('Legacy', x'2550', 2, 3, 42)
+                        """)
+                try GrdbDatabaseFactory.writeVersion(db, 2)
+            }
+
+            try GrdbDatabaseFactory.migrate(queue)
+
+            let rows = try queue.read { try GrdbDocumentStore.listRows($0) }
+            #expect(rows.count == 1)
+            #expect(rows.first?.format == .pdf)
+            #expect(rows.first?.pageCount == 3)
+            #expect(rows.first?.widthPx == nil)
+            #expect(rows.first?.heightPx == nil)
+            #expect(rows.first?.barcodePayload == nil)
+            #expect(rows.first?.barcodeFormat == nil)
+        }
+    }
+
+    /// Port of Android's `freshInstallAndFullMigrationChainLandAtTheSameSchema`
+    /// parity guard: the fresh `ddl` and the migration ladder must land on the
+    /// byte-identical `sqlite_master` schema, or fresh installs and upgraded
+    /// installs silently drift.
+    @Test func freshInstallAndFullMigrationChainLandAtTheSameSchema() throws {
+        // Whitespace-insensitive: an ALTER-appended column renders with different
+        // spacing in `sqlite_master` than the same column baked into a CREATE.
+        func normalizedSchema(_ queue: DatabaseQueue) throws -> [String] {
+            try queue.read { db in
+                try Row.fetchAll(
+                    db,
+                    sql: """
+                        SELECT type, name, sql FROM sqlite_master
+                        WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name
+                        """
+                ).map { row in
+                    let sql: String? = row["sql"]
+                    let name: String = row["name"]
+                    let type: String = row["type"]
+                    let collapsed = (sql ?? "")
+                        .components(separatedBy: .whitespacesAndNewlines)
+                        .joined()
+                    return "\(type) \(name): \(collapsed)"
+                }
+            }
+        }
+
+        let fresh = try withTempDatabase { url in
+            try normalizedSchema(try GrdbDatabaseFactory.open(at: url))
+        }
+        let migrated = try withTempDatabase { url in
+            let queue = try DatabaseQueue(path: url.path)
+            try queue.write { db in
+                for statement in Self.historicalV1Ddl {
+                    try db.execute(sql: statement)
+                }
+                try GrdbDatabaseFactory.writeVersion(db, 1)
+            }
+            try GrdbDatabaseFactory.migrate(queue)
+            return try normalizedSchema(queue)
+        }
+
+        #expect(fresh == migrated)
+    }
+
+    /// The historical v1 on-disk shape: everything in today's `ddl` head except the
+    /// v5 `user_label` column (added by migration 4). The parity guard walks the
+    /// chain from here; drifting this block from what v1 actually shipped would
+    /// make the guard vacuous, so it changes only if a v1 archaeology error is found.
+    private static let historicalV1Ddl: [String] = [
+        """
+        CREATE TABLE IF NOT EXISTS schema_meta (
+            key   TEXT PRIMARY KEY NOT NULL,
+            value BLOB NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS passes (
+            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            type                  TEXT    NOT NULL,
+            serial_number         TEXT    NOT NULL,
+            organization_name     TEXT    NOT NULL,
+            description           TEXT    NOT NULL,
+            expiration_epoch_ms   INTEGER,
+            voided                INTEGER NOT NULL DEFAULT 0,
+            signature_status_kind TEXT    NOT NULL,
+            pass_json             BLOB    NOT NULL,
+            created_at_epoch_ms   INTEGER NOT NULL,
+            updated_at_epoch_ms   INTEGER NOT NULL
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_passes_type ON passes(type)",
+        "CREATE INDEX IF NOT EXISTS idx_passes_expiration ON passes(expiration_epoch_ms)",
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_passes_identity
+            ON passes(type, serial_number, organization_name)
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS pass_images (
+            pass_id INTEGER NOT NULL REFERENCES passes(id) ON DELETE CASCADE,
+            role    TEXT    NOT NULL,
+            bytes   BLOB    NOT NULL,
+            PRIMARY KEY (pass_id, role)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS pass_locales (
+            pass_id      INTEGER NOT NULL REFERENCES passes(id) ON DELETE CASCADE,
+            locale_tag   TEXT    NOT NULL,
+            strings_json BLOB    NOT NULL,
+            PRIMARY KEY (pass_id, locale_tag)
+        )
+        """,
+    ]
 
     /// The fresh `ddl` and the migration ladder must agree on the `passes` shape: both add
     /// `user_label`, or a fresh install and an upgraded install silently drift.

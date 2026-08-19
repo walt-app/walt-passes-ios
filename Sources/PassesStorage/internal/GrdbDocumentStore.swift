@@ -1,8 +1,9 @@
 import Foundation
 import GRDB
+import PassesCore
 
 /// Document-table I/O: the `documents` row plus its cascaded `document_thumbnails` child.
-/// Mirrors Android's `internal/SqlCipherDocumentStore.kt`. The PDF and thumbnail blobs
+/// Mirrors Android's `internal/SqlCipherDocumentStore.kt`. The document (PDF or image) and thumbnail blobs
 /// round-trip as opaque bytes — the storage layer never parses, sniffs, or decodes them
 /// (ADR 0005 D4). Every function takes the GRDB `Database` so the repository owns the
 /// transaction boundary.
@@ -11,43 +12,70 @@ enum GrdbDocumentStore {
         try Row
             .fetchAll(
                 db,
-                sql: "SELECT id, display_label, byte_count, page_count, imported_at_epoch_ms "
+                sql: "SELECT id, display_label, byte_count, format, page_count, width_px, height_px, "
+                    + "imported_at_epoch_ms, barcode_payload, barcode_format "
                     + "FROM \(Schema.Tables.documents) ORDER BY imported_at_epoch_ms DESC, id DESC"
             )
             .map { row in
-                DocumentRow(
+                // A barcode is present only when BOTH columns decode: a payload with an
+                // unrecognised format name (DB tampering only — this module is the sole
+                // writer) reads back as no barcode rather than a half-composite.
+                let payload: String? = row["barcode_payload"]
+                let barcodeFormat = (row["barcode_format"] as String?)
+                    .flatMap { ScannableFormat(dbValue: $0) }
+                return DocumentRow(
                     id: DocumentRecordId(row["id"]),
                     displayLabel: row["display_label"],
                     byteCount: row["byte_count"],
+                    // An unrecognised value (out-of-band DB tampering only) falls back
+                    // to the pre-v7 default rather than throwing on a list query.
+                    format: DocumentFormat(rawValue: row["format"]) ?? .pdf,
                     pageCount: row["page_count"],
-                    importedAtEpochMs: row["imported_at_epoch_ms"]
+                    widthPx: row["width_px"],
+                    heightPx: row["height_px"],
+                    importedAtEpochMs: row["imported_at_epoch_ms"],
+                    barcodePayload: barcodeFormat == nil ? nil : payload,
+                    barcodeFormat: payload == nil ? nil : barcodeFormat
                 )
             }
     }
 
-    /// Fields for a single document insert. Grouped so `insert` stays within a sane
-    /// parameter count; `byteCount` is derived inside `insert`, never caller-asserted.
+    /// Fields for a single document insert, flattened from the `DocumentInsert` arms by
+    /// the repository. Grouped so `insert` stays within a sane parameter count;
+    /// `byteCount` is derived inside `insert`, never caller-asserted. `widthPx` /
+    /// `heightPx` are nil for PDF rows; the barcode pair is non-nil only for composites;
+    /// `pageRasters` is empty for image rows (their thumbnail is the display raster).
     struct Insert {
         let label: String
-        let pdfBytes: Data
+        let bytes: Data
+        let format: DocumentFormat
         let pageCount: Int
+        let widthPx: Int?
+        let heightPx: Int?
         let thumbnailBytes: Data
         let pageRasters: [DocumentPageRasterBlob]
+        let barcodePayload: String?
+        let barcodeFormat: ScannableFormat?
         let nowEpochMs: Int64
     }
 
     /// Inserts the document + thumbnail + page rasters in one transaction and returns the
-    /// new id. The persisted `byte_count` is derived from `pdfBytes.count` (not
+    /// new id. The persisted `byte_count` is derived from `bytes.count` (not
     /// caller-asserted), so a stale size cannot bypass the cap.
     static func insert(_ doc: Insert, _ db: Database) throws -> DocumentRecordId {
-        let byteCount = Int64(doc.pdfBytes.count)
+        let byteCount = Int64(doc.bytes.count)
         try db.execute(
             sql: """
                 INSERT INTO \(Schema.Tables.documents)
-                    (display_label, pdf_bytes, byte_count, page_count, imported_at_epoch_ms)
-                VALUES (?, ?, ?, ?, ?)
+                    (display_label, pdf_bytes, byte_count, format, page_count,
+                     width_px, height_px, imported_at_epoch_ms, barcode_payload, barcode_format)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-            arguments: [doc.label, doc.pdfBytes, byteCount, doc.pageCount, doc.nowEpochMs]
+            arguments: [
+                doc.label, doc.bytes, byteCount, doc.format.rawValue, doc.pageCount,
+                doc.widthPx, doc.heightPx, doc.nowEpochMs, doc.barcodePayload,
+                doc.barcodeFormat?.dbValue,
+            ]
         )
         let rowId = db.lastInsertedRowID
         try db.execute(
@@ -101,14 +129,25 @@ enum GrdbDocumentStore {
         }
     }
 
-    /// The `page_count` of the document row matching `id`, or `nil` when absent. Used to
-    /// validate a raster backfill against the stored page count.
-    static func pageCount(id: DocumentRecordId, _ db: Database) throws -> Int? {
+    /// The row kind fields a raster read/backfill validates against: the stored
+    /// `page_count` (the page-range reference) and the `format` discriminator (rasters
+    /// belong to the PDF lane only). `nil` when no row matches `id`.
+    struct RowKind {
+        let pageCount: Int
+        let format: DocumentFormat
+    }
+
+    static func rowKind(id: DocumentRecordId, _ db: Database) throws -> RowKind? {
         try Row.fetchOne(
             db,
-            sql: "SELECT page_count FROM \(Schema.Tables.documents) WHERE id = ?",
+            sql: "SELECT page_count, format FROM \(Schema.Tables.documents) WHERE id = ?",
             arguments: [id.value]
-        ).map { $0["page_count"] }
+        ).map { row in
+            RowKind(
+                pageCount: row["page_count"],
+                format: DocumentFormat(rawValue: row["format"]) ?? .pdf
+            )
+        }
     }
 
     static func loadBytes(id: DocumentRecordId, _ db: Database) throws -> Data? {
@@ -151,11 +190,11 @@ enum GrdbDocumentStore {
     /// before any bytes reach disk, so a future caller bug cannot land an oversized row.
     /// Returns the rejected kind, or `nil` if the document is within bounds.
     static func rejection(
-        pdfBytes: Data,
+        bytes: Data,
         pageCount: Int,
         label: String
     ) -> DocumentStorageRejectedKind? {
-        if Int64(pdfBytes.count) > DocumentBounds.maxBytes { return .oversizedAtStorage }
+        if Int64(bytes.count) > DocumentBounds.maxBytes { return .oversizedAtStorage }
         if pageCount > DocumentBounds.maxPages { return .tooManyPagesAtStorage }
         if label.count > DocumentBounds.maxLabelChars { return .labelTooLongAtStorage }
         return nil

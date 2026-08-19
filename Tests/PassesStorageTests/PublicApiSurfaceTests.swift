@@ -128,8 +128,8 @@ struct PublicApiSurfaceTests {
         #expect(labels == ["pass:1", "doc:2", "card:3"])
     }
 
-    @Test func schemaDeclaresEightTablesAndIsAtVersionSix() {
-        #expect(Schema.version == 6)
+    @Test func schemaDeclaresEightTablesAndIsAtVersionEight() {
+        #expect(Schema.version == 8)
         #expect(Schema.Tables.schemaMeta == "schema_meta")
         #expect(Schema.Tables.passes == "passes")
         #expect(Schema.Tables.passImages == "pass_images")
@@ -142,9 +142,10 @@ struct PublicApiSurfaceTests {
         // + pass_images + pass_locales + documents + 1 document index
         // + document_thumbnails + scannable_cards (v4 shape, no color_argb)
         // + 1 scannable-card index + document_page_rasters (v6, ios-dts.16)
-        // = 13 statements.
-        #expect(Schema.ddl.count == 13)
-        #expect(Set(Schema.migrations.keys) == Set([1, 2, 3, 4, 5]))
+        // + 3 v7 format/dimension ALTERs + 2 v8 barcode ALTERs (ios-dts.1)
+        // = 18 statements.
+        #expect(Schema.ddl.count == 18)
+        #expect(Set(Schema.migrations.keys) == Set([1, 2, 3, 4, 5, 6, 7]))
     }
 
     @Test func metaKeysAreThePersistenceVocabularyDocumentedInTheAdr() {

@@ -12,7 +12,7 @@ import Foundation
 public enum Schema {
     public static let databaseName: String = "walt_passes.db"
 
-    public static let version: Int = 6
+    public static let version: Int = 8
 
     public enum Tables {
         public static let schemaMeta: String = "schema_meta"
@@ -99,7 +99,7 @@ public enum Schema {
     /// Statements that introduce the v2 document tables. Referenced from both `ddl` (for
     /// fresh installs) and `migrations[1]` (for v1 -> v2 upgrades) so the two paths
     /// cannot drift.
-    private static let v2DocumentTables: [String] = [
+    static let v2DocumentTables: [String] = [
         """
         CREATE TABLE IF NOT EXISTS documents (
             id                  INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -125,8 +125,8 @@ public enum Schema {
     /// so the two paths cannot drift. iOS-ONLY: Android renders pages per-open inside its
     /// isolated `:pdfRenderer` sandbox and stores no rasters; iOS has no sandbox, so pages
     /// are rendered once at import and display consumes these Walt-produced blobs. From
-    /// here on the iOS schema chain runs one version ahead of Android's (iOS v7/v8 will
-    /// mirror Android v6/v7).
+    /// here on the iOS schema chain runs one version ahead of Android's (iOS v7/v8
+    /// mirror Android v6/v7, landed with ios-dts.1).
     private static let v6PageRasterTables: [String] = [
         """
         CREATE TABLE IF NOT EXISTS document_page_rasters (
@@ -140,9 +140,45 @@ public enum Schema {
         """
     ]
 
+    /// v6 -> v7 migration (mirror of Android's V5_TO_V6_ADD_DOCUMENT_FORMAT — the iOS
+    /// chain runs one version ahead since the iOS-only v6 raster table). Adds the
+    /// `format` container discriminator plus the decoded image dimensions (wpass-i9x).
+    /// Pure additive ALTERs; every existing row is a PDF, which is exactly what the
+    /// DEFAULT backfills. `pdf_bytes` is reused verbatim for image bytes — renaming
+    /// would force a table rewrite for no audit gain; `loadDocumentBytes` is already
+    /// kind-agnostic.
+    private static let v7DocumentFormatColumns: [String] = [
+        "ALTER TABLE documents ADD COLUMN format TEXT NOT NULL DEFAULT 'pdf'",
+        "ALTER TABLE documents ADD COLUMN width_px INTEGER",
+        "ALTER TABLE documents ADD COLUMN height_px INTEGER",
+    ]
+
+    /// v7 -> v8 migration (mirror of Android's V6_TO_V7_ADD_BARCODE, wpass-8lu). Adds
+    /// the composite-artifact columns: a barcode extracted from an imported image,
+    /// carried on the same `documents` row so the composite stays ONE artifact / ONE
+    /// row. Both nullable: NULL for every existing row and for any image with no
+    /// detected barcode. A row is a composite iff BOTH are non-null; `format` stays the
+    /// image container, so a composite reads back as an image row that additionally
+    /// carries a barcode. Pure additive ALTERs; no row can fail.
+    private static let v8BarcodeColumns: [String] = [
+        "ALTER TABLE documents ADD COLUMN barcode_payload TEXT",
+        "ALTER TABLE documents ADD COLUMN barcode_format TEXT",
+    ]
+
     /// The DDL block that brings a fresh database to `version`. Statements are listed in
     /// dependency order (parent tables before child tables); they are executed in a
     /// single transaction by the implementation.
+    ///
+    /// The `documents` table is created in its historical v2 shape and brought to
+    /// current by appending the v7/v8 ALTERs, exactly as the migration chain does —
+    /// baking new columns into the CREATE instead would diverge the fresh-install
+    /// `sqlite_master` from the migrated one and break the
+    /// `freshInstallAndFullMigrationChainLandAtTheSameSchema` parity guard. Every
+    /// future column on an existing table must follow the same append-an-ALTER rule.
+    /// Consequence: `ddl` is no longer idempotent (ADD COLUMN has no IF NOT EXISTS): a
+    /// populated file whose version row is absent OR unreadable now refuses to open
+    /// (duplicate column name) where the old idempotent DDL silently re-stamped it —
+    /// fail-closed, at the cost of no self-heal for that tampering-or-bug-only state.
     public static let ddl: [String] =
         ([
             """
@@ -189,7 +225,8 @@ public enum Schema {
                 PRIMARY KEY (pass_id, locale_tag)
             )
             """,
-        ] + v2DocumentTables + v4ScannableCardTables + v6PageRasterTables)
+        ] + v2DocumentTables + v4ScannableCardTables + v6PageRasterTables
+            + v7DocumentFormatColumns + v8BarcodeColumns)
 
     /// v4 -> v5 migration. Adds the nullable `user_label` column to `passes` for the
     /// user-supplied display-label override. Additive (existing rows get NULL); mirrored in
@@ -222,11 +259,17 @@ public enum Schema {
     /// display never re-parses the original bytes. Existing documents have no raster rows
     /// (the self-heal read path backfills them lazily, one bounded render per legacy
     /// document). iOS-only — see `v6PageRasterTables`.
+    ///
+    /// v6 -> v7 adds the `format` discriminator + image dimensions; v7 -> v8 the
+    /// composite barcode pair (Android v6/v7 mirrors — the iOS chain runs one version
+    /// ahead from v6 on; ios-dts.1).
     public static let migrations: [Int: [String]] = [
         1: v2DocumentTables,
         2: v3ScannableCardTables,
         3: v3ToV4DropColorColumn,
         4: v4ToV5AddUserLabel,
         5: v6PageRasterTables,
+        6: v7DocumentFormatColumns,
+        7: v8BarcodeColumns,
     ]
 }

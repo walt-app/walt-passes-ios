@@ -29,7 +29,7 @@ struct GrdbPageRasterTests {
         let repo = try makeRepository()
         guard
             case .success(let id) = await repo.insertDocument(
-                label: "R", pdfBytes: pdf, pageCount: 2, thumbnailBytes: thumb, pageRasters: rasters(2)
+                .pdf(label: "R", bytes: pdf, thumbnailBytes: thumb, pageCount: 2, pageRasters: rasters(2))
             )
         else {
             Issue.record("insert failed")
@@ -58,13 +58,13 @@ struct GrdbPageRasterTests {
         let repo = try makeRepository()
         // Count mismatch: 1 raster for a 2-page document.
         let short = await repo.insertDocument(
-            label: "S", pdfBytes: pdf, pageCount: 2, thumbnailBytes: thumb, pageRasters: rasters(1)
+            .pdf(label: "S", bytes: pdf, thumbnailBytes: thumb, pageCount: 2, pageRasters: rasters(1))
         )
         #expect(short == .failure(error: .documentRejected(kind: .pageRastersInvalidAtStorage)))
         // Raster over the 4 MP pixel bound.
         let big = [DocumentPageRasterBlob(bytes: Data([0x01]), widthPx: 4096, heightPx: 1025)]
         let oversized = await repo.insertDocument(
-            label: "O", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb, pageRasters: big
+            .pdf(label: "O", bytes: pdf, thumbnailBytes: thumb, pageCount: 1, pageRasters: big)
         )
         #expect(oversized == .failure(error: .documentRejected(kind: .pageRastersInvalidAtStorage)))
     }
@@ -80,7 +80,7 @@ struct GrdbPageRasterTests {
         let repo = try GrdbPassRepository(dbQueue: queue, clock: { 1_000 })
         guard
             case .success(let id) = await repo.insertDocument(
-                label: "C", pdfBytes: pdf, pageCount: 2, thumbnailBytes: thumb, pageRasters: rasters(2)
+                .pdf(label: "C", bytes: pdf, thumbnailBytes: thumb, pageCount: 2, pageRasters: rasters(2))
             )
         else {
             Issue.record("insert failed")
@@ -107,7 +107,7 @@ struct GrdbPageRasterTests {
         let repo = try makeRepository()
         guard
             case .success(let id) = await repo.insertDocument(
-                label: "P", pdfBytes: pdf, pageCount: 2, thumbnailBytes: thumb, pageRasters: rasters(2)
+                .pdf(label: "P", bytes: pdf, thumbnailBytes: thumb, pageCount: 2, pageRasters: rasters(2))
             )
         else {
             Issue.record("insert failed")
@@ -154,12 +154,12 @@ struct GrdbPageRasterTests {
             )
         ]
         let atInsert = await repo.insertDocument(
-            label: "F", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb, pageRasters: fat
+            .pdf(label: "F", bytes: pdf, thumbnailBytes: thumb, pageCount: 1, pageRasters: fat)
         )
         #expect(atInsert == .failure(error: .documentRejected(kind: .pageRastersInvalidAtStorage)))
         guard
             case .success(let id) = await repo.insertDocument(
-                label: "F2", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb, pageRasters: rasters(1)
+                .pdf(label: "F2", bytes: pdf, thumbnailBytes: thumb, pageCount: 1, pageRasters: rasters(1))
             )
         else {
             Issue.record("insert failed")
@@ -183,7 +183,7 @@ struct GrdbPageRasterTests {
             DocumentPageRasterBlob(bytes: Data(count: perRaster), widthPx: 10, heightPx: 10)
         }
         let atInsert = await repo.insertDocument(
-            label: "H", pdfBytes: pdf, pageCount: 6, thumbnailBytes: thumb, pageRasters: heavy
+            .pdf(label: "H", bytes: pdf, thumbnailBytes: thumb, pageCount: 6, pageRasters: heavy)
         )
         #expect(atInsert == .failure(error: .documentRejected(kind: .pageRastersInvalidAtStorage)))
 
@@ -194,8 +194,9 @@ struct GrdbPageRasterTests {
         let fourHeavyTwoLight = Array(heavy.prefix(4)) + [light, light]
         guard
             case .success(let id) = await repo.insertDocument(
-                label: "H2", pdfBytes: pdf, pageCount: 6, thumbnailBytes: thumb,
-                pageRasters: fourHeavyTwoLight
+                .pdf(
+                    label: "H2", bytes: pdf, thumbnailBytes: thumb, pageCount: 6,
+                    pageRasters: fourHeavyTwoLight)
             )
         else {
             Issue.record("insert failed")

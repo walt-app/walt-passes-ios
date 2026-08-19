@@ -1,4 +1,5 @@
 import Foundation
+import PassesCore
 
 /// Defensive caps `PassesStorage` re-checks before inserting a document row. The
 /// authoritative source for size and page count is ADR 0005 D7; the renderer service in
@@ -54,29 +55,126 @@ public struct DocumentPageRasterBlob: Sendable, Equatable {
     }
 }
 
-/// The list-view projection of a stored PDF document. Mirrors the indexed columns of the
-/// `documents` table; the heavy `pdf_bytes` and `document_thumbnails.bytes` blobs are NOT
-/// loaded here. Consumers that need the bytes call `loadDocumentBytes` /
-/// `loadDocumentThumbnail`.
+/// The container kind of a stored document — the `documents.format` discriminator
+/// (mirror of Android `DocumentFormat`, wpass-i9x). The storage layer keeps its own enum
+/// because `PassesStorage` is an independent peer of the document modules: the
+/// `Document <-> documents-table` mapping is a consumer-defined seam. Persisted as the
+/// raw value ('pdf' / 'png' / 'jpeg' / 'webp'). `webp` stays in the value space to keep
+/// the schema vocabulary mirrored to Android, but is enforced-unreachable at the iOS
+/// importer sniff (§7 resolution on ios-dts.2: the retained-image lane admits JPEG/PNG
+/// only).
+///
+/// Adding a case MUST come with a schema-version bump: without one, an older build
+/// reading the new value falls back to `.pdf` — the one non-tampering trigger for the
+/// permissive fallback — where the `unsupported` downgrade refusal would otherwise
+/// stop it.
+public enum DocumentFormat: String, Sendable, CaseIterable {
+    case pdf
+    case png
+    case jpeg
+    case webp
+}
+
+/// What `PassRepository.insertDocument` persists, as a sealed discriminator over the
+/// document kinds the `documents` table holds (mirror of Android `DocumentInsert`,
+/// wpass-i9x / wpass-8lu). Each arm carries exactly the kind-specific
+/// fields, so the field mixes the type can prevent are unrepresentable (an image with
+/// a page count, a PDF with dimensions). `bytes` is the ORIGINAL document bytes (PDF or compressed image);
+/// storage round-trips them opaque. `thumbnailBytes` is the Walt-produced display
+/// raster, PNG-encoded upstream.
+///
+/// iOS deviation from the Android shape: the `pdf` arm additionally carries
+/// `pageRasters` — the render-once per-page display rasters (ios-dts.16), which Android
+/// does not store (it re-renders per open inside its sandbox). The image arms carry no
+/// rasters: their `thumbnailBytes` IS the single Walt-produced display raster.
+public enum DocumentInsert: Sendable {
+    case pdf(
+        label: String, bytes: Data, thumbnailBytes: Data, pageCount: Int,
+        pageRasters: [DocumentPageRasterBlob])
+    /// A still image. `format` must be one of the image arms of `DocumentFormat` —
+    /// passing `.pdf` here is a caller bug (Android parity: documented, not rejected).
+    case image(
+        label: String, bytes: Data, thumbnailBytes: Data, format: DocumentFormat,
+        widthPx: Int, heightPx: Int)
+    /// A composite (image + extracted barcode) persisted as ONE row. A composite is
+    /// always image-backed: passing `.pdf` as `format` is a caller bug here too.
+    case barcodedImage(
+        label: String, bytes: Data, thumbnailBytes: Data, format: DocumentFormat,
+        widthPx: Int, heightPx: Int, barcodePayload: String, barcodeFormat: ScannableFormat)
+
+    /// Shared accessors, mirroring the Android sealed interface's common vals.
+    public var label: String {
+        switch self {
+        case .pdf(let label, _, _, _, _),
+            .image(let label, _, _, _, _, _),
+            .barcodedImage(let label, _, _, _, _, _, _, _):
+            return label
+        }
+    }
+
+    public var bytes: Data {
+        switch self {
+        case .pdf(_, let bytes, _, _, _),
+            .image(_, let bytes, _, _, _, _),
+            .barcodedImage(_, let bytes, _, _, _, _, _, _):
+            return bytes
+        }
+    }
+
+    public var thumbnailBytes: Data {
+        switch self {
+        case .pdf(_, _, let thumbnailBytes, _, _),
+            .image(_, _, let thumbnailBytes, _, _, _),
+            .barcodedImage(_, _, let thumbnailBytes, _, _, _, _, _):
+            return thumbnailBytes
+        }
+    }
+}
+
+/// The list-view projection of a stored document (PDF or image). Mirrors the indexed
+/// columns of the `documents` table; the heavy `pdf_bytes` and
+/// `document_thumbnails.bytes` blobs are NOT loaded here. Consumers that need the bytes
+/// call `loadDocumentBytes` / `loadDocumentThumbnail`.
 public struct DocumentRow: Sendable, Equatable {
     public let id: DocumentRecordId
     public let displayLabel: String
     public let byteCount: Int64
+    /// The kind discriminator a consumer branches on: `.pdf` uses `pageCount`; the
+    /// image formats use `widthPx` / `heightPx` (with `pageCount` 1 — an image is a
+    /// single page).
+    public let format: DocumentFormat
     public let pageCount: Int
+    public let widthPx: Int?
+    public let heightPx: Int?
     public let importedAtEpochMs: Int64
+    /// Non-nil ONLY for a composite artifact (wpass-8lu): an image row that also
+    /// carries a barcode extracted from it. Always nil for PDF and plain image rows;
+    /// the pair is the composite discriminator on top of the image `format`.
+    public let barcodePayload: String?
+    public let barcodeFormat: ScannableFormat?
 
     public init(
         id: DocumentRecordId,
         displayLabel: String,
         byteCount: Int64,
+        format: DocumentFormat,
         pageCount: Int,
-        importedAtEpochMs: Int64
+        widthPx: Int? = nil,
+        heightPx: Int? = nil,
+        importedAtEpochMs: Int64,
+        barcodePayload: String? = nil,
+        barcodeFormat: ScannableFormat? = nil
     ) {
         self.id = id
         self.displayLabel = displayLabel
         self.byteCount = byteCount
+        self.format = format
         self.pageCount = pageCount
+        self.widthPx = widthPx
+        self.heightPx = heightPx
         self.importedAtEpochMs = importedAtEpochMs
+        self.barcodePayload = barcodePayload
+        self.barcodeFormat = barcodeFormat
     }
 }
 
