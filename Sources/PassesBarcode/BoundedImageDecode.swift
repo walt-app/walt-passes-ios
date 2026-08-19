@@ -2,6 +2,7 @@ import CoreGraphics
 import Foundation
 import ImageIO
 import PassesCore
+import PassesImageDecode
 import UniformTypeIdentifiers
 
 /// The bounded still-image decode (mirror of Android's `BoundedBitmapDecoder` +
@@ -34,22 +35,26 @@ enum BoundedImageDecode {
         if data.count > config.maxBytes {
             return .rejected(.imageTooLarge)
         }
-        guard let imageSource = CGImageSourceCreateWithData(data as CFData, nil) else {
-            return .rejected(.imageDecodeFailed)
+        // The header-gated steps delegate to the shared `PassesImageDecode` primitive
+        // (wpass-gnp mirror, ios-dts.2); this lane keeps its own POLICY — the barcode
+        // allowlist and caps, folded onto `DecodeFailureReason` — while the mechanism
+        // (header read before any allocation, gate wins, malformed folds) is shared
+        // with the image-document lane.
+        let policy = BoundedDecodePolicy<DecodeFailureReason>(
+            gate: { type, width, height in
+                guard let type, config.allowedContentTypes.contains(where: { type.conforms(to: $0) })
+                else { return .imageDecodeFailed }
+                if exceedsCaps(width: width, height: height, config: config) {
+                    return .imageTooLarge
+                }
+                return nil
+            },
+            onMalformed: { .imageDecodeFailed }
+        )
+        switch decodeBounded(rawBytes: data, policy: policy) {
+        case .decoded(let cgImage): return .decoded(cgImage)
+        case .rejected(let reason): return .rejected(reason)
         }
-        guard isAllowedContainer(imageSource, allowed: config.allowedContentTypes) else {
-            return .rejected(.imageDecodeFailed)
-        }
-        guard let (width, height) = headerDimensions(imageSource) else {
-            return .rejected(.imageDecodeFailed)
-        }
-        if exceedsCaps(width: width, height: height, config: config) {
-            return .rejected(.imageTooLarge)
-        }
-        guard let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
-            return .rejected(.imageDecodeFailed)
-        }
-        return .decoded(cgImage)
     }
 
     /// Read the source's compressed bytes, reading at most `maxBytes + 1` so an oversize source is
@@ -86,27 +91,4 @@ enum BoundedImageDecode {
         }
     }
 
-    /// True when the container's UTI is inside the still-image allowlist. A source whose type
-    /// `CGImageSource` cannot even identify is refused.
-    private static func isAllowedContainer(_ imageSource: CGImageSource, allowed: Set<UTType>) -> Bool {
-        guard let uti = CGImageSourceGetType(imageSource) as String?,
-            let type = UTType(uti)
-        else {
-            return false
-        }
-        return allowed.contains { type.conforms(to: $0) }
-    }
-
-    /// The advertised pixel dimensions from the image header, read without decoding pixels.
-    private static func headerDimensions(_ imageSource: CGImageSource) -> (Int, Int)? {
-        guard
-            let properties = CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as? [CFString: Any],
-            let width = properties[kCGImagePropertyPixelWidth] as? Int,
-            let height = properties[kCGImagePropertyPixelHeight] as? Int,
-            width > 0, height > 0
-        else {
-            return nil
-        }
-        return (width, height)
-    }
 }

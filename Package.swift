@@ -22,6 +22,7 @@ let package = Package(
     products: [
         .library(name: "PassesCore", targets: ["PassesCore"]),
         .library(name: "PassesBarcode", targets: ["PassesBarcode"]),
+        .library(name: "PassesImage", targets: ["PassesImage"]),
         .library(name: "PassesPDFCore", targets: ["PassesPDFCore"]),
         .library(name: "PassesPDF", targets: ["PassesPDF"]),
         .library(name: "PassesPDFUI", targets: ["PassesPDFUI"]),
@@ -55,9 +56,29 @@ let package = Package(
             ]
         ),
         .target(
+            // Mechanism-only shared primitive (mirror of Android passes-image-decode,
+            // wpass-gnp): the header-gated bounded decode, generic over the caller's
+            // rejection type. No policy of its own — caps, allowlists and taxonomies
+            // stay with each consumer. Deliberately no dependencies, sitting below
+            // the barcode and image peers without adding an edge between them.
+            name: "PassesImageDecode",
+            dependencies: [],
+            path: "Sources/PassesImageDecode"
+        ),
+        .target(
             name: "PassesBarcode",
-            dependencies: ["PassesCore"],
+            dependencies: ["PassesCore", "PassesImageDecode"],
             path: "Sources/PassesBarcode"
+        ),
+        .target(
+            // In-process bounded image decode-and-retain (mirror of Android
+            // passes-image minus the isolatedProcess plumbing; §7-approved
+            // ios-dts.2). Policy lives here: ImageDecodeConfig, the JPEG/PNG
+            // retained-lane allowlist, ImageDecodeRejectedKind. Peer of
+            // PassesBarcode — they share only PassesImageDecode.
+            name: "PassesImage",
+            dependencies: ["PassesImageDecode"],
+            path: "Sources/PassesImage"
         ),
         .target(
             name: "PassesPDFCore",
@@ -110,6 +131,16 @@ let package = Package(
                 // verbatim from the Android side. Regression guard for walt-passes-ios#31.
                 .copy("Fixtures"),
             ]
+        ),
+        .testTarget(
+            name: "PassesImageDecodeTests",
+            dependencies: ["PassesImageDecode"],
+            path: "Tests/PassesImageDecodeTests"
+        ),
+        .testTarget(
+            name: "PassesImageTests",
+            dependencies: ["PassesImage"],
+            path: "Tests/PassesImageTests"
         ),
         .testTarget(
             name: "PassesBarcodeTests",
