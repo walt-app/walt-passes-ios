@@ -30,31 +30,54 @@ public protocol BarcodeImageDecoder: Sendable {
 ///  2. ``VisionSymbolDecode/detectBarcode(using:)`` — the roster-pinned `VNDetectBarcodesRequest`,
 ///     shared verbatim with the live-frame path — reads the symbol in Vision's system services, out
 ///     of Walt's address space (the iOS analogue of Android's isolated decode process).
-///  3. The whole Vision step runs under ``withDecodeTimeout(_:on:timeoutValue:operation:)`` — the
-///     app-level `ProcessKiller` analogue — so a hung decode reports `decodeTimedOut` rather than
-///     blocking the caller. It runs on the untrusted-input bank (``DecodeBank/stillImage``), which
-///     cannot consume capacity the live camera path needs.
+///  3. BOTH steps — the ImageIO decode and the Vision read — run under
+///     ``withDecodeTimeout(_:on:timeoutValue:operation:)`` — the app-level `ProcessKiller`
+///     analogue — so a hung codec or symbol decode reports `decodeTimedOut` rather than blocking
+///     the caller. They run on the untrusted-input bank (``DecodeBank/stillImage``), which cannot
+///     consume capacity the live camera path needs. (The shared primitive decodes eagerly, so the
+///     codec work must sit inside the wait — a lazy image would defer it to first Vision use, but
+///     relying on laziness left the codec's placement implicit and once escaped the lane
+///     entirely.) The one check outside the wait is the I/O-free `.data` byte cap, so an over-cap
+///     buffer rejects with its real arm even when every lane is busy.
 ///
 /// The payload is returned FAITHFULLY: nothing here interprets, normalizes, or acts on the decoded
 /// bytes. `Sendable` via immutable `config`; no shared mutable state, so no lock is needed.
 public struct VisionBarcodeImageDecoder: BarcodeImageDecoder {
     private let config: BarcodeDecodeConfig
+    /// Seam so tests can observe the executor the ImageIO step runs on (mirror of
+    /// Android's `doDecode` boundedDecode parameter); production always uses the
+    /// real bounded decode.
+    private let boundedDecode: @Sendable (BarcodeImageSource, BarcodeDecodeConfig) -> BoundedImageDecode.Outcome
 
     public init(config: BarcodeDecodeConfig = BarcodeDecodeConfig()) {
+        self.init(config: config, boundedDecode: { BoundedImageDecode.decode($0, config: $1) })
+    }
+
+    init(
+        config: BarcodeDecodeConfig,
+        boundedDecode: @escaping @Sendable (BarcodeImageSource, BarcodeDecodeConfig) -> BoundedImageDecode.Outcome
+    ) {
         self.config = config
+        self.boundedDecode = boundedDecode
     }
 
     public func decode(source: BarcodeImageSource) async -> BarcodeDecodeResult {
-        switch BoundedImageDecode.decode(source, config: config) {
-        case .rejected(let reason):
-            return .decodeFailed(reason: reason)
-        case .decoded(let cgImage):
-            return await withDecodeTimeout(
-                config.decodeTimeout,
-                on: .stillImage,
-                timeoutValue: .decodeFailed(reason: .decodeTimedOut)
-            ) {
-                VisionSymbolDecode.detectBarcode(using: VNImageRequestHandler(cgImage: cgImage, options: [:]))
+        if case .data(let bytes) = source, bytes.count > config.maxBytes {
+            return .decodeFailed(reason: .imageTooLarge)
+        }
+        let config = self.config
+        let boundedDecode = self.boundedDecode
+        return await withDecodeTimeout(
+            config.decodeTimeout,
+            on: .stillImage,
+            timeoutValue: .decodeFailed(reason: .decodeTimedOut)
+        ) {
+            switch boundedDecode(source, config) {
+            case .rejected(let reason):
+                return .decodeFailed(reason: reason)
+            case .decoded(let cgImage):
+                return VisionSymbolDecode.detectBarcode(
+                    using: VNImageRequestHandler(cgImage: cgImage, options: [:]))
             }
         }
     }

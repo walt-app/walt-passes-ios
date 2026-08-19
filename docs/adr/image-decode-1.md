@@ -84,9 +84,13 @@ holds the slot for a future out-of-process decoder behind the same
 **Lane sizing and the concurrent allocation ceiling.** The bank is 4 lanes with NO
 overflow-thread tier — a deliberate deviation from the barcode banks' 8+32: the
 import surface is single-flight UX, a refusal resolves the caller immediately (it
-never waits out the deadline), and the codec-free preflight (output bound, bounded
-read, byte cap) runs OUTSIDE the lanes so a saturated bank can never mask a real
-rejection arm. The sizing is also the availability price of the containment delta:
+never waits out the deadline), and the I/O-free preflight (output bound; the
+`.data` arm's byte cap) runs OUTSIDE the lanes so a saturated bank cannot mask
+those rejection arms. The `.fileURL` read deliberately trades that preflight
+visibility for deadline coverage: it runs INSIDE the lane, so a slow source
+(file provider, network volume) is bounded by the wait — under a saturated bank
+its over-cap rejection surfaces as `decoderUnavailable` rather than
+`oversizedAtImport`, an accepted narrowing. The sizing is also the availability price of the containment delta:
 each lane can hold a decode allocation up to the ~200 MB the 50 MP header cap
 admits, so the worst-case simultaneously-live decode allocation is 4 x ~200 MB ≈
 800 MB, and an orphaned (timed-out) decode holds its share until it finishes —
@@ -105,6 +109,15 @@ stronger ordering.
 resident, so its bound is necessarily the caller's — the ios-dts.3 importer MUST
 apply its own bounded read before constructing `.data` (binding note recorded on
 that bead).
+
+**The decode is forced eager.** `CGImageSourceCreateImageAtIndex` returns a LAZY
+image by default — the codec work would run at first draw, outside any lane or
+deadline. The shared primitive passes `kCGImageSourceShouldCacheImmediately` so
+the pixel decode happens inside `decodeBounded`, and BOTH consumers therefore run
+it under their own bounded wait (the barcode facade moved its whole
+ImageIO-then-Vision pipeline inside `withDecodeTimeout` for exactly this reason —
+relying on laziness left the codec placement implicit, and forcing it once
+escaped the lane entirely).
 
 ## Structure mapping (Android module ↔ iOS target)
 

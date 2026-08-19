@@ -12,6 +12,11 @@ import Foundation
 /// reconcile the pin deliberately. The composite arm (`BarcodedImageDocument`) rides
 /// ios-dts.3 with the importer that produces it.
 public protocol Document: Sendable {
+    /// The arm's id through the supertype (Android's `val id: DocumentId`).
+    /// Named `documentId` because each arm's concrete `id` keeps its precise type;
+    /// existential note: `any DocumentId` reads `.value` but cannot key a
+    /// `Set`/`Dictionary` — key off the concrete arm ids for that.
+    var documentId: any DocumentId { get }
     var displayLabel: String { get }
     var byteCount: Int64 { get }
     var importedAtEpochMs: Int64 { get }
@@ -29,7 +34,9 @@ public protocol DocumentId: Sendable, Hashable {
 /// (not the test) so the pin and the arms travel together in review.
 package let documentArms: [Any.Type] = [PDFDocument.self, ImageDocument.self]
 
-extension PDFDocument: Document {}
+extension PDFDocument: Document {
+    public var documentId: any DocumentId { id }
+}
 extension PDFDocumentId: DocumentId {}
 
 /// Opaque identifier for a stored `ImageDocument`. Its own type (not `PDFDocumentId`)
@@ -61,6 +68,8 @@ public struct ImageDocumentId: Sendable, Hashable, Equatable, DocumentId {
 /// mirrors `PDFDocument` carrying no MIME and keeps `PassesPDFCore` free of the
 /// image-format vocabulary, which lives one layer up in the importer.
 public struct ImageDocument: Sendable, Equatable, Document {
+    public var documentId: any DocumentId { id }
+
     public let id: ImageDocumentId
     public let displayLabel: String
     public let byteCount: Int64

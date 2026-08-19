@@ -30,6 +30,9 @@ struct DocumentSealedSetTests {
     @Test func perArmIdsSurfaceThroughTheDocumentIdSupertype() {
         let ids: [any DocumentId] = [pdf.id, image.id]
         #expect(ids.map(\.value) == ["p1", "i1"])
+        // And through `any Document` itself (Android's `val id: DocumentId`).
+        let documents: [any Document] = [pdf, image]
+        #expect(documents.map(\.documentId.value) == ["p1", "i1"])
     }
 
     /// The arm roster travels with `documentArms` in the source file; this checks

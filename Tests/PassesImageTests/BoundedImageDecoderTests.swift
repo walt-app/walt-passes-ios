@@ -91,7 +91,7 @@ struct BoundedImageDecoderTests {
     // MARK: - End-to-end decode arms
 
     /// Each test decodes on its own bank: contention on the shared bank across
-    /// parallel tests read as decoderUnavailable (K2 review round 1 blocker).
+    /// parallel tests reads as decoderUnavailable.
     private func makeDecoder(config: ImageDecodeConfig = ImageDecodeConfig()) -> any BoundedImageDecoder {
         DefaultBoundedImageDecoder(config: config, lanes: ImageDecodeLanes(lanes: 4))
     }
@@ -221,7 +221,7 @@ struct BoundedImageDecoderTests {
     /// Every orientation is checked against ImageIO's own transform
     /// (`kCGImageSourceCreateThumbnailWithTransform`) with a four-quadrant
     /// fixture, so a mirror cannot pass as a rotation and a pairwise case swap
-    /// (the K2 round-2 defect) cannot return.
+    /// cannot return.
     @Test(arguments: 1...8)
     func everyOrientationMatchesImageIOsOwnTransform(orientation: Int) async throws {
         let jpeg = try ImageFixtures.quadrantJpeg(
@@ -282,7 +282,7 @@ struct BoundedImageDecoderTests {
     }
 
     /// A refusal is known synchronously, so the caller is resolved immediately —
-    /// never made to wait out the deadline for it (K2 review round 1).
+    /// never made to wait out the deadline for it.
     @Test func aRefusedSubmissionResolvesImmediatelyAsUnavailable() async {
         let lanes = ImageDecodeLanes(lanes: 1)
         async let hog: ImageDecodeResult = withImageDecodeTimeout(
@@ -447,8 +447,8 @@ enum ImageFixtures {
             image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
         guard let data = context.data else { return nil }
         // A CGBitmapContext buffer stores row 0 as the image's TOP row, so
-        // top-left image coordinates index the buffer directly (the flipped
-        // version of this line once cancelled an orientation bug — K2 round 2).
+        // top-left image coordinates index the buffer directly (a flipped row
+        // here once exactly cancelled an orientation transform bug).
         let row = y
         let offset = (row * image.width + x) * 4
         let pixels = data.assumingMemoryBound(to: UInt8.self)

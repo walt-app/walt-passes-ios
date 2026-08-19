@@ -12,11 +12,9 @@ private struct DecodeContext: Sendable {
 /// Coverage for ``withDecodeTimeout(_:on:timeoutValue:operation:)`` — the app-level `ProcessKiller`
 /// analogue. The security-relevant property is that a slow/hung operation stops blocking the caller
 /// at the budget and yields the timeout value; the fast path must return the real result untouched.
-/// `.serialized` orders the tests *in this suite* against the process-global banks:
-/// `decodeDoesNotQueueBehindSaturatedLanes` holds every still-image lane and part of its spill until
-/// it finishes. It does NOT hold off other suites — `VisionBarcodeImageDecoderTests` and the
-/// hostile-payload suites drive the real decoders in parallel with this one — so the hog count has to
-/// leave the still-image bank headroom for them, which that test derives and asserts.
+/// `.serialized` orders the tests *in this suite*; the saturation test runs on its own
+/// private bank so parallel suites driving the process-global banks cannot perturb it
+/// (and it cannot starve them).
 @Suite("DecodeTimeout", .serialized)
 struct DecodeTimeoutTests {
     @Test func fastOperationReturnsItsResult() async {
@@ -63,18 +61,20 @@ struct DecodeTimeoutTests {
     @Test func decodeDoesNotQueueBehindSaturatedLanes() async {
         let gate = DispatchSemaphore(value: 0)
         let occupied = DispatchSemaphore(value: 0)
-        // Derived, not hand-counted: every prose restatement of this arithmetic has gone stale at
-        // least once. Past the lane count so the decode below must spill, and modest because this
-        // shares the process-global still-image bank with every sibling suite that decodes an image
-        // — and since ipass-ba3 an over-subscribed bank REFUSES rather than queueing, so a hog that
-        // loses the race never runs and never signals. The headroom left is asserted below rather
-        // than described, which is what kept going stale.
+        // A PRIVATE bank sized like production, so sibling suites decoding against the
+        // process-global banks cannot steal a slot mid-test — sharing `.stillImage` here
+        // is what made this test misreport sibling contention as 'one hog short' for
+        // months. The image lane's suites use the same own-bank pattern.
+        let bank = DecodeLanes(
+            lanes: decodeLaneCount,
+            maxOverflowThreads: decodeMaxOverflowThreads,
+            labelPrefix: "is.walt.passes.barcode.decode-test."
+        )
+        // Past the lane count so the decode below must spill.
         let hogs = decodeLaneCount + 4
-        let headroom = decodeLaneCount + decodeMaxOverflowThreads - hogs
-        #expect(headroom >= 24, "sibling suites decode against this bank while these hogs hold it")
         for _ in 0..<hogs {
             Task.detached {
-                _ = await withDecodeTimeout(.seconds(60), on: .stillImage, timeoutValue: "TIMED_OUT") {
+                _ = await withDecodeTimeout(.seconds(60), on: bank, timeoutValue: "TIMED_OUT") {
                     occupied.signal()
                     gate.wait()
                     return "REAL"
@@ -83,11 +83,7 @@ struct DecodeTimeoutTests {
         }
         // Asserted, not discarded: an unsaturated bank would never exercise the spill path. Every
         // hog, so the bank is settled rather than still minting spill threads under the probe.
-        // The rendezvous bound matches the hogs' own 60s hold: a passing run signals in
-        // milliseconds, and the old 20s bound lost to cooperative-pool scheduling under parallel
-        // suite load, misreporting slow scheduling as refusal (kernel #71 — the failure was
-        // always 'one hog short', never a real spill defect).
-        let started = await awaitSignals(occupied, upTo: hogs, seconds: 60)
+        let started = await awaitSignals(occupied, upTo: hogs, seconds: 20)
         #expect(started == hogs, "hogs that never started were refused, or the runner is saturated")
         defer { for _ in 0..<started { gate.signal() } }
 
@@ -96,12 +92,37 @@ struct DecodeTimeoutTests {
         // before them, so ANY budget well under 60s catches it. An earlier 500ms budget also
         // measured how fast the runner mints a thread, and failed on the 3-core CI runner while
         // passing locally — precision this assertion never needed.
-        let stillImage = await withDecodeTimeout(.seconds(5), on: .stillImage, timeoutValue: "TIMED_OUT") {
+        let stillImage = await withDecodeTimeout(.seconds(5), on: bank, timeoutValue: "TIMED_OUT") {
             "REAL"
         }
         #expect(stillImage == "REAL")
-        // No live-frame probe here: these hogs leave the still-image bank plenty free (the `headroom`
-        // asserted above), so a live-frame decode would return instantly under a SHARED bank too.
-        // Isolation is pinned in `LaneBankIsolation`.
+        // Bank isolation is pinned in `LaneBankIsolation`; this test owns only the
+        // no-queueing property.
+    }
+
+    /// The ImageIO codec step must run inside the bounded wait on a lane this module
+    /// owns — the shared primitive decodes EAGERLY, so a facade that ran it before
+    /// `withDecodeTimeout` would put unbounded codec work on the cooperative pool
+    /// (the ipass-f8p invariant, extended to the codec half).
+    @Test func imageIOStepRunsInsideTheBoundedWaitOnAnOwnedExecutor() async {
+        nonisolated(unsafe) var ranOn: DecodeContext?
+        let decoder = VisionBarcodeImageDecoder(
+            config: BarcodeDecodeConfig(),
+            boundedDecode: { _, _ in
+                ranOn = DecodeContext(
+                    queue: String(cString: __dispatch_queue_get_label(nil)),
+                    thread: Thread.current.name
+                )
+                return .rejected(.imageDecodeFailed)
+            }
+        )
+        _ = await decoder.decode(source: .data(Data([0x01])))
+        let owned =
+            ranOn?.queue.hasPrefix(decodeLaneLabelPrefix) == true
+            || ranOn?.thread == decodeOverflowThreadName
+        #expect(
+            owned,
+            "ImageIO step ran on queue=\(ranOn?.queue ?? "never ran") thread=\(ranOn?.thread ?? "unnamed")"
+        )
     }
 }

@@ -142,7 +142,7 @@ enum BoundedRasterDecoder {
         let height = CGFloat(outputHeight)
         // Case bodies verified against ImageIO's own
         // kCGImageSourceCreateThumbnailWithTransform for all eight orientations
-        // (K2 review round 2 caught 5-8 swapped pairwise).
+        // (the parameterized oracle test pins them).
         switch orientation {
         case 2:  // mirrored horizontal
             context.translateBy(x: width, y: 0)
@@ -185,11 +185,20 @@ enum BoundedRasterDecoder {
         case .fileURL(let url):
             guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
             defer { try? handle.close() }
+            // Loop to count-or-EOF (Android readBoundedBytes parity): a single
+            // read may short-read on a non-regular source and silently truncate.
+            var bytes = Data()
             do {
-                return try handle.read(upToCount: maxBytes + 1) ?? Data()
+                while bytes.count <= maxBytes {
+                    guard let chunk = try handle.read(upToCount: maxBytes + 1 - bytes.count),
+                        !chunk.isEmpty
+                    else { break }
+                    bytes.append(chunk)
+                }
             } catch {
                 return nil
             }
+            return bytes
         }
     }
 }

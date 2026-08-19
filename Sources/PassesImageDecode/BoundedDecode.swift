@@ -71,7 +71,7 @@ package func decodeBounded<R>(
     }
     // ShouldCacheImmediately forces the pixel decode HERE — without it ImageIO
     // returns a lazy image whose codec work runs at first draw, outside the
-    // caller's bounded wait (K2 review round 2).
+    // caller's bounded wait.
     let options = [kCGImageSourceShouldCacheImmediately: true] as CFDictionary
     guard let image = CGImageSourceCreateImageAtIndex(source, 0, options) else {
         return .rejected(policy.onDecodeFailed())

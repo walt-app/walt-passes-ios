@@ -82,9 +82,9 @@ enum BoundedImageDecode {
     /// True when the header's advertised dimensions exceed the per-side or megapixel cap — the
     /// decompression-bomb guard, checked before any bitmap is allocated.
     private static func exceedsCaps(width: Int, height: Int, config: BarcodeDecodeConfig) -> Bool {
-        width > config.maxDimensionPx
-            || height > config.maxDimensionPx
-            || width * height > config.maxAreaPx
+        if width > config.maxDimensionPx || height > config.maxDimensionPx { return true }
+        let (area, overflowed) = width.multipliedReportingOverflow(by: height)
+        return overflowed || area > config.maxAreaPx
     }
 
     /// The read failed outright: a `.data` source can't fail to read, so any read failure is a
