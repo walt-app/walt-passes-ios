@@ -27,7 +27,7 @@ public protocol DocumentId: Sendable, Hashable {
 
 /// The closed arm set — the executable stand-in for `sealed`. Kept in the source file
 /// (not the test) so the pin and the arms travel together in review.
-public let documentArms: [Any.Type] = [PDFDocument.self, ImageDocument.self]
+package let documentArms: [Any.Type] = [PDFDocument.self, ImageDocument.self]
 
 extension PDFDocument: Document {}
 extension PDFDocumentId: DocumentId {}

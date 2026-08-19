@@ -1,4 +1,5 @@
 import Foundation
+import PassesImageDecode
 
 /// Bounded WAIT for the image-document decode — the §7-priced translation of
 /// Android's `DecodeWatchdog` (which kills its sandbox process; in-process iOS
@@ -6,14 +7,15 @@ import Foundation
 /// work runs to completion on its lane, its result discarded). The header caps in
 /// `BoundedRasterDecoder` are what keep the actual work bounded; this bounds how
 /// long the caller waits. Same discipline as `PassesBarcode`'s `withDecodeTimeout`,
-/// deliberately duplicated rather than shared: the image-document lane and the
+/// with deliberately SEPARATE bank instances: the image-document lane and the
 /// barcode lanes must never share capacity, so a wedged import cannot starve the
-/// camera (the ADR records the mapping).
+/// camera (`docs/adr/image-decode-1.md` records the sizing and the mapping).
 ///
 /// Neither racer touches the Swift cooperative pool: decodes run on this module's
 /// own serial lanes, deadlines on their own queue. A submission arriving with every
-/// lane occupied is refused rather than queued, and the deadline reports it as a
-/// timeout.
+/// lane occupied is REFUSED — and resolved with `timeoutValue` immediately, not
+/// after the full budget (a refusal is known synchronously; making the caller wait
+/// out the deadline for it was K2 review round 1's blocker).
 func withImageDecodeTimeout<T: Sendable>(
     _ duration: Duration,
     lanes: ImageDecodeLanes = .shared,
@@ -23,15 +25,18 @@ func withImageDecodeTimeout<T: Sendable>(
     await withCheckedContinuation { (continuation: CheckedContinuation<T, Never>) in
         let resolver = ResolveOnce(continuation)
         let deadline = DeadlineBox(DispatchWorkItem { resolver.resolve(timeoutValue) })
-        // Scheduled before the submission, not after: a refused submission runs
-        // nothing, so the deadline is the only thing left that can resolve the
-        // caller.
+        // Scheduled before the submission so the wedged-decode path always has a
+        // live resolver.
         ImageDecodeLanes.deadlines.asyncAfter(
-            deadline: .now() + dispatchInterval(duration), execute: deadline.item)
-        lanes.submit {
+            deadline: .now() + saturatingDispatchInterval(duration), execute: deadline.item)
+        let accepted = lanes.submit {
             let value = operation()
             deadline.item.cancel()
             resolver.resolve(value)
+        }
+        if !accepted {
+            deadline.item.cancel()
+            resolver.resolve(timeoutValue)
         }
     }
 }
@@ -39,7 +44,10 @@ func withImageDecodeTimeout<T: Sendable>(
 /// Dedicated serial decode lanes this module owns — never the cooperative pool and
 /// never a concurrent queue (which draws from the same thread pool the cooperative
 /// pool exhausts). Occupancy is tracked so a full bank REFUSES a submission instead
-/// of queueing it behind a possibly-wedged decode.
+/// of queueing it behind a possibly-wedged decode; the refusal resolves the caller
+/// immediately (see `withImageDecodeTimeout`). No overflow-thread tier, unlike the
+/// barcode banks: the sizing bounds this lane's concurrent decode allocation, and
+/// the import surface is single-flight UX (ADR records the pricing).
 ///
 /// `@unchecked Sendable`: occupancy is mutable shared state guarded by an `NSLock`
 /// (the doc comment is the ADR per the repo's policy); the queues themselves are
@@ -50,40 +58,46 @@ final class ImageDecodeLanes: @unchecked Sendable {
         label: "is.walt.passes.image.decode-deadline", qos: .userInitiated)
 
     /// One import decodes at a time in practice; the extra lanes absorb a wedged
-    /// decode without blocking the next import for the process lifetime. The ceiling
-    /// (lanes x 1 thread each) is a security bound like the barcode banks'.
+    /// decode without blocking the next import for the process lifetime. The
+    /// ceiling (lanes x 1 thread each, and lanes x the decode allocation bound) is
+    /// a security bound like the barcode banks'.
     private static let laneCount = 4
 
     private let lanes: [DispatchQueue]
     private let lock = NSLock()
     private var occupied: [Bool]
 
-    /// Production uses `shared`; tests build a bank small enough to saturate
-    /// deterministically.
+    /// Production uses `shared`; tests build a bank small enough to saturate — or
+    /// private enough not to contend — deterministically.
     init(lanes laneCount: Int) {
+        precondition(laneCount > 0, "a zero-lane bank would refuse every decode")
         lanes = (0..<laneCount).map {
             DispatchQueue(label: "is.walt.passes.image.decode.\($0)", qos: .userInitiated)
         }
         occupied = Array(repeating: false, count: laneCount)
     }
 
-    /// Submit `work` to a free lane; a full bank refuses (returns without running),
-    /// leaving the caller to its deadline.
-    func submit(_ work: @escaping @Sendable () -> Void) {
+    /// Submit `work` to a free lane; returns `false` (running nothing) when every
+    /// lane is occupied. The lane releases in a `defer` and captures `self`
+    /// strongly — a lane leaked here would read as occupied forever, a false
+    /// refusal that outlives its cause.
+    func submit(_ work: @escaping @Sendable () -> Void) -> Bool {
         lock.lock()
         guard let free = occupied.firstIndex(of: false) else {
             lock.unlock()
-            return
+            return false
         }
         occupied[free] = true
         lock.unlock()
-        lanes[free].async { [weak self] in
+        lanes[free].async {
+            defer {
+                self.lock.lock()
+                self.occupied[free] = false
+                self.lock.unlock()
+            }
             work()
-            guard let self else { return }
-            self.lock.lock()
-            self.occupied[free] = false
-            self.lock.unlock()
         }
+        return true
     }
 }
 
@@ -97,7 +111,8 @@ private struct DeadlineBox: @unchecked Sendable {
     }
 }
 
-/// First resolution wins; the loser's call is a no-op (the decode/deadline race).
+/// First resolution wins; the loser's call is a no-op (the decode/deadline/refusal
+/// race).
 private final class ResolveOnce<T: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<T, Never>?
@@ -113,10 +128,4 @@ private final class ResolveOnce<T: Sendable>: @unchecked Sendable {
         lock.unlock()
         taken?.resume(returning: value)
     }
-}
-
-private func dispatchInterval(_ duration: Duration) -> DispatchTimeInterval {
-    let (seconds, attoseconds) = duration.components
-    let nanos = seconds * 1_000_000_000 + attoseconds / 1_000_000_000
-    return .nanoseconds(Int(clamping: nanos))
 }

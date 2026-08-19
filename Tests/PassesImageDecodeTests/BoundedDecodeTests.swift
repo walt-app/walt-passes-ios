@@ -15,14 +15,18 @@ import UniformTypeIdentifiers
 struct BoundedDecodeTests {
 
     private enum TestReason: Equatable {
-        case gateSaidNo
+        case containerSaidNo
+        case dimensionsSaidNo
         case malformed
+        case undecodable
     }
 
     private func allowAll() -> BoundedDecodePolicy<TestReason> {
         BoundedDecodePolicy(
-            gate: { _, _, _ in nil },
-            onMalformed: { .malformed }
+            containerGate: { _ in nil },
+            dimensionGate: { _, _ in nil },
+            onMalformed: { .malformed },
+            onDecodeFailed: { .undecodable }
         )
     }
 
@@ -37,30 +41,57 @@ struct BoundedDecodeTests {
         #expect(image.height == 6)
     }
 
-    @Test func gateSeesContainerTypeAndHeaderDimensions() throws {
+    @Test func gatesSeeContainerTypeAndHeaderDimensions() throws {
         let jpeg = try TestImages.jpeg(width: 10, height: 4)
-        nonisolated(unsafe) var seen: (UTType?, Int, Int)?
+        nonisolated(unsafe) var seenType: UTType??
+        nonisolated(unsafe) var seenDims: (Int, Int)?
         let policy = BoundedDecodePolicy<TestReason>(
-            gate: { type, width, height in
-                seen = (type, width, height)
+            containerGate: { type in
+                seenType = type
                 return nil
             },
-            onMalformed: { .malformed }
+            dimensionGate: { width, height in
+                seenDims = (width, height)
+                return nil
+            },
+            onMalformed: { .malformed },
+            onDecodeFailed: { .undecodable }
         )
         _ = decodeBounded(rawBytes: jpeg, policy: policy)
-        #expect(seen?.0?.conforms(to: .jpeg) == true)
-        #expect(seen?.1 == 10)
-        #expect(seen?.2 == 4)
+        #expect(seenType??.conforms(to: .jpeg) == true)
+        #expect(seenDims?.0 == 10)
+        #expect(seenDims?.1 == 4)
     }
 
-    @Test func gateRejectionWinsAndNothingDecodes() throws {
+    /// The container gate is judged BEFORE the header-properties read: ImageIO's
+    /// metadata parser never runs over a container the allowlist rejects.
+    @Test func containerRejectionWinsBeforeTheMetadataRead() throws {
         let png = try TestImages.png(width: 8, height: 8)
+        nonisolated(unsafe) var dimensionGateRan = false
         let policy = BoundedDecodePolicy<TestReason>(
-            gate: { _, _, _ in .gateSaidNo },
-            onMalformed: { .malformed }
+            containerGate: { _ in .containerSaidNo },
+            dimensionGate: { _, _ in
+                dimensionGateRan = true
+                return nil
+            },
+            onMalformed: { .malformed },
+            onDecodeFailed: { .undecodable }
         )
         let outcome = decodeBounded(rawBytes: png, policy: policy)
-        #expect(outcome.rejection == .gateSaidNo)
+        #expect(outcome.rejection == .containerSaidNo)
+        #expect(!dimensionGateRan)
+    }
+
+    @Test func dimensionRejectionWinsAndNothingDecodes() throws {
+        let png = try TestImages.png(width: 8, height: 8)
+        let policy = BoundedDecodePolicy<TestReason>(
+            containerGate: { _ in nil },
+            dimensionGate: { _, _ in .dimensionsSaidNo },
+            onMalformed: { .malformed },
+            onDecodeFailed: { .undecodable }
+        )
+        let outcome = decodeBounded(rawBytes: png, policy: policy)
+        #expect(outcome.rejection == .dimensionsSaidNo)
     }
 
     @Test func malformedBytesFoldToTheCallersReason() {
@@ -85,6 +116,8 @@ extension BoundedDecodeOutcome {
 /// Real encoded fixtures via ImageIO, so the primitive is exercised against the
 /// production codec path rather than hand-crafted byte strings.
 enum TestImages {
+    struct EncodeUnsupported: Error {}
+
     static func png(width: Int, height: Int) throws -> Data {
         try encoded(width: width, height: height, type: UTType.png.identifier)
     }
@@ -94,18 +127,21 @@ enum TestImages {
     }
 
     static func encoded(width: Int, height: Int, type: String) throws -> Data {
-        let context = CGContext(
-            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
-            space: CGColorSpace(name: CGColorSpace.sRGB)!,
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        )!
+        guard
+            let context = CGContext(
+                data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )
+        else { throw EncodeUnsupported() }
         context.setFillColor(CGColor(red: 0.2, green: 0.4, blue: 0.6, alpha: 1))
         context.fill(CGRect(x: 0, y: 0, width: width, height: height))
-        let image = context.makeImage()!
+        guard let image = context.makeImage() else { throw EncodeUnsupported() }
         let out = NSMutableData()
-        let destination = CGImageDestinationCreateWithData(out, type as CFString, 1, nil)!
+        guard let destination = CGImageDestinationCreateWithData(out, type as CFString, 1, nil)
+        else { throw EncodeUnsupported() }
         CGImageDestinationAddImage(destination, image, nil)
-        CGImageDestinationFinalize(destination)
+        guard CGImageDestinationFinalize(destination) else { throw EncodeUnsupported() }
         return out as Data
     }
 }

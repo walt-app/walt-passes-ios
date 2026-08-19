@@ -38,18 +38,20 @@ enum BoundedImageDecode {
         // The header-gated steps delegate to the shared `PassesImageDecode` primitive
         // (wpass-gnp mirror, ios-dts.2); this lane keeps its own POLICY — the barcode
         // allowlist and caps, folded onto `DecodeFailureReason` — while the mechanism
-        // (header read before any allocation, gate wins, malformed folds) is shared
-        // with the image-document lane.
+        // (container judged before the metadata read, dimensions before any
+        // allocation, gate wins, malformed folds) is shared with the image-document
+        // lane. Check order is unchanged from the pre-delegation code.
         let policy = BoundedDecodePolicy<DecodeFailureReason>(
-            gate: { type, width, height in
+            containerGate: { type in
                 guard let type, config.allowedContentTypes.contains(where: { type.conforms(to: $0) })
                 else { return .imageDecodeFailed }
-                if exceedsCaps(width: width, height: height, config: config) {
-                    return .imageTooLarge
-                }
                 return nil
             },
-            onMalformed: { .imageDecodeFailed }
+            dimensionGate: { width, height in
+                exceedsCaps(width: width, height: height, config: config) ? .imageTooLarge : nil
+            },
+            onMalformed: { .imageDecodeFailed },
+            onDecodeFailed: { .imageDecodeFailed }
         )
         switch decodeBounded(rawBytes: data, policy: policy) {
         case .decoded(let cgImage): return .decoded(cgImage)
@@ -90,5 +92,4 @@ enum BoundedImageDecode {
         case .fileURL: return .sourceUnreadable
         }
     }
-
 }

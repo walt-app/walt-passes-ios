@@ -15,7 +15,7 @@ struct BoundedImageDecoderTests {
 
     // MARK: - Config pins (§7 terms; changing one is a deliberate, test-breaking edit)
 
-    @Test func configPinsTheSevenApprovedNumbers() {
+    @Test func configPinsTheApprovedNumbers() {
         #expect(ImageDecodeConfig.defaultMaxBytes == 25 * 1024 * 1024)
         #expect(ImageDecodeConfig.defaultMaxDimensionPx == 12_000)
         #expect(ImageDecodeConfig.defaultMaxAreaPx == 50_000_000)
@@ -60,28 +60,40 @@ struct BoundedImageDecoderTests {
         #expect(dims.heightPx == 1)
     }
 
-    // MARK: - Header gate (pure, so cap trips need no giant fixtures — Android
-    // headerRejection mirror)
+    // MARK: - Header gates (pure, so cap trips need no giant fixtures — Android
+    // headerRejection mirror, split so the container is judged before the
+    // metadata read)
 
-    @Test func headerGatePrecedenceIsContainerThenSideThenArea() {
+    @Test func containerGateAdmitsOnlyTheRetainedLaneRoster() {
         let config = ImageDecodeConfig()
-        #expect(headerRejection(type: nil, width: 10, height: 10, config: config) == .notAnImage)
-        #expect(headerRejection(type: .webP, width: 10, height: 10, config: config) == .notAnImage)
-        #expect(headerRejection(type: .heic, width: 10, height: 10, config: config) == .notAnImage)
+        #expect(containerRejection(type: nil, config: config) == .notAnImage)
+        #expect(containerRejection(type: .webP, config: config) == .notAnImage)
+        #expect(containerRejection(type: .heic, config: config) == .notAnImage)
+        #expect(containerRejection(type: .png, config: config) == nil)
+        #expect(containerRejection(type: .jpeg, config: config) == nil)
+    }
+
+    @Test func dimensionGateTripsPerSideThenArea() {
+        let config = ImageDecodeConfig()
         #expect(
-            headerRejection(type: .png, width: 12_001, height: 10, config: config)
-                == .dimensionsTooLarge)
+            dimensionRejection(width: 12_001, height: 10, config: config) == .dimensionsTooLarge)
         #expect(
-            headerRejection(type: .png, width: 8_000, height: 7_000, config: config)
-                == .dimensionsTooLarge)
-        #expect(headerRejection(type: .png, width: 8, height: 6, config: config) == nil)
-        #expect(headerRejection(type: .jpeg, width: 8, height: 6, config: config) == nil)
+            dimensionRejection(width: 8_000, height: 7_000, config: config) == .dimensionsTooLarge)
+        #expect(dimensionRejection(width: 8, height: 6, config: config) == nil)
+    }
+
+    @Test func outputSizeValidityRejectsOverflowInsteadOfTrapping() {
+        #expect(!isOutputSizeValid(maxWidthPx: Int.max / 2, maxHeightPx: 3, maxOutputPixels: 100))
+        #expect(!isOutputSizeValid(maxWidthPx: 0, maxHeightPx: 10, maxOutputPixels: 100))
+        #expect(isOutputSizeValid(maxWidthPx: 10, maxHeightPx: 10, maxOutputPixels: 100))
     }
 
     // MARK: - End-to-end decode arms
 
+    /// Each test decodes on its own bank: contention on the shared bank across
+    /// parallel tests read as decoderUnavailable (K2 review round 1 blocker).
     private func makeDecoder(config: ImageDecodeConfig = ImageDecodeConfig()) -> any BoundedImageDecoder {
-        makeBoundedImageDecoder(config: config)
+        DefaultBoundedImageDecoder(config: config, lanes: ImageDecodeLanes(lanes: 4))
     }
 
     @Test func decodesAPngWithinCapsToTheFittedRaster() async throws {
@@ -182,6 +194,30 @@ struct BoundedImageDecoderTests {
         }
     }
 
+    // MARK: - EXIF orientation (ImageIO returns stored pixels; the fit applies
+    // the header orientation so the persisted dimensions are display dimensions)
+
+    @Test func orientedJpegComesOutUprightWithTransposedDimensions() async throws {
+        // Stored 100x60 landscape, left half red / right half blue, EXIF 6
+        // (rotate 90 CW to display): displayed 60x100 portrait with the red
+        // stored-left edge on top.
+        let jpeg = try ImageFixtures.orientedJpeg(
+            width: 100, height: 60, orientation: 6)
+        let result = await makeDecoder().decode(
+            source: .data(jpeg), maxWidthPx: 100, maxHeightPx: 100)
+        guard case .ok(let raster) = result else {
+            Issue.record("expected ok, got \(result)")
+            return
+        }
+        #expect(raster.widthPx == 60)
+        #expect(raster.heightPx == 100)
+        #expect(abs(raster.sourceAspect - 60.0 / 100.0) < 0.001)
+        let top = try #require(ImageFixtures.pixel(of: raster.image, x: 30, y: 5))
+        let bottom = try #require(ImageFixtures.pixel(of: raster.image, x: 30, y: 95))
+        #expect(top.red > top.blue, "top of the upright image should be the red stored-left edge")
+        #expect(bottom.blue > bottom.red, "bottom should be the blue stored-right edge")
+    }
+
     // MARK: - Bounded wait (the §7 term: bounds the WAIT, not the work)
 
     @Test func timeoutResolvesAsDecoderUnavailable() async {
@@ -196,24 +232,60 @@ struct BoundedImageDecoderTests {
         #expect(result.rejectedKind == .decoderUnavailable)
     }
 
-    @Test func aRefusedSubmissionResolvesAsTimeoutRatherThanQueueing() async {
+    /// A refusal is known synchronously, so the caller is resolved immediately —
+    /// never made to wait out the deadline for it (K2 review round 1).
+    @Test func aRefusedSubmissionResolvesImmediatelyAsUnavailable() async {
         let lanes = ImageDecodeLanes(lanes: 1)
         async let hog: ImageDecodeResult = withImageDecodeTimeout(
-            .milliseconds(500), lanes: lanes,
+            .seconds(2), lanes: lanes,
             timeoutValue: .rejected(.decoderUnavailable)
         ) {
-            Thread.sleep(forTimeInterval: 0.3)
+            Thread.sleep(forTimeInterval: 0.4)
             return .rejected(.decodeFailed)
         }
-        try? await Task.sleep(for: .milliseconds(50))
+        try? await Task.sleep(for: .milliseconds(100))
+        let start = ContinuousClock.now
         let refused = await withImageDecodeTimeout(
-            .milliseconds(80), lanes: lanes,
+            .seconds(10), lanes: lanes,
             timeoutValue: ImageDecodeResult.rejected(.decoderUnavailable)
         ) {
             .rejected(.decodeFailed)
         }
+        let elapsed = ContinuousClock.now - start
         #expect(refused.rejectedKind == .decoderUnavailable)
+        #expect(elapsed < .seconds(1), "a refusal must not wait out the deadline")
         _ = await hog
+    }
+
+    /// The codec-free preflight runs outside the lanes: a saturated bank cannot
+    /// mask an over-cap file's real rejection arm.
+    @Test func preflightRejectionsBypassASaturatedBank() async throws {
+        var config = ImageDecodeConfig()
+        config.maxBytes = 64
+        let lanes = ImageDecodeLanes(lanes: 1)
+        async let hog: ImageDecodeResult = withImageDecodeTimeout(
+            .seconds(2), lanes: lanes,
+            timeoutValue: .rejected(.decoderUnavailable)
+        ) {
+            Thread.sleep(forTimeInterval: 0.4)
+            return .rejected(.decodeFailed)
+        }
+        try? await Task.sleep(for: .milliseconds(100))
+        let decoder = DefaultBoundedImageDecoder(config: config, lanes: lanes)
+        let png = try ImageFixtures.png(width: 32, height: 32)
+        let result = await decoder.decode(source: .data(png), maxWidthPx: 8, maxHeightPx: 8)
+        #expect(result.rejectedKind == .oversizedAtImport)
+        _ = await hog
+    }
+
+    @Test func emptyFileFoldsToNotAnImageLikeEmptyData() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("walt_empty_\(UUID().uuidString).png")
+        FileManager.default.createFile(atPath: url.path, contents: Data())
+        defer { try? FileManager.default.removeItem(at: url) }
+        let result = await makeDecoder().decode(
+            source: .fileURL(url), maxWidthPx: 100, maxHeightPx: 100)
+        #expect(result.rejectedKind == .notAnImage)
     }
 }
 
@@ -236,6 +308,56 @@ enum ImageFixtures {
     }
 
     struct EncodeUnsupported: Error {}
+
+    struct Pixel {
+        let red: Int
+        let blue: Int
+    }
+
+    /// Stored-space left half red / right half blue, with an EXIF orientation tag.
+    static func orientedJpeg(width: Int, height: Int, orientation: Int) throws -> Data {
+        guard
+            let context = CGContext(
+                data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )
+        else { throw EncodeUnsupported() }
+        context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width / 2, height: height))
+        context.setFillColor(CGColor(red: 0, green: 0, blue: 1, alpha: 1))
+        context.fill(CGRect(x: width / 2, y: 0, width: width - width / 2, height: height))
+        guard let image = context.makeImage() else { throw EncodeUnsupported() }
+        let out = NSMutableData()
+        guard
+            let destination = CGImageDestinationCreateWithData(
+                out, UTType.jpeg.identifier as CFString, 1, nil)
+        else { throw EncodeUnsupported() }
+        let properties = [kCGImagePropertyOrientation: orientation] as CFDictionary
+        CGImageDestinationAddImage(destination, image, properties)
+        guard CGImageDestinationFinalize(destination) else { throw EncodeUnsupported() }
+        return out as Data
+    }
+
+    /// Sample one pixel's red/blue channels from a CGImage.
+    static func pixel(of image: CGImage, x: Int, y: Int) -> Pixel? {
+        guard
+            let context = CGContext(
+                data: nil, width: image.width, height: image.height,
+                bitsPerComponent: 8, bytesPerRow: image.width * 4,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )
+        else { return nil }
+        context.draw(
+            image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        guard let data = context.data else { return nil }
+        // CG's origin is bottom-left; sample in top-left image coordinates.
+        let row = image.height - 1 - y
+        let offset = (row * image.width + x) * 4
+        let pixels = data.assumingMemoryBound(to: UInt8.self)
+        return Pixel(red: Int(pixels[offset]), blue: Int(pixels[offset + 2]))
+    }
 
     static func encoded(width: Int, height: Int, type: String) throws -> Data {
         guard

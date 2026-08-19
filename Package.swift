@@ -56,11 +56,8 @@ let package = Package(
             ]
         ),
         .target(
-            // Mechanism-only shared primitive (mirror of Android passes-image-decode,
-            // wpass-gnp): the header-gated bounded decode, generic over the caller's
-            // rejection type. No policy of its own — caps, allowlists and taxonomies
-            // stay with each consumer. Deliberately no dependencies, sitting below
-            // the barcode and image peers without adding an edge between them.
+            // Shared header-gated decode mechanism (Android passes-image-decode
+            // mirror); rationale in docs/adr/image-decode-1.md.
             name: "PassesImageDecode",
             dependencies: [],
             path: "Sources/PassesImageDecode"
@@ -71,11 +68,8 @@ let package = Package(
             path: "Sources/PassesBarcode"
         ),
         .target(
-            // In-process bounded image decode-and-retain (mirror of Android
-            // passes-image minus the isolatedProcess plumbing; §7-approved
-            // ios-dts.2). Policy lives here: ImageDecodeConfig, the JPEG/PNG
-            // retained-lane allowlist, ImageDecodeRejectedKind. Peer of
-            // PassesBarcode — they share only PassesImageDecode.
+            // In-process bounded image decode-and-retain (§7-approved ios-dts.2);
+            // policy + terms in docs/adr/image-decode-1.md.
             name: "PassesImage",
             dependencies: ["PassesImageDecode"],
             path: "Sources/PassesImage"

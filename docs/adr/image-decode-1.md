@@ -81,6 +81,31 @@ fail in-process: it is the timeout bucket, keeps taxonomy parity with Android, a
 holds the slot for a future out-of-process decoder behind the same
 `BoundedImageDecoder` seam.
 
+**Lane sizing and the concurrent allocation ceiling.** The bank is 4 lanes with NO
+overflow-thread tier — a deliberate deviation from the barcode banks' 8+32: the
+import surface is single-flight UX, a refusal resolves the caller immediately (it
+never waits out the deadline), and the codec-free preflight (output bound, bounded
+read, byte cap) runs OUTSIDE the lanes so a saturated bank can never mask a real
+rejection arm. The sizing is also the availability price of the containment delta:
+each lane can hold a decode allocation up to the ~200 MB the 50 MP header cap
+admits, so the worst-case simultaneously-live decode allocation is 4 x ~200 MB ≈
+800 MB, and an orphaned (timed-out) decode holds its share until it finishes —
+Android reclaims that by killing the sandbox; iOS cannot. More lanes or an overflow
+tier would multiply that ceiling.
+
+**Gate ordering is iOS-ahead of Android.** The shared primitive judges the
+container BEFORE the header-properties read, so ImageIO's metadata parser (its own
+CVE surface) never runs over a container the allowlist rejects. Android's
+`OnHeaderDecodedListener` hands MIME and size in one callback and cannot make this
+distinction. Both consumers (barcode read lane, retained image lane) get the
+stronger ordering.
+
+**The 25 MB bounded read is per-arm.** The `.fileURL` arm reads at most
+`maxBytes + 1` and never buffers the bomb; the `.data` arm's bytes are already
+resident, so its bound is necessarily the caller's — the ios-dts.3 importer MUST
+apply its own bounded read before constructing `.data` (binding note recorded on
+that bead).
+
 ## Structure mapping (Android module ↔ iOS target)
 
 - `passes-image-decode` ↔ `PassesImageDecode`: the mechanism-only header-gated

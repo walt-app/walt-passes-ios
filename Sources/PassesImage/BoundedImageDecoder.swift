@@ -6,10 +6,11 @@ import Foundation
 /// future out-of-process decoder (XPC) can drop in behind the same seam — the reason
 /// `decoderUnavailable` stays in the taxonomy.
 public protocol BoundedImageDecoder: Sendable {
-    /// Decode `source` into an aspect-fitted raster no larger than
-    /// `maxWidthPx` x `maxHeightPx` (and never larger than the source). Every cap in
-    /// `ImageDecodeConfig` is enforced before the corresponding allocation; the wait
-    /// is bounded by `decodeTimeout`, reported as `.rejected(.decoderUnavailable)`.
+    /// Decode `source` into an aspect-fitted, orientation-applied raster no larger
+    /// than `maxWidthPx` x `maxHeightPx` (and never larger than the source). Every
+    /// cap in `ImageDecodeConfig` is enforced before the corresponding allocation;
+    /// the wait is bounded by `decodeTimeout`, reported as
+    /// `.rejected(.decoderUnavailable)` — immediately when the lane bank refuses.
     func decode(
         source: ImageDecodeSource, maxWidthPx: Int, maxHeightPx: Int
     ) async -> ImageDecodeResult
@@ -25,17 +26,32 @@ public func makeBoundedImageDecoder(
 
 struct DefaultBoundedImageDecoder: BoundedImageDecoder {
     let config: ImageDecodeConfig
+    /// Injectable so tests run against their own banks (contention on the shared
+    /// bank made the suite flake — K2 review round 1); production always uses
+    /// `.shared` via the public factory.
+    var lanes: ImageDecodeLanes = .shared
 
     func decode(
         source: ImageDecodeSource, maxWidthPx: Int, maxHeightPx: Int
     ) async -> ImageDecodeResult {
         let config = self.config
+        // The codec-free preflight runs OUTSIDE the lanes: an out-of-bounds
+        // request, unreadable source, or over-cap file rejects with its real arm
+        // even when every lane is busy, and never occupies one.
+        let preflight = BoundedRasterDecoder.preflight(
+            source: source, maxWidthPx: maxWidthPx, maxHeightPx: maxHeightPx, config: config)
+        let bytes: Data
+        switch preflight {
+        case .rejected(let kind): return .rejected(kind)
+        case .ok(let preflighted): bytes = preflighted
+        }
         return await withImageDecodeTimeout(
             config.decodeTimeout,
+            lanes: lanes,
             timeoutValue: .rejected(.decoderUnavailable)
         ) {
-            BoundedRasterDecoder.decode(
-                source: source, maxWidthPx: maxWidthPx, maxHeightPx: maxHeightPx,
+            BoundedRasterDecoder.decodePreflighted(
+                bytes: bytes, maxWidthPx: maxWidthPx, maxHeightPx: maxHeightPx,
                 config: config)
         }
     }
