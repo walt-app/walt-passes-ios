@@ -90,11 +90,17 @@ public protocol PassRepository: Sendable {
     /// Returns `StorageError.documentRejected` when any cap is violated; the typed arm
     /// lets callers distinguish a defensive-rejection from a transient infra failure
     /// without listening to telemetry.
+    /// Since ios-dts.16 (render-once), the complete per-page raster set is inserted in the
+    /// same transaction: `pageRasters[i]` is page `i`'s Walt-produced PNG. The set must
+    /// have exactly `pageCount` entries and every raster must be within
+    /// `DocumentBounds.maxRasterPixels`, else the insert is rejected with
+    /// `DocumentStorageRejectedKind.pageRastersInvalidAtStorage` and nothing lands.
     func insertDocument(
         label: String,
         pdfBytes: Data,
         pageCount: Int,
-        thumbnailBytes: Data
+        thumbnailBytes: Data,
+        pageRasters: [DocumentPageRasterBlob]
     ) async -> StorageResult<DocumentRecordId>
 
     /// Cold stream of document list-view rows, sorted by `imported_at_epoch_ms`
@@ -114,10 +120,33 @@ public protocol PassRepository: Sendable {
     /// opaque blobs.
     func loadDocumentThumbnail(id: DocumentRecordId) async -> StorageResult<Data>
 
-    /// Irreversible delete of a document row and its cascaded thumbnail row in one
-    /// transaction (ADR 0002 D6). Mirrors `delete` for passes: no undo, no soft-delete,
-    /// no VACUUM. After the transaction commits, the document stream is updated and
-    /// `onDocumentDeleted` is emitted.
+    /// Loads one stored page raster for the document with `id` (ios-dts.16 render-once).
+    /// Returns `.success(nil)` when the document exists but has no raster for `page` —
+    /// the expected state for documents imported before v6; the consumer's self-heal
+    /// wrapper performs one bounded re-render and backfills via the per-page
+    /// `insertDocumentPageRaster`. Returns `integrityViolation` only when no document
+    /// row matches `id`. The blob round-trips opaque; storage never decodes it.
+    func loadDocumentPageRaster(
+        id: DocumentRecordId,
+        page: Int
+    ) async -> StorageResult<DocumentPageRasterBlob?>
+
+    /// Backfills (insert-or-replace) ONE page's raster — the lazy self-heal path for
+    /// pre-v6 rows, where pages recover one open at a time and a full set is never
+    /// available in one call (`RerenderOnMissPageSource.persistRaster` wires here).
+    /// Validates `0 <= page < page_count` and the per-raster pixel/byte bounds
+    /// (`pageRastersInvalidAtStorage` on violation, checked in the same transaction as
+    /// the stored `page_count` read); `integrityViolation` when no document matches `id`.
+    func insertDocumentPageRaster(
+        id: DocumentRecordId,
+        page: Int,
+        raster: DocumentPageRasterBlob
+    ) async -> StorageResult<Void>
+
+    /// Irreversible delete of a document row and its cascaded thumbnail and page-raster
+    /// rows in one transaction (ADR 0002 D6). Mirrors `delete` for passes: no undo, no
+    /// soft-delete, no VACUUM. After the transaction commits, the document stream is
+    /// updated and `onDocumentDeleted` is emitted.
     func deleteDocument(id: DocumentRecordId) async -> StorageResult<Void>
 
     /// Overwrites the `display_label` of an existing document row. The label is trimmed

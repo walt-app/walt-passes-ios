@@ -33,7 +33,7 @@ struct PDFImporterTests {
         let result = try await importer.import(
             source: .data(nonPDF),
             displayLabel: "spoofed.pdf",
-            persist: { _, _, _, _ in
+            persist: { _, _, _, _, _ in
                 Issue.record("persist must not be invoked when header sniff fails")
             }
         )
@@ -50,7 +50,7 @@ struct PDFImporterTests {
         let result = try await importer.import(
             source: .data(tiny),
             displayLabel: "tiny.pdf",
-            persist: { _, _, _, _ in Issue.record("persist must not run") }
+            persist: { _, _, _, _, _ in Issue.record("persist must not run") }
         )
 
         #expect(result == .rejected(kind: .notAPdf))
@@ -68,7 +68,7 @@ struct PDFImporterTests {
         let result = try await importer.import(
             source: .data(oversized),
             displayLabel: "big.pdf",
-            persist: { _, _, _, _ in Issue.record("persist must not run for oversized") }
+            persist: { _, _, _, _, _ in Issue.record("persist must not run for oversized") }
         )
 
         #expect(result == .rejected(kind: .oversizedAtImport))
@@ -84,7 +84,7 @@ struct PDFImporterTests {
             let result = try await makeTestImporter(sessionFactory: factory).import(
                 source: .data(TestFixtures.validPDFBytes),
                 displayLabel: "x.pdf",
-                persist: { _, _, _, _ in
+                persist: { _, _, _, _, _ in
                     Issue.record("persist must not run on probe rejection")
                 }
             )
@@ -105,7 +105,7 @@ struct PDFImporterTests {
             let result = try await makeTestImporter(sessionFactory: factory).import(
                 source: .data(TestFixtures.validPDFBytes),
                 displayLabel: "x.pdf",
-                persist: { _, _, _, _ in
+                persist: { _, _, _, _, _ in
                     Issue.record("persist must not run on render rejection")
                 }
             )
@@ -130,7 +130,7 @@ struct PDFImporterTests {
         let result = try await makeTestImporter(sessionFactory: factory).import(
             source: .data(TestFixtures.validPDFBytes),
             displayLabel: "boarding.pdf",
-            persist: { label, bytes, pages, thumb in
+            persist: { label, bytes, pages, thumb, _ in
                 persists.append(label: label, byteSize: bytes.count, pages: pages, thumbSize: thumb.count)
             }
         )
@@ -167,7 +167,7 @@ struct PDFImporterTests {
         let result = try await makeTestImporter(sessionFactory: factory).import(
             source: .data(TestFixtures.validPDFBytes),
             displayLabel: "x.pdf",
-            persist: { _, _, _, _ in
+            persist: { _, _, _, _, _ in
                 throw NSError(domain: "downstream-storage", code: -1)
             }
         )
@@ -195,7 +195,7 @@ struct PDFImporterTests {
         ).import(
             source: .data(TestFixtures.validPDFBytes),
             displayLabel: "x.pdf",
-            persist: { _, _, _, _ in
+            persist: { _, _, _, _, _ in
                 Issue.record("persist must not run on encoder failure")
             }
         )
@@ -222,7 +222,7 @@ struct PDFImporterTests {
             _ = try await makeTestImporter(sessionFactory: factory).import(
                 source: .data(TestFixtures.validPDFBytes),
                 displayLabel: "x.pdf",
-                persist: { _, _, _, _ in throw CancellationError() }
+                persist: { _, _, _, _, _ in throw CancellationError() }
             )
         } catch {
             thrown = error
@@ -252,7 +252,7 @@ struct PDFImporterTests {
             ).import(
                 source: .data(TestFixtures.validPDFBytes),
                 displayLabel: "x.pdf",
-                persist: { _, _, _, _ in }
+                persist: { _, _, _, _, _ in }
             )
         } catch {
             thrown = error
@@ -271,7 +271,7 @@ struct PDFImporterTests {
         let result = try await makeTestImporter(sessionFactory: factory).import(
             source: .fileURL(httpURL),
             displayLabel: "x.pdf",
-            persist: { _, _, _, _ in
+            persist: { _, _, _, _, _ in
                 Issue.record("persist must not run for non-file scheme")
             }
         )
@@ -289,7 +289,7 @@ struct PDFImporterTests {
             _ = try await makeTestImporter(sessionFactory: factory).import(
                 source: .data(TestFixtures.validPDFBytes),
                 displayLabel: "x.pdf",
-                persist: { _, _, _, _ in }
+                persist: { _, _, _, _, _ in }
             )
             #expect(factory.lastSession?.closed == true)
         }
@@ -313,7 +313,7 @@ struct PDFImporterTests {
         _ = try await makeTestImporter(config: cfg, sessionFactory: factory).import(
             source: .data(TestFixtures.validPDFBytes),
             displayLabel: "x.pdf",
-            persist: { _, _, _, _ in }
+            persist: { _, _, _, _, _ in }
         )
 
         #expect(telemetry.events == ["started", "succeeded:1"])
@@ -329,7 +329,7 @@ struct PDFImporterTests {
         _ = try await makeTestImporter(config: cfg, sessionFactory: factory).import(
             source: .data(TestFixtures.validPDFBytes),
             displayLabel: "x.pdf",
-            persist: { _, _, _, _ in }
+            persist: { _, _, _, _, _ in }
         )
 
         #expect(telemetry.events == ["started", "failed:encrypted"])
@@ -356,7 +356,7 @@ struct PDFImporterTests {
         let result = try await makeTestImporter(sessionFactory: factory).import(
             source: .fileURL(tmpURL),
             displayLabel: "from-url.pdf",
-            persist: { _, bytes, _, _ in
+            persist: { _, bytes, _, _, _ in
                 persists.append(label: "", byteSize: bytes.count, pages: 0, thumbSize: 0)
             }
         )
@@ -393,7 +393,7 @@ struct PDFImporterTests {
             let result = try await makeTestImporter(sessionFactory: factory).import(
                 source: .fileURL(tmpURL),
                 displayLabel: "twice.pdf",
-                persist: { _, bytes, _, _ in
+                persist: { _, bytes, _, _, _ in
                     persists.append(label: "", byteSize: bytes.count, pages: 0, thumbSize: 0)
                 }
             )

@@ -4,6 +4,10 @@ import Foundation
 /// `RenderSourceRect` sealed interface. Sealed so the importer, renderer, and
 /// any future tiled-rendering path all fold over the same closed set;
 /// growing the surface is a deliberate change everywhere.
+/// Since ios-dts.16 no production site constructs `.subRect` — the importer renders
+/// `.fullPage` only and the display layer holds no renderer. The arm survives
+/// deliberately as Android binder-surface parity (`passes-pdf-ui-4` forecloses the
+/// sub-rect zoom follow-up); its validation stays live for any future caller.
 public enum RenderSourceRect: Sendable, Equatable {
     /// Rasterise the entire page. The pre-sub-rect behaviour.
     case fullPage

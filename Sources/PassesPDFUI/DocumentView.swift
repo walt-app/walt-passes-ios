@@ -1,4 +1,3 @@
-import PassesPDF
 import PassesPDFCore
 import PassesUICore
 import SwiftUI
@@ -22,8 +21,9 @@ import SwiftUI
 ///    Zoom lives only on the full-screen detail surface
 ///    (`FullScreenDocumentView`).
 ///
-/// `pdfData` is owned by the caller. It MUST remain valid for as long as
-/// `DocumentView` is visible.
+/// Pages arrive through a ``PassesPDFCore/DocumentPageSource`` of stored
+/// Walt-produced rasters (ios-dts.16 render-once): this module holds no PDF
+/// parser and cannot re-parse the original document bytes.
 ///
 /// `faceTint` (wpass-80y.2 mirror) is presentation only — the kernel never
 /// learns why a color was chosen and stores nothing; which color an item
@@ -37,23 +37,20 @@ import SwiftUI
 /// tint composites over host paint the kernel cannot see.
 public struct DocumentView: View {
     public let doc: PDFDocument
-    public let pdfData: Data
-    public let renderer: PDFRendererBinder
+    public let pages: any DocumentPageSource
     public let telemetry: DocumentTelemetryGuard
     public let onOpenFullScreen: (() -> Void)?
     public let faceTint: ArgbColor?
 
     public init(
         doc: PDFDocument,
-        pdfData: Data,
-        renderer: PDFRendererBinder,
+        pages: any DocumentPageSource,
         telemetry: DocumentTelemetryGuard = DocumentTelemetryGuardNoOp.shared,
         onOpenFullScreen: (() -> Void)? = nil,
         faceTint: ArgbColor? = nil
     ) {
         self.doc = doc
-        self.pdfData = pdfData
-        self.renderer = renderer
+        self.pages = pages
         self.telemetry = telemetry
         self.onOpenFullScreen = onOpenFullScreen
         self.faceTint = faceTint
@@ -92,8 +89,7 @@ public struct DocumentView: View {
                 DocumentPage(
                     document: doc,
                     pageIndex: page,
-                    pdfData: pdfData,
-                    renderer: renderer,
+                    pages: pages,
                     cache: cache,
                     telemetry: telemetry
                 )
@@ -141,23 +137,13 @@ public struct DocumentView: View {
     /// shared-token hoist is still open there too).
     private static let faceRadius: CGFloat = 20
 
-    /// Render target for one page: the layout slot, floored at the baseline
-    /// budget. Pure and tint-blind BY TYPE — `faceTint` cannot reach it, which
-    /// is the structural half of "the tint reaches the frame and nothing
-    /// else"; `DocumentFaceTintTests` pins the derivation.
-    static func pageRenderTarget(page: Int, slot: CGSize) -> ThumbnailRenderTarget {
-        ThumbnailRenderTarget(
-            page: page,
-            widthPx: max(max(Int(slot.width), 1), Self.targetPageWidthPx),
-            heightPx: max(max(Int(slot.height), 1), Self.targetPageHeightPx)
-        )
-    }
-
-    /// Render budget defaults (mirror of Android's 360 / 480 dp baseline);
-    /// the request adopts whichever is larger between the slot and these.
-    /// Internal so `DocumentFaceTintTests` pins against the source of truth.
-    static let targetPageWidthPx: Int = 360
-    static let targetPageHeightPx: Int = 480
+    /// Longer-side cap for the inline pager's decoded pages. The stored raster
+    /// carries the full-screen 4 MP budget (~16 MB decoded); the inline card
+    /// slot never shows more than ~400 pt of width, so 1200 px covers a 3x
+    /// display crisply while keeping `defaultPageWindow` pages of cache under
+    /// ~20 MB where the uncapped decode would hold ~80 MB. Internal so the
+    /// decode-budget test pins against the source of truth.
+    static let inlineMaxPixelSize: Int = 1200
 }
 
 /// Docked discoverability hint below the pager. When the consumer provides
@@ -185,35 +171,41 @@ private struct FullScreenBanner: View {
 private struct DocumentPage: View {
     let document: PDFDocument
     let pageIndex: Int
-    let pdfData: Data
-    let renderer: PDFRendererBinder
+    let pages: any DocumentPageSource
     let cache: PDFThumbnailCache
     let telemetry: DocumentTelemetryGuard
 
     @State private var viewModel = PDFThumbnailViewModel()
 
     var body: some View {
-        GeometryReader { geo in
-            content
-                .onAppear {
-                    viewModel.start(
-                        document: document,
-                        pdfData: pdfData,
-                        target: DocumentView.pageRenderTarget(page: pageIndex, slot: geo.size),
-                        context: ThumbnailRenderContext(renderer: renderer, telemetry: telemetry, cache: cache)
-                    )
-                }
-                .onDisappear { viewModel.stop() }
-        }
+        content
+            .onAppear {
+                viewModel.start(
+                    document: document,
+                    page: pageIndex,
+                    source: pages,
+                    context: ThumbnailRenderContext(telemetry: telemetry, cache: cache),
+                    maxPixelSize: DocumentView.inlineMaxPixelSize
+                )
+            }
+            .onDisappear { viewModel.stop() }
     }
 
     @ViewBuilder
     private var content: some View {
         switch viewModel.state {
-        case .loading, .failed:
-            // Mirror of Android: loading and failed render nothing in the
-            // inline surface; the pager itself is the placeholder.
+        case .loading:
+            // Mirror of Android: loading renders nothing in the inline
+            // surface; the pager itself is the placeholder.
             Color.clear
+        case .failed:
+            // Visually inherited from Android (nothing renders), but since
+            // render-once a failure can be permanent (missing raster), so the
+            // page at least announces itself to VoiceOver.
+            Color.clear
+                .accessibilityLabel(
+                    "Page \(pageIndex + 1) of \(document.pageCount) couldn't be displayed"
+                )
         case .rendered(let image, _):
             image.image
                 .resizable()

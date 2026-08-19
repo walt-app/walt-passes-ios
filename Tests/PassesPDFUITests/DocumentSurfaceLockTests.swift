@@ -1,4 +1,3 @@
-import PassesPDF
 import PassesPDFCore
 import PassesUICore
 import SwiftUI
@@ -29,8 +28,7 @@ struct DocumentSurfaceLockTests {
         importedAtEpochMs: 0
     )
 
-    private static let pdfData = Data()
-    private static let renderer: PDFRendererBinder = StaticRejectingRenderer()
+    private static let pages: any DocumentPageSource = StaticEmptyPageSource()
 
     @Test func documentTrustCaptionExposesOnlyTheZeroArityInitialiser() {
         // D5: no `enabled`, no theme suppression flag, no overload that
@@ -47,17 +45,18 @@ struct DocumentSurfaceLockTests {
         _ = DocumentTile(doc: Self.doc, thumbnail: nil, onTap: {})
     }
 
-    @Test func documentViewExposesExactlySixPublicInitialiserParameters() {
-        // (doc, pdfData, renderer, telemetry, onOpenFullScreen, faceTint).
-        // `faceTint` (wpass-80y.2) paints the frame the page sits on and
-        // nothing else. Android counts seven (modifier sits in the middle of
-        // the slot list); the SwiftUI signature collapses the modifier slot.
-        // Exact-arity reference so even a defaulted addition fails to compile.
+    @Test func documentViewExposesExactlyFivePublicInitialiserParameters() {
+        // (doc, pages, telemetry, onOpenFullScreen, faceTint). `pages` is the
+        // stored-raster source (ios-dts.16 render-once) — there is no pdfData
+        // and no renderer slot, which is the structural trust claim: the view
+        // cannot be handed the original bytes. `faceTint` (wpass-80y.2)
+        // paints the frame the page sits on and nothing else. Exact-arity
+        // reference so even a defaulted addition fails to compile.
         let lockedInit:
-            (PDFDocument, Data, PDFRendererBinder, DocumentTelemetryGuard, (() -> Void)?, ArgbColor?)
+            (PDFDocument, any DocumentPageSource, DocumentTelemetryGuard, (() -> Void)?, ArgbColor?)
                 -> DocumentView =
                 DocumentView.init(
-                    doc:pdfData:renderer:telemetry:onOpenFullScreen:faceTint:)
+                    doc:pages:telemetry:onOpenFullScreen:faceTint:)
         _ = lockedInit
     }
 
@@ -71,48 +70,36 @@ struct DocumentSurfaceLockTests {
         )
     }
 
-    @Test func fullScreenDocumentViewExposesExactlySixPublicInitialiserParameters() {
-        // (doc, pdfData, renderer, onClose, telemetry, closeButton). Required
-        // onClose forces the host to provide a back path — there is no
-        // "stuck in full-screen" state. `closeButton` (wlt-d3d slot) swaps the
-        // close CHROME only: it receives the handler and must wire it; it
-        // cannot suppress the trust caption or the close path. The exact-arity
-        // function reference fails to compile if any parameter is added,
-        // removed, renamed, or retyped — even a defaulted addition.
+    @Test func fullScreenDocumentViewExposesExactlyFivePublicInitialiserParameters() {
+        // (doc, pages, onClose, telemetry, closeButton). Required onClose
+        // forces the host to provide a back path — there is no "stuck in
+        // full-screen" state. `closeButton` (wlt-d3d slot) swaps the close
+        // CHROME only: it receives the handler and must wire it; it cannot
+        // suppress the trust caption or the close path. `pages` replaces the
+        // former pdfData+renderer pair (ios-dts.16). The exact-arity function
+        // reference fails to compile if any parameter is added, removed,
+        // renamed, or retyped — even a defaulted addition.
         typealias LockedInit = (
-            PDFDocument, Data, PDFRendererBinder, @escaping () -> Void,
+            PDFDocument, any DocumentPageSource, @escaping () -> Void,
             DocumentTelemetryGuard, ((@escaping () -> Void) -> AnyView)?
         ) -> FullScreenDocumentView
         let lockedInit: LockedInit = FullScreenDocumentView
-            .init(doc:pdfData:renderer:onClose:telemetry:closeButton:)
+            .init(doc:pages:onClose:telemetry:closeButton:)
         _ = lockedInit
     }
 
-    @Test func documentViewConsumesPDFRendererBinderProtocolNotConcreteRenderer() {
-        // The DocumentView contract takes the binder protocol so test
-        // fakes inject cleanly. The compile-time check below succeeds
-        // because StaticRejectingRenderer (the test fake) only conforms
-        // to the protocol; the constructor would refuse any concrete
-        // type that did not satisfy the protocol.
-        let _: PDFRendererBinder = Self.renderer
+    @Test func documentViewConsumesDocumentPageSourceProtocolNotConcreteSource() {
+        // The DocumentView contract takes the page-source protocol so test
+        // fakes inject cleanly, and so the type system rather than a code
+        // review enforces render-once: DocumentPageSource has no arm that
+        // accepts document bytes, so no conforming source can hand this
+        // module something it could parse.
+        let _: any DocumentPageSource = Self.pages
     }
 }
 
-/// Minimal `PDFRendererBinder` fake used by the construction tests. The
-/// production `RejectingRenderer` would have served equally well but is
-/// `package`-scoped inside `PassesPDF`; redeclaring a small fake here
-/// keeps the test target free of `@testable` reaches into PassesPDF.
-private struct StaticRejectingRenderer: PDFRendererBinder {
-    func probe(pdf: Data) async -> ProbeResult {
-        .rejected(kind: .rendererFailed)
-    }
-    func render(
-        pdf: Data,
-        page: Int,
-        widthPx: Int,
-        heightPx: Int,
-        sourceRect: RenderSourceRect
-    ) async -> RenderResult {
-        .rejected(kind: .rendererFailed)
-    }
+/// Minimal `DocumentPageSource` fake used by the construction tests: a
+/// document with no stored rasters (every page misses).
+private struct StaticEmptyPageSource: DocumentPageSource {
+    func pageRaster(page: Int) async -> StoredPageRaster? { nil }
 }

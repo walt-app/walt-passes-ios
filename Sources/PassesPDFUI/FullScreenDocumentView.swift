@@ -1,4 +1,3 @@
-import PassesPDF
 import PassesPDFCore
 import SwiftUI
 
@@ -11,15 +10,16 @@ import SwiftUI
 ///  - The non-suppressible `DocumentTrustCaption` is composed inside this
 ///    surface and docked to the bottom edge of the screen, structurally
 ///    outside the zoom transform.
-///  - Zoom is purely view-side. No share / export / print / open-with
-///    affordance (ADR 0005 D8).
-///  - On pinch settle the surface fires a sub-rect render against the
-///    currently-visible normalised page rect and swaps the displayed
-///    bitmap when the result returns.
+///  - Zoom is purely view-side (a `scaleEffect` over the stored raster).
+///    No share / export / print / open-with affordance (ADR 0005 D8).
+///  - Pages arrive through a ``PassesPDFCore/DocumentPageSource`` of stored
+///    Walt-produced rasters (ios-dts.16 render-once); the raster's 4 MP
+///    import-time budget matches the ceiling this surface previously
+///    requested from the live renderer, so zoom fidelity is unchanged and
+///    the original bytes are never re-parsed.
 public struct FullScreenDocumentView: View {
     public let doc: PDFDocument
-    public let pdfData: Data
-    public let renderer: PDFRendererBinder
+    public let pages: any DocumentPageSource
     public let onClose: () -> Void
     public let telemetry: DocumentTelemetryGuard
     let closeButton: ((@escaping () -> Void) -> AnyView)?
@@ -30,15 +30,13 @@ public struct FullScreenDocumentView: View {
     /// nil keeps the kernel default.
     public init(
         doc: PDFDocument,
-        pdfData: Data,
-        renderer: PDFRendererBinder,
+        pages: any DocumentPageSource,
         onClose: @escaping () -> Void,
         telemetry: DocumentTelemetryGuard = DocumentTelemetryGuardNoOp.shared,
         closeButton: ((@escaping () -> Void) -> AnyView)? = nil
     ) {
         self.doc = doc
-        self.pdfData = pdfData
-        self.renderer = renderer
+        self.pages = pages
         self.onClose = onClose
         self.telemetry = telemetry
         self.closeButton = closeButton
@@ -46,6 +44,13 @@ public struct FullScreenDocumentView: View {
 
     @State private var currentPage: Int = 0
     @State private var cache: PDFThumbnailCache = PDFThumbnailCache()
+
+    /// Longer-side cap for full-screen page decodes. The stored raster's declared
+    /// dimensions are caller-supplied integers the storage layer never verifies against
+    /// the blob, so the decode itself carries a ceiling too (the uniform-budget rule);
+    /// 2048 px exceeds what any supported display shows at 1x, and zoom is a
+    /// `scaleEffect` over the decoded bitmap, so nothing re-decodes larger.
+    static let fullScreenMaxPixelSize: Int = 2048
 
     @Environment(\.documentSemantics) private var semantics
 
@@ -82,8 +87,7 @@ public struct FullScreenDocumentView: View {
                 FullScreenPage(
                     document: doc,
                     pageIndex: page,
-                    pdfData: pdfData,
-                    renderer: renderer,
+                    pages: pages,
                     cache: cache,
                     telemetry: telemetry
                 )
@@ -95,14 +99,6 @@ public struct FullScreenDocumentView: View {
         #endif
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-
-    /// Bound on render output dimensions. Mirrors
-    /// `PDFKitRenderer.maxPixels` (and Android's
-    /// `PdfRendererService.MAX_PIXELS`): a defensive ceiling so the
-    /// request never asks for a bitmap the renderer would have to
-    /// downsize on its end. The renderer enforces the real cap; this
-    /// value is the ceiling the view layer pre-clamps to.
-    public static let maxRequestPixels: Int64 = 4 * 1024 * 1024
 }
 
 private struct CloseFullScreenButton: View {
@@ -126,8 +122,7 @@ private struct CloseFullScreenButton: View {
 private struct FullScreenPage: View {
     let document: PDFDocument
     let pageIndex: Int
-    let pdfData: Data
-    let renderer: PDFRendererBinder
+    let pages: any DocumentPageSource
     let cache: PDFThumbnailCache
     let telemetry: DocumentTelemetryGuard
 
@@ -138,30 +133,31 @@ private struct FullScreenPage: View {
     @State private var lastOffset: CGSize = .zero
 
     var body: some View {
-        GeometryReader { geo in
-            let dims = clampToMaxPixels(
-                widthPx: max(Int(geo.size.width), 1),
-                heightPx: max(Int(geo.size.height), 1),
-                maxPixels: FullScreenDocumentView.maxRequestPixels
-            )
-            content(slotSize: geo.size)
-                .onAppear {
-                    viewModel.start(
-                        document: document,
-                        pdfData: pdfData,
-                        target: ThumbnailRenderTarget(page: pageIndex, widthPx: dims.widthPx, heightPx: dims.heightPx),
-                        context: ThumbnailRenderContext(renderer: renderer, telemetry: telemetry, cache: cache)
-                    )
-                }
-                .onDisappear { viewModel.stop() }
-        }
+        content
+            .onAppear {
+                viewModel.start(
+                    document: document,
+                    page: pageIndex,
+                    source: pages,
+                    context: ThumbnailRenderContext(telemetry: telemetry, cache: cache),
+                    maxPixelSize: FullScreenDocumentView.fullScreenMaxPixelSize
+                )
+            }
+            .onDisappear { viewModel.stop() }
     }
 
     @ViewBuilder
-    private func content(slotSize: CGSize) -> some View {
+    private var content: some View {
         switch viewModel.state {
-        case .loading, .failed:
+        case .loading:
             Color.clear
+        case .failed:
+            // Nothing renders (Android mirror), but a render-once failure can
+            // be permanent, so the page announces itself to VoiceOver.
+            Color.clear
+                .accessibilityLabel(
+                    "Page \(pageIndex + 1) of \(document.pageCount) couldn't be displayed"
+                )
         case .rendered(let image, _):
             image.image
                 .resizable()
@@ -216,24 +212,4 @@ private struct FullScreenPage: View {
     static let minScale: CGFloat = 1
     static let maxScale: CGFloat = 5
     static let doubleTapScale: CGFloat = 2
-}
-
-/// Mirror of Android's `clampToMaxPixels(...)` helper. Pre-scales a
-/// request to fit under `maxPixels` while preserving aspect ratio, so the
-/// renderer is never asked to allocate beyond the cap. Exposed
-/// `internal` so the surface lock test can pin the math.
-struct ClampedDimensions: Equatable {
-    let widthPx: Int
-    let heightPx: Int
-}
-
-func clampToMaxPixels(widthPx: Int, heightPx: Int, maxPixels: Int64) -> ClampedDimensions {
-    let product = Int64(widthPx) * Int64(heightPx)
-    if product <= maxPixels {
-        return ClampedDimensions(widthPx: widthPx, heightPx: heightPx)
-    }
-    let scale = (Double(maxPixels) / Double(product)).squareRoot()
-    let w = max(Int(Double(widthPx) * scale), 1)
-    let h = max(Int(Double(heightPx) * scale), 1)
-    return ClampedDimensions(widthPx: w, heightPx: h)
 }

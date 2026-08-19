@@ -82,6 +82,122 @@ package struct PDFKitRenderer: PDFRendererBinder {
         )
     }
 
+    package func renderFitted(
+        pdf: Data,
+        page: Int,
+        maxPixels: Int64
+    ) async -> RenderResult {
+        switch openForFitted(pdf: pdf, maxPixels: maxPixels) {
+        case .rejected(let kind):
+            return .rejected(kind: kind)
+        case .ok(let doc):
+            return fittedRender(doc: doc, page: page, maxPixels: maxPixels)
+        }
+    }
+
+    package func renderAllFitted(
+        pdf: Data,
+        pageCount: Int,
+        maxPixels: Int64,
+        onPage: @Sendable (Int, RenderResult) -> Bool
+    ) async {
+        // ONE parse of the untrusted bytes for the whole import pass — the reason this
+        // batch entry point exists; the per-page path re-opens the document per call.
+        switch openForFitted(pdf: pdf, maxPixels: maxPixels) {
+        case .rejected(let kind):
+            _ = onPage(0, .rejected(kind: kind))
+        case .ok(let doc):
+            for page in 0..<max(pageCount, 0) {
+                let result = fittedRender(doc: doc, page: page, maxPixels: maxPixels)
+                let wantsMore = onPage(page, result)
+                if case .rejected = result { return }
+                if !wantsMore { return }
+            }
+        }
+    }
+
+    private enum OpenedForFitted {
+        // Qualified: PassesPDFCore exports its own `PDFDocument` domain entity, so bare
+        // type positions are ambiguous here (init-call sites resolve by overload).
+        case ok(PDFKit.PDFDocument)
+        case rejected(DocumentRejectedKind)
+    }
+
+    private func openForFitted(pdf: Data, maxPixels: Int64) -> OpenedForFitted {
+        guard maxPixels > 0, maxPixels <= Self.maxPixels else {
+            return .rejected(.rendererFailed)
+        }
+        guard let doc = PDFDocument(data: pdf) else {
+            return .rejected(.notAPdf)
+        }
+        if doc.isEncrypted, doc.isLocked {
+            return .rejected(.encrypted)
+        }
+        return .ok(doc)
+    }
+
+    private func fittedRender(doc: PDFKit.PDFDocument, page: Int, maxPixels: Int64) -> RenderResult {
+        guard page >= 0, page < doc.pageCount, page < maxPages else {
+            return .rejected(kind: .rendererFailed)
+        }
+        guard let pdfPage = doc.page(at: page) else {
+            return .rejected(kind: .rendererFailed)
+        }
+        // The mediaBox is attacker-controlled geometry: require positive, FINITE sides
+        // before any arithmetic (an infinite side would poison the aspect into NaN).
+        let bounds = pdfPage.bounds(for: .mediaBox)
+        guard bounds.width > 0, bounds.height > 0,
+            bounds.width.isFinite, bounds.height.isFinite
+        else {
+            return .rejected(kind: .rendererFailed)
+        }
+        let dims = Self.fittedDimensions(
+            pageWidth: Double(bounds.width),
+            pageHeight: Double(bounds.height),
+            maxPixels: maxPixels
+        )
+        // Belt over the fit math: never hand rasterise dimensions outside the budget.
+        guard Int64(dims.widthPx) * Int64(dims.heightPx) <= maxPixels else {
+            return .rejected(kind: .rendererFailed)
+        }
+        return rasterise(
+            page: pdfPage,
+            widthPx: dims.widthPx,
+            heightPx: dims.heightPx,
+            sourceRect: .fullPage
+        )
+    }
+
+    /// Aspect-correct output dimensions filling `maxPixels` as closely as possible without
+    /// exceeding it. Pure so the fit math is testable without PDFKit.
+    ///
+    /// The inputs derive from attacker-controlled page geometry, so every Double is
+    /// clamped into `[1, maxPixels]` BEFORE the `Int` conversion (an unclamped conversion
+    /// traps on values above `Int.max`), and the width is derived from the integer budget
+    /// (`maxPixels / h`) rather than corrected by a loop — a degenerate aspect like
+    /// 1e9 : 1e-6 must cost O(1), never a per-pixel walk.
+    package static func fittedDimensions(
+        pageWidth: Double,
+        pageHeight: Double,
+        maxPixels: Int64
+    ) -> (widthPx: Int, heightPx: Int) {
+        let budget = Double(maxPixels)
+        let aspect = pageWidth / pageHeight
+        guard aspect.isFinite, aspect > 0 else { return (1, 1) }
+        let height = (budget / aspect).squareRoot()
+        let width = height * aspect
+        let h = clampToBudget(height, maxPixels: maxPixels)
+        let w = min(clampToBudget(width, maxPixels: maxPixels), max(Int(maxPixels) / h, 1))
+        return (w, h)
+    }
+
+    /// One side of the fit, floored into `[1, maxPixels]` with the range check done in
+    /// Double space so the `Int` conversion cannot trap.
+    private static func clampToBudget(_ side: Double, maxPixels: Int64) -> Int {
+        guard side.isFinite, side >= 1 else { return 1 }
+        return Int(min(side, Double(maxPixels)))
+    }
+
     private func rasterise(
         page: PDFPage,
         widthPx: Int,

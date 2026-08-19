@@ -22,6 +22,57 @@ public protocol PDFRendererBinder: Sendable {
         heightPx: Int,
         sourceRect: RenderSourceRect
     ) async -> RenderResult
+
+    /// Full-page render at aspect-correct dimensions fitted within `maxPixels`
+    /// (width * height). Unlike ``render(pdf:page:widthPx:heightPx:sourceRect:)``, the
+    /// output dimensions derive from the page's own geometry, so the raster is never
+    /// stretched — the shape the import-time render-once pass (ios-dts.16) persists.
+    func renderFitted(
+        pdf: Data,
+        page: Int,
+        maxPixels: Int64
+    ) async -> RenderResult
+
+    /// Streaming fitted renders for pages `0..<pageCount`, delivered IN ORDER and
+    /// SERIALLY to `onPage`, which returns whether to continue. Stops after delivering
+    /// a rejection or when `onPage` returns `false`. The shape exists for two memory
+    /// properties at once: an implementation can open the document ONCE for the whole
+    /// import pass (instead of re-parsing the untrusted bytes per page), and the caller
+    /// can encode-and-release each page's raw pixel buffer before the next render, so
+    /// only ONE ~16 MiB render buffer is ever live. The default loops ``renderFitted``.
+    func renderAllFitted(
+        pdf: Data,
+        pageCount: Int,
+        maxPixels: Int64,
+        onPage: @Sendable (Int, RenderResult) -> Bool
+    ) async
+}
+
+extension PDFRendererBinder {
+    /// Fail-closed default so the ios-dts.16 additions are not source-breaking for
+    /// out-of-package conformers: a binder that never learned to render fitted pages
+    /// rejects them rather than failing to compile.
+    public func renderFitted(
+        pdf: Data,
+        page: Int,
+        maxPixels: Int64
+    ) async -> RenderResult {
+        .rejected(kind: .rendererFailed)
+    }
+
+    public func renderAllFitted(
+        pdf: Data,
+        pageCount: Int,
+        maxPixels: Int64,
+        onPage: @Sendable (Int, RenderResult) -> Bool
+    ) async {
+        for page in 0..<max(pageCount, 0) {
+            let result = await renderFitted(pdf: pdf, page: page, maxPixels: maxPixels)
+            let wantsMore = onPage(page, result)
+            if case .rejected = result { return }
+            if !wantsMore { return }
+        }
+    }
 }
 
 /// Outcome of the page-count probe. Modelled with the same enum-based

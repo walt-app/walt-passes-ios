@@ -22,11 +22,17 @@ struct GrdbDocumentStoreTests {
     private let pdf = Data([0x25, 0x50, 0x44, 0x46, 0x2D])  // %PDF-
     private let thumb = Data([0x89, 0x50, 0x4E, 0x47])  // PNG magic
 
+    /// One opaque raster blob per page (render-once, ios-dts.16); byte value varies per
+    /// page so round-trip tests can tell pages apart.
+    private func rasters(_ pages: Int) -> [DocumentPageRasterBlob] {
+        (0..<pages).map { DocumentPageRasterBlob(bytes: Data([UInt8($0 + 1)]), widthPx: 10, heightPx: 10) }
+    }
+
     @Test func insertThenLoadRoundTripsBytes() async throws {
         let repo = try makeRepository()
         guard
             case .success(let id) = await repo.insertDocument(
-                label: "Boarding", pdfBytes: pdf, pageCount: 2, thumbnailBytes: thumb
+                label: "Boarding", pdfBytes: pdf, pageCount: 2, thumbnailBytes: thumb, pageRasters: rasters(2)
             )
         else {
             Issue.record("insert failed")
@@ -58,9 +64,13 @@ struct GrdbDocumentStoreTests {
         #expect(await iterator.next()?.isEmpty == true)
 
         clock.set(10)
-        _ = await repo.insertDocument(label: "A", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb)
+        _ = await repo.insertDocument(
+            label: "A", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb, pageRasters: rasters(1)
+        )
         clock.set(20)
-        _ = await repo.insertDocument(label: "B", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb)
+        _ = await repo.insertDocument(
+            label: "B", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb, pageRasters: rasters(1)
+        )
 
         // After two inserts the latest emission lists B before A and carries no blob columns.
         var latest: [DocumentRow] = []
@@ -73,7 +83,7 @@ struct GrdbDocumentStoreTests {
         let repo = try makeRepository()
         guard
             case .success(let id) = await repo.insertDocument(
-                label: "X", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb
+                label: "X", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb, pageRasters: rasters(1)
             )
         else {
             Issue.record("insert failed")
@@ -96,14 +106,17 @@ struct GrdbDocumentStoreTests {
     @Test func oversizedDocumentRejectedBeforeDisk() async throws {
         let repo = try makeRepository()
         let huge = Data(count: Int(DocumentBounds.maxBytes) + 1)
-        let result = await repo.insertDocument(label: "big", pdfBytes: huge, pageCount: 1, thumbnailBytes: thumb)
+        let result = await repo.insertDocument(
+            label: "big", pdfBytes: huge, pageCount: 1, thumbnailBytes: thumb, pageRasters: rasters(1)
+        )
         #expect(result == .failure(error: .documentRejected(kind: .oversizedAtStorage)))
     }
 
     @Test func tooManyPagesRejected() async throws {
         let repo = try makeRepository()
         let result = await repo.insertDocument(
-            label: "pages", pdfBytes: pdf, pageCount: DocumentBounds.maxPages + 1, thumbnailBytes: thumb
+            label: "pages", pdfBytes: pdf, pageCount: DocumentBounds.maxPages + 1, thumbnailBytes: thumb,
+            pageRasters: rasters(DocumentBounds.maxPages + 1)
         )
         #expect(result == .failure(error: .documentRejected(kind: .tooManyPagesAtStorage)))
     }
@@ -111,7 +124,9 @@ struct GrdbDocumentStoreTests {
     @Test func overLongLabelRejected() async throws {
         let repo = try makeRepository()
         let label = String(repeating: "x", count: DocumentBounds.maxLabelChars + 1)
-        let result = await repo.insertDocument(label: label, pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb)
+        let result = await repo.insertDocument(
+            label: label, pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb, pageRasters: rasters(1)
+        )
         #expect(result == .failure(error: .documentRejected(kind: .labelTooLongAtStorage)))
     }
 
@@ -120,7 +135,9 @@ struct GrdbDocumentStoreTests {
             .appendingPathComponent("walt_docs_persist_\(UUID().uuidString).db")
         defer { try? FileManager.default.removeItem(at: url) }
         let first = try GrdbPassRepository(dbQueue: try GrdbDatabaseFactory.open(at: url), clock: { 5 })
-        _ = await first.insertDocument(label: "persist", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb)
+        _ = await first.insertDocument(
+            label: "persist", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb, pageRasters: rasters(1)
+        )
         first.close()
 
         let second = try GrdbPassRepository(dbQueue: try GrdbDatabaseFactory.open(at: url), clock: { 5 })
@@ -132,7 +149,7 @@ struct GrdbDocumentStoreTests {
         let repo = try makeRepository()
         guard
             case .success(let id) = await repo.insertDocument(
-                label: "A", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb
+                label: "A", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb, pageRasters: rasters(1)
             )
         else {
             Issue.record("insert failed")
@@ -152,7 +169,7 @@ struct GrdbDocumentStoreTests {
         let repo = try makeRepository()
         guard
             case .success(let id) = await repo.insertDocument(
-                label: "seed", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb
+                label: "seed", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb, pageRasters: rasters(1)
             )
         else {
             Issue.record("insert failed")
@@ -177,7 +194,7 @@ struct GrdbDocumentStoreTests {
         let repo = try makeRepository()
         guard
             case .success(let id) = await repo.insertDocument(
-                label: "seed", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb
+                label: "seed", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb, pageRasters: rasters(1)
             )
         else {
             Issue.record("insert failed")
@@ -200,7 +217,7 @@ struct GrdbDocumentStoreTests {
         let repo = try makeRepository()
         guard
             case .success(let trimmedId) = await repo.insertDocument(
-                label: "  boarding pass  ", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb
+                label: "  boarding pass  ", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb, pageRasters: rasters(1)
             )
         else {
             Issue.record("insert failed")
@@ -208,7 +225,7 @@ struct GrdbDocumentStoreTests {
         }
         guard
             case .success(let blankId) = await repo.insertDocument(
-                label: "   ", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb
+                label: "   ", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb, pageRasters: rasters(1)
             )
         else {
             Issue.record("blank insert failed")
@@ -228,7 +245,7 @@ struct GrdbDocumentStoreTests {
         let repo = try makeRepository()
         guard
             case .success(let id) = await repo.insertDocument(
-                label: "A", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb
+                label: "A", pdfBytes: pdf, pageCount: 1, thumbnailBytes: thumb, pageRasters: rasters(1)
             )
         else {
             Issue.record("insert failed")

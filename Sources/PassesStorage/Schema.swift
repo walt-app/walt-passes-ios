@@ -12,7 +12,7 @@ import Foundation
 public enum Schema {
     public static let databaseName: String = "walt_passes.db"
 
-    public static let version: Int = 5
+    public static let version: Int = 6
 
     public enum Tables {
         public static let schemaMeta: String = "schema_meta"
@@ -21,6 +21,7 @@ public enum Schema {
         public static let passLocales: String = "pass_locales"
         public static let documents: String = "documents"
         public static let documentThumbnails: String = "document_thumbnails"
+        public static let documentPageRasters: String = "document_page_rasters"
         public static let scannableCards: String = "scannable_cards"
     }
 
@@ -119,6 +120,26 @@ public enum Schema {
         """,
     ]
 
+    /// Statements that introduce the v6 page-raster table (ios-dts.16 render-once).
+    /// Referenced from both `ddl` (fresh installs) and `migrations[5]` (v5 -> v6 upgrades)
+    /// so the two paths cannot drift. iOS-ONLY: Android renders pages per-open inside its
+    /// isolated `:pdfRenderer` sandbox and stores no rasters; iOS has no sandbox, so pages
+    /// are rendered once at import and display consumes these Walt-produced blobs. From
+    /// here on the iOS schema chain runs one version ahead of Android's (iOS v7/v8 will
+    /// mirror Android v6/v7).
+    private static let v6PageRasterTables: [String] = [
+        """
+        CREATE TABLE IF NOT EXISTS document_page_rasters (
+            document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+            page_index  INTEGER NOT NULL,
+            bytes       BLOB    NOT NULL,
+            width_px    INTEGER NOT NULL,
+            height_px   INTEGER NOT NULL,
+            PRIMARY KEY (document_id, page_index)
+        )
+        """
+    ]
+
     /// The DDL block that brings a fresh database to `version`. Statements are listed in
     /// dependency order (parent tables before child tables); they are executed in a
     /// single transaction by the implementation.
@@ -168,7 +189,7 @@ public enum Schema {
                 PRIMARY KEY (pass_id, locale_tag)
             )
             """,
-        ] + v2DocumentTables + v4ScannableCardTables)
+        ] + v2DocumentTables + v4ScannableCardTables + v6PageRasterTables)
 
     /// v4 -> v5 migration. Adds the nullable `user_label` column to `passes` for the
     /// user-supplied display-label override. Additive (existing rows get NULL); mirrored in
@@ -195,10 +216,17 @@ public enum Schema {
     ///
     /// v4 -> v5 adds the nullable `user_label` column to `passes` for the user-supplied
     /// display-label override (side-channel beside the signed `pass_json`).
+    ///
+    /// v5 -> v6 introduces `document_page_rasters` for the render-once contract
+    /// (ios-dts.16): every page of a stored document is rasterised once at import and
+    /// display never re-parses the original bytes. Existing documents have no raster rows
+    /// (the self-heal read path backfills them lazily, one bounded render per legacy
+    /// document). iOS-only — see `v6PageRasterTables`.
     public static let migrations: [Int: [String]] = [
         1: v2DocumentTables,
         2: v3ScannableCardTables,
         3: v3ToV4DropColorColumn,
         4: v4ToV5AddUserLabel,
+        5: v6PageRasterTables,
     ]
 }

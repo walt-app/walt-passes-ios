@@ -1,4 +1,3 @@
-import PassesPDF
 import PassesPDFCore
 import PassesUICore
 import SwiftUI
@@ -23,8 +22,7 @@ struct ViewConstructionSmokeTests {
         importedAtEpochMs: 0
     )
 
-    private static let pdfData = Data()
-    private static let renderer: PDFRendererBinder = StaticRejectingRenderer()
+    private static let pages: any DocumentPageSource = StaticEmptyPageSource()
 
     @Test func documentTrustCaptionConstructs() {
         let v = DocumentTrustCaption()
@@ -57,8 +55,7 @@ struct ViewConstructionSmokeTests {
     @Test func documentViewConstructsWithoutFullScreenCallback() {
         let v = DocumentView(
             doc: Self.doc,
-            pdfData: Self.pdfData,
-            renderer: Self.renderer
+            pages: Self.pages
         )
         #expect(type(of: v.body) != Never.self)
     }
@@ -69,8 +66,7 @@ struct ViewConstructionSmokeTests {
         // of the per-page -> container background hoist.
         let v = DocumentView(
             doc: Self.doc,
-            pdfData: Self.pdfData,
-            renderer: Self.renderer,
+            pages: Self.pages,
             faceTint: ArgbColor(argb: 0xFFCE_E6FF)
         )
         #expect(type(of: v.body) != Never.self)
@@ -79,8 +75,7 @@ struct ViewConstructionSmokeTests {
     @Test func documentViewConstructsWithFullScreenCallback() {
         let v = DocumentView(
             doc: Self.doc,
-            pdfData: Self.pdfData,
-            renderer: Self.renderer,
+            pages: Self.pages,
             onOpenFullScreen: {}
         )
         #expect(type(of: v.body) != Never.self)
@@ -89,8 +84,7 @@ struct ViewConstructionSmokeTests {
     @Test func fullScreenDocumentViewConstructs() {
         let v = FullScreenDocumentView(
             doc: Self.doc,
-            pdfData: Self.pdfData,
-            renderer: Self.renderer,
+            pages: Self.pages,
             onClose: {}
         )
         #expect(type(of: v.body) != Never.self)
@@ -107,17 +101,6 @@ struct ViewConstructionSmokeTests {
     }
 }
 
-private struct StaticRejectingRenderer: PDFRendererBinder {
-    func probe(pdf: Data) async -> ProbeResult {
-        .rejected(kind: .rendererFailed)
-    }
-    func render(
-        pdf: Data,
-        page: Int,
-        widthPx: Int,
-        heightPx: Int,
-        sourceRect: RenderSourceRect
-    ) async -> RenderResult {
-        .rejected(kind: .rendererFailed)
-    }
+private struct StaticEmptyPageSource: DocumentPageSource {
+    func pageRaster(page: Int) async -> StoredPageRaster? { nil }
 }

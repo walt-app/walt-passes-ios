@@ -48,7 +48,10 @@ struct PublicApiSurfaceTests {
         // Compile-time witness for the importer's single method.
         let importer:
             (any PDFImporter)
-                -> (PDFImportSource, String, @Sendable (String, Data, Int, Data) async throws -> Void) async throws ->
+                -> (
+                    PDFImportSource, String,
+                    @Sendable (String, Data, Int, Data, [StoredPageRaster]) async throws -> Void
+                ) async throws ->
                 PDFImportResult = { i in
                     { source, label, persist in
                         try await i.import(source: source, displayLabel: label, persist: persist)

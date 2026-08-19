@@ -38,7 +38,8 @@ struct GrdbDatabaseFactoryTests {
             let tables = [
                 Schema.Tables.schemaMeta, Schema.Tables.passes, Schema.Tables.passImages,
                 Schema.Tables.passLocales, Schema.Tables.documents,
-                Schema.Tables.documentThumbnails, Schema.Tables.scannableCards,
+                Schema.Tables.documentThumbnails, Schema.Tables.documentPageRasters,
+                Schema.Tables.scannableCards,
             ]
             let present = try queue.read { db in
                 try tables.filter { try db.tableExists($0) }
@@ -115,15 +116,17 @@ struct GrdbDatabaseFactoryTests {
 
             try GrdbDatabaseFactory.migrate(queue)
 
-            let (version, hasDocuments, hasScannable, scannableColumns, passesColumns) = try queue.read { db in
-                (
-                    try GrdbDatabaseFactory.readVersion(db),
-                    try db.tableExists(Schema.Tables.documents),
-                    try db.tableExists(Schema.Tables.scannableCards),
-                    try db.columns(in: Schema.Tables.scannableCards).map(\.name),
-                    try db.columns(in: Schema.Tables.passes).map(\.name)
-                )
-            }
+            let (version, hasDocuments, hasScannable, hasRasters, scannableColumns, passesColumns) =
+                try queue.read { db in
+                    (
+                        try GrdbDatabaseFactory.readVersion(db),
+                        try db.tableExists(Schema.Tables.documents),
+                        try db.tableExists(Schema.Tables.scannableCards),
+                        try db.tableExists(Schema.Tables.documentPageRasters),
+                        try db.columns(in: Schema.Tables.scannableCards).map(\.name),
+                        try db.columns(in: Schema.Tables.passes).map(\.name)
+                    )
+                }
             #expect(version == Schema.version)
             // v1->v2 added documents; v2->v3 added scannable_cards.
             #expect(hasDocuments)
@@ -132,6 +135,8 @@ struct GrdbDatabaseFactoryTests {
             #expect(!scannableColumns.contains("color_argb"))
             // v4->v5 added user_label.
             #expect(passesColumns.contains("user_label"))
+            // v5->v6 added document_page_rasters (ios-dts.16 render-once).
+            #expect(hasRasters)
         }
     }
 
