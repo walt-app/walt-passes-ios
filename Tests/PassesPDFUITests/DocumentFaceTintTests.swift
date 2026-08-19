@@ -10,6 +10,7 @@ import Testing
 /// request for a tint to influence, so Android's "tint cannot change what
 /// reaches the renderer" claim is now structural (the view holds no renderer
 /// at all) and needs no pure-seam pin.
+@MainActor
 struct DocumentFaceTintTests {
 
     @Test func resolvedFaceTakesAnOpaqueTint() {
