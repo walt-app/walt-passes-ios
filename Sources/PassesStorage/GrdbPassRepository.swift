@@ -441,6 +441,12 @@ extension GrdbPassRepository {
                 if let kind = GrdbDocumentStore.rasterRejection(raster) {
                     return .rejected(kind)
                 }
+                let others = try GrdbDocumentStore.rasterBytesTotal(
+                    documentId: id.value, excludingPage: page, db
+                )
+                if others + Int64(raster.bytes.count) > DocumentBounds.maxTotalRasterBytes {
+                    return .rejected(.pageRastersInvalidAtStorage)
+                }
                 try GrdbDocumentStore.writePageRaster(documentId: id.value, page: page, raster, db)
                 return .written
             }

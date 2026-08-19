@@ -144,7 +144,14 @@ public final class PDFThumbnailViewModel {
             state = .failed(kind: .rendererFailed)
             return
         }
-        guard let pageImage = decodeStoredRaster(raster, maxPixelSize: maxPixelSize) else {
+        // The PNG inflate is synchronous CPU work; hop it off the main actor (the
+        // renderer call this path replaced also ran on the cooperative pool) so a
+        // pager swipe never stalls the UI on a page decode.
+        let decoded = await Task.detached(priority: .userInitiated) {
+            decodeStoredRaster(raster, maxPixelSize: maxPixelSize)
+        }.value
+        guard !Task.isCancelled else { return }
+        guard let pageImage = decoded else {
             context.telemetry.onConsumerRenderFailed(reason: .other)
             state = .failed(kind: .rendererFailed)
             return

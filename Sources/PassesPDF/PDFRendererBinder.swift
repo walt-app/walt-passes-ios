@@ -32,6 +32,44 @@ public protocol PDFRendererBinder: Sendable {
         page: Int,
         maxPixels: Int64
     ) async -> RenderResult
+
+    /// Fitted renders for pages `0..<pageCount` in order, stopping at the first
+    /// rejection (the returned array then ends with that rejection). Exists so an
+    /// implementation can open the document ONCE for the whole import pass instead of
+    /// re-parsing the untrusted bytes per page; the default loops ``renderFitted``.
+    func renderAllFitted(
+        pdf: Data,
+        pageCount: Int,
+        maxPixels: Int64
+    ) async -> [RenderResult]
+}
+
+extension PDFRendererBinder {
+    /// Fail-closed default so the ios-dts.16 additions are not source-breaking for
+    /// out-of-package conformers: a binder that never learned to render fitted pages
+    /// rejects them rather than failing to compile.
+    public func renderFitted(
+        pdf: Data,
+        page: Int,
+        maxPixels: Int64
+    ) async -> RenderResult {
+        .rejected(kind: .rendererFailed)
+    }
+
+    public func renderAllFitted(
+        pdf: Data,
+        pageCount: Int,
+        maxPixels: Int64
+    ) async -> [RenderResult] {
+        var results: [RenderResult] = []
+        results.reserveCapacity(max(pageCount, 0))
+        for page in 0..<max(pageCount, 0) {
+            let result = await renderFitted(pdf: pdf, page: page, maxPixels: maxPixels)
+            results.append(result)
+            if case .rejected = result { break }
+        }
+        return results
+    }
 }
 
 /// Outcome of the page-count probe. Modelled with the same enum-based

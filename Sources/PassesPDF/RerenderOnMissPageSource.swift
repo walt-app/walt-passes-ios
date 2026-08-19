@@ -7,7 +7,8 @@ import PassesPDFCore
 /// serves it. Misses are expected exactly twice in a document's life at most:
 /// legacy documents imported before the raster table existed (v6), and the
 /// rare lost blob. Steady state is store-hits only, so the untrusted bytes
-/// meet a PDF parser once per document, at import.
+/// meet a PDF parser only at import (plus one bounded re-render per missed
+/// page here), never on display.
 ///
 /// Storage stays behind closures (`loadStored` / `persistRaster`) so
 /// `PassesPDF` and `PassesStorage` remain independent peers; the consumer
@@ -19,7 +20,11 @@ import PassesPDFCore
 ///
 /// Miss work is COALESCED per page and SERIALIZED across pages: a pager that
 /// starts adjacent legacy pages together performs one `PDFDocument` parse at
-/// a time and never parses the same page twice concurrently. A failed
+/// a time and never parses the same page twice concurrently. Both properties
+/// are scoped to ONE initialised instance (copies share the worker;
+/// re-initialisation does not) — hold a single source per document for the
+/// lifetime of the surface; constructing one per SwiftUI `body` evaluation
+/// silently defeats the coalescing. A failed
 /// re-render returns `nil` (the display surface shows its failure arm) and is
 /// reported through `telemetry.onConsumerRenderFailed`; it is NOT retried in
 /// a loop — each miss performs at most one render. `persistRaster` failures

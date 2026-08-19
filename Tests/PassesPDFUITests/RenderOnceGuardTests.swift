@@ -177,12 +177,12 @@ struct StoredRasterLoadTests {
         #expect(counting.calls == 1)
     }
 
-    /// The load task hops actors once per await; a few main-actor yields let
-    /// it run to completion deterministically.
+    /// The load task hops actors per await (source read, detached decode); poll
+    /// with short sleeps so every hop can run to completion deterministically.
     private func settle(_ viewModel: PDFThumbnailViewModel) async {
-        for _ in 0..<20 {
+        for _ in 0..<200 {
             if case .loading = viewModel.state {
-                await Task.yield()
+                try? await Task.sleep(for: .milliseconds(5))
             } else {
                 return
             }

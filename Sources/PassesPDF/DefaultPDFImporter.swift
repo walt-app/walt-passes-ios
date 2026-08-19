@@ -238,17 +238,23 @@ package final class DefaultPDFImporter: PDFImporter {
 
         // Render-once (ios-dts.16): every page is rasterised here, at import,
         // and persisted; display consumes the stored rasters and never hands
-        // the original bytes to a PDF parser again. A failure on ANY page
-        // rejects the whole import — a partially-rasterised document would
-        // reintroduce the re-parse path it exists to remove.
+        // the original bytes to a PDF parser again. The batch entry point
+        // opens the document once for the whole pass rather than per page.
+        // A failure on ANY page rejects the whole import — a partially-
+        // rasterised document would reintroduce the re-parse path this
+        // exists to remove.
+        let fittedResults = await session.client.renderAllFitted(
+            pdf: bytes,
+            pageCount: pages,
+            maxPixels: Self.pageRasterMaxPixels
+        )
         var pageRasters: [StoredPageRaster] = []
         pageRasters.reserveCapacity(pages)
         for page in 0..<pages {
-            let fitted = await session.client.renderFitted(
-                pdf: bytes,
-                page: page,
-                maxPixels: Self.pageRasterMaxPixels
-            )
+            guard page < fittedResults.count else {
+                return rejectAndReport(.rendererFailed, startedAt: startedAt)
+            }
+            let fitted = fittedResults[page]
             guard case .ok(_, let widthPx, let heightPx, _) = fitted else {
                 if case .rejected(let kind) = fitted {
                     return rejectAndReport(kind, startedAt: startedAt)

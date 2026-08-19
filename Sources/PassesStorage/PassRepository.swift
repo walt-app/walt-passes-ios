@@ -123,8 +123,8 @@ public protocol PassRepository: Sendable {
     /// Loads one stored page raster for the document with `id` (ios-dts.16 render-once).
     /// Returns `.success(nil)` when the document exists but has no raster for `page` —
     /// the expected state for documents imported before v6; the consumer's self-heal
-    /// wrapper performs one bounded re-render and backfills via
-    /// `insertDocumentPageRasters`. Returns `integrityViolation` only when no document
+    /// wrapper performs one bounded re-render and backfills via the per-page
+    /// `insertDocumentPageRaster`. Returns `integrityViolation` only when no document
     /// row matches `id`. The blob round-trips opaque; storage never decodes it.
     func loadDocumentPageRaster(
         id: DocumentRecordId,

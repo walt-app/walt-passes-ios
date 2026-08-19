@@ -22,7 +22,10 @@ surface and directed this hardening ahead of the image-document epic.
 every page (≤ `maxPages` 10) via the new `PDFRendererBinder.renderFitted` —
 aspect-correct dimensions fitted within the existing 4 MP budget
 (`pageRasterMaxPixels` = `PDFKitRenderer.maxPixels`) — PNG-encodes each, and
-hands the complete set to `persist`. Any page failing to render or encode
+hands the complete set to `persist` — via `renderAllFitted`, which opens the
+`PDFDocument` once for the whole pass (import performs a bounded handful of
+parses: probe, the page-zero thumbnail render, and one batch pass — never one
+per page, and never any on display). Any page failing to render or encode
 rejects the whole import (a partially-rasterised document would reintroduce
 the re-parse path). Storage lands the set in the same transaction as the
 document row (`document_page_rasters`, schema v6, cascade delete; count and
@@ -45,8 +48,9 @@ a time; the full-set write can never be assembled from single misses), and
 never retries in a loop. Concurrent misses are coalesced per page and
 serialized across pages, so at most one parse of the originals runs at a
 time; render failures report `onConsumerRenderFailed` rather than vanishing.
-Steady state: the untrusted bytes meet a PDF parser once per document, at
-import, and a legacy document converges page by page as it is viewed.
+Steady state: the untrusted bytes meet a PDF parser only at import, never on
+display, and a legacy document converges page by page as it is viewed (one
+bounded re-render per missed page).
 
 ## Consequences
 
@@ -63,11 +67,20 @@ import, and a legacy document converges page by page as it is viewed.
   revisit the codec only if real. Import peak memory holds the full raster
   set (≤ 10 encoded PNGs) plus one render buffer before `persist` — accepted
   for the 10-page cap, not a shape to grow past it.
-- Display surfaces decode to what they can show: the inline pager caps the
-  decoded longer side (`DocumentView.inlineMaxPixelSize`, 1200 px — ~20 MB of
-  cache across `defaultPageWindow` instead of ~80 MB at full budget); the
-  full-screen surface decodes the stored raster at full size. Both decode the
-  same first-party bytes — render-once is untouched.
+- Display surfaces decode to what they can show, off the main actor: the
+  inline pager caps the decoded longer side (`DocumentView.inlineMaxPixelSize`,
+  1200 px — ~20 MB of cache across `defaultPageWindow` instead of ~80 MB at
+  full budget); the full-screen surface caps at
+  `fullScreenMaxPixelSize` (2048 px) because the stored dimensions are
+  caller-declared and never verified against the blob, so the decode carries
+  its own ceiling. Both decode the same first-party bytes — render-once is
+  untouched.
+- A document's raster set is bounded in aggregate
+  (`DocumentBounds.maxTotalRasterBytes`, 4x the 25 MiB source cap) on both
+  write paths, on top of the per-raster pixel and byte caps.
+- `renderFitted`/`renderAllFitted` land with fail-closed protocol-extension
+  defaults, so the `PDFRendererBinder` additions are not source-breaking for
+  out-of-package conformers.
 - The fit derives from `bounds(for: .mediaBox)`, which ignores `/Rotate`,
   while `page.draw` applies it — pre-existing behaviour, but any residual
   squash on rotated pages is now baked into storage rather than recomputed

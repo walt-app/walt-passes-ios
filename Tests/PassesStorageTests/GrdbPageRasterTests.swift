@@ -217,4 +217,47 @@ struct GrdbPageRasterTests {
         }
         #expect(unknown == .integrityViolation(recordId: .document(DocumentRecordId(404))))
     }
+
+    @Test func aggregateRasterByteCapRejectsOnBothWritePaths() async throws {
+        let repo = try makeRepository()
+        // Six 20 MiB rasters: each under the per-raster cap, 120 MiB total over the
+        // 100 MiB aggregate cap.
+        let perRaster = Int(DocumentBounds.maxRasterBytes)
+        let heavy = (0..<6).map { _ in
+            DocumentPageRasterBlob(bytes: Data(count: perRaster), widthPx: 10, heightPx: 10)
+        }
+        let atInsert = await repo.insertDocument(
+            label: "H", pdfBytes: pdf, pageCount: 6, thumbnailBytes: thumb, pageRasters: heavy
+        )
+        #expect(atInsert == .failure(error: .documentRejected(kind: .pageRastersInvalidAtStorage)))
+
+        // Per-page path: four stored heavy pages (~80 MiB) + a fifth heavy backfill
+        // trips the aggregate; replacing an existing heavy page (no net growth over
+        // the remainder) stays legal.
+        let light = DocumentPageRasterBlob(bytes: Data([0x01]), widthPx: 10, heightPx: 10)
+        let fourHeavyTwoLight = Array(heavy.prefix(4)) + [light, light]
+        guard
+            case .success(let id) = await repo.insertDocument(
+                label: "H2", pdfBytes: pdf, pageCount: 6, thumbnailBytes: thumb,
+                pageRasters: fourHeavyTwoLight
+            )
+        else {
+            Issue.record("insert failed")
+            return
+        }
+        guard
+            case .failure(let overflow) = await repo.insertDocumentPageRaster(
+                id: id, page: 5, raster: heavy[0]
+            )
+        else {
+            Issue.record("expected aggregate-cap rejection on backfill")
+            return
+        }
+        #expect(overflow == .documentRejected(kind: .pageRastersInvalidAtStorage))
+        guard case .success = await repo.insertDocumentPageRaster(id: id, page: 0, raster: heavy[0])
+        else {
+            Issue.record("replacing an existing heavy page must not trip the aggregate cap")
+            return
+        }
+    }
 }

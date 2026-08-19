@@ -45,6 +45,13 @@ public struct FullScreenDocumentView: View {
     @State private var currentPage: Int = 0
     @State private var cache: PDFThumbnailCache = PDFThumbnailCache()
 
+    /// Longer-side cap for full-screen page decodes. The stored raster's declared
+    /// dimensions are caller-supplied integers the storage layer never verifies against
+    /// the blob, so the decode itself carries a ceiling too (the uniform-budget rule);
+    /// 2048 px exceeds what any supported display shows at 1x, and zoom is a
+    /// `scaleEffect` over the decoded bitmap, so nothing re-decodes larger.
+    static let fullScreenMaxPixelSize: Int = 2048
+
     @Environment(\.documentSemantics) private var semantics
 
     public var body: some View {
@@ -132,7 +139,8 @@ private struct FullScreenPage: View {
                     document: document,
                     page: pageIndex,
                     source: pages,
-                    context: ThumbnailRenderContext(telemetry: telemetry, cache: cache)
+                    context: ThumbnailRenderContext(telemetry: telemetry, cache: cache),
+                    maxPixelSize: FullScreenDocumentView.fullScreenMaxPixelSize
                 )
             }
             .onDisappear { viewModel.stop() }

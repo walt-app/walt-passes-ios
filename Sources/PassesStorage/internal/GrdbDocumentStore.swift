@@ -173,7 +173,25 @@ enum GrdbDocumentStore {
         for raster in pageRasters {
             if let kind = rasterRejection(raster) { return kind }
         }
+        let total = pageRasters.reduce(Int64(0)) { $0 + Int64($1.bytes.count) }
+        if total > DocumentBounds.maxTotalRasterBytes { return .pageRastersInvalidAtStorage }
         return nil
+    }
+
+    /// Sum of stored raster bytes for `documentId`, excluding `excludingPage` (the row a
+    /// per-page backfill is about to replace) — the aggregate-cap reference for the
+    /// singular write path.
+    static func rasterBytesTotal(
+        documentId: Int64,
+        excludingPage: Int,
+        _ db: Database
+    ) throws -> Int64 {
+        try Int64.fetchOne(
+            db,
+            sql: "SELECT COALESCE(SUM(LENGTH(bytes)), 0) FROM \(Schema.Tables.documentPageRasters) "
+                + "WHERE document_id = ? AND page_index != ?",
+            arguments: [documentId, excludingPage]
+        ) ?? 0
     }
 
     /// Per-raster bound check: positive dimensions, the 4 MP pixel cap, and the encoded

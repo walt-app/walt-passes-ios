@@ -87,15 +87,57 @@ package struct PDFKitRenderer: PDFRendererBinder {
         page: Int,
         maxPixels: Int64
     ) async -> RenderResult {
+        switch openForFitted(pdf: pdf, maxPixels: maxPixels) {
+        case .rejected(let kind):
+            return .rejected(kind: kind)
+        case .ok(let doc):
+            return fittedRender(doc: doc, page: page, maxPixels: maxPixels)
+        }
+    }
+
+    package func renderAllFitted(
+        pdf: Data,
+        pageCount: Int,
+        maxPixels: Int64
+    ) async -> [RenderResult] {
+        // ONE parse of the untrusted bytes for the whole import pass — the reason this
+        // batch entry point exists; the per-page path re-opens the document per call.
+        switch openForFitted(pdf: pdf, maxPixels: maxPixels) {
+        case .rejected(let kind):
+            return [.rejected(kind: kind)]
+        case .ok(let doc):
+            var results: [RenderResult] = []
+            results.reserveCapacity(max(pageCount, 0))
+            for page in 0..<max(pageCount, 0) {
+                let result = fittedRender(doc: doc, page: page, maxPixels: maxPixels)
+                results.append(result)
+                if case .rejected = result { break }
+            }
+            return results
+        }
+    }
+
+    private enum OpenedForFitted {
+        // Qualified: PassesPDFCore exports its own `PDFDocument` domain entity, so bare
+        // type positions are ambiguous here (init-call sites resolve by overload).
+        case ok(PDFKit.PDFDocument)
+        case rejected(DocumentRejectedKind)
+    }
+
+    private func openForFitted(pdf: Data, maxPixels: Int64) -> OpenedForFitted {
         guard maxPixels > 0, maxPixels <= Self.maxPixels else {
-            return .rejected(kind: .rendererFailed)
+            return .rejected(.rendererFailed)
         }
         guard let doc = PDFDocument(data: pdf) else {
-            return .rejected(kind: .notAPdf)
+            return .rejected(.notAPdf)
         }
         if doc.isEncrypted, doc.isLocked {
-            return .rejected(kind: .encrypted)
+            return .rejected(.encrypted)
         }
+        return .ok(doc)
+    }
+
+    private func fittedRender(doc: PDFKit.PDFDocument, page: Int, maxPixels: Int64) -> RenderResult {
         guard page >= 0, page < doc.pageCount, page < maxPages else {
             return .rejected(kind: .rendererFailed)
         }
