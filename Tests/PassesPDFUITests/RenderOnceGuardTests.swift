@@ -33,19 +33,27 @@ struct RenderOnceGuardTests {
             FileManager.default.enumerator(at: sourcesDir, includingPropertiesForKeys: nil)
         )
         // `\b` keeps `import PassesPDFCore` legal while catching `import PassesPDF`
-        // anywhere — including as a file's final unterminated line.
-        let forbidden = [
-            #"import\s+PassesPDF\b"#,
-            "import PDFKit",
-            "PDFDocument(data",
-            "PDFRendererBinder",
-            "CGPDFDocument",
+        // anywhere — including as a file's final unterminated line. Each needle is a
+        // regex paired with a canary it must match: an invalid pattern (an unescaped
+        // `(` once made one) silently never matches, hollowing out the guard.
+        let forbidden: [(needle: String, canary: String)] = [
+            (#"import\s+PassesPDF\b"#, "import PassesPDF"),
+            ("import PDFKit", "import PDFKit"),
+            (#"PDFDocument\(data"#, "PDFDocument(data: bytes)"),
+            ("PDFRendererBinder", "let r: PDFRendererBinder"),
+            ("CGPDFDocument", "CGPDFDocument(provider)"),
         ]
+        for (needle, canary) in forbidden {
+            #expect(
+                canary.range(of: needle, options: .regularExpression) != nil,
+                "dead guard needle (invalid regex or wrong shape): \(needle)"
+            )
+        }
         var scanned = 0
         for case let url as URL in files where url.pathExtension == "swift" {
             let text = try String(contentsOf: url, encoding: .utf8)
             scanned += 1
-            for needle in forbidden {
+            for (needle, _) in forbidden {
                 #expect(
                     text.range(of: needle, options: .regularExpression) == nil,
                     "\(url.lastPathComponent) reintroduces a document-parse path: \(needle)"
