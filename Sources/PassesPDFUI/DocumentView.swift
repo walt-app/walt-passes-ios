@@ -194,10 +194,18 @@ private struct DocumentPage: View {
     @ViewBuilder
     private var content: some View {
         switch viewModel.state {
-        case .loading, .failed:
-            // Mirror of Android: loading and failed render nothing in the
-            // inline surface; the pager itself is the placeholder.
+        case .loading:
+            // Mirror of Android: loading renders nothing in the inline
+            // surface; the pager itself is the placeholder.
             Color.clear
+        case .failed:
+            // Visually inherited from Android (nothing renders), but since
+            // render-once a failure can be permanent (missing raster), so the
+            // page at least announces itself to VoiceOver.
+            Color.clear
+                .accessibilityLabel(
+                    "Page \(pageIndex + 1) of \(document.pageCount) couldn't be displayed"
+                )
         case .rendered(let image, _):
             image.image
                 .resizable()

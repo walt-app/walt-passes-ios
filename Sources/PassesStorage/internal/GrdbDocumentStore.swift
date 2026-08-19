@@ -200,6 +200,12 @@ enum GrdbDocumentStore {
         if raster.widthPx <= 0 || raster.heightPx <= 0 {
             return .pageRastersInvalidAtStorage
         }
+        // Per-side gate before the multiply: this is the defensive layer, so a
+        // pathological declared dimension must reject, never trap the product.
+        let sideCap = DocumentBounds.maxRasterPixels
+        if Int64(raster.widthPx) > sideCap || Int64(raster.heightPx) > sideCap {
+            return .pageRastersInvalidAtStorage
+        }
         if Int64(raster.widthPx) * Int64(raster.heightPx) > DocumentBounds.maxRasterPixels {
             return .pageRastersInvalidAtStorage
         }

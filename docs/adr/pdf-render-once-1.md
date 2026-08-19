@@ -56,17 +56,20 @@ bounded re-render per missed page).
 
 - Hostile-parse events per document collapse from N-per-open to
   import-time-only (plus at most one lazy backfill for pre-v6 rows).
-- Zoom fidelity is unchanged: the full-screen surface already rendered at a
-  4 MP ceiling and zooms via `scaleEffect` (its former sub-rect-re-render doc
-  comment was stale); stored rasters carry the same budget. The fitted render
-  also fixes the former slot-stretch distortion — pages are now aspect-correct.
+- Zoom fidelity IMPROVES: the former full-screen path requested slot
+  dimensions in points (~0.3 MP on a 6.1-inch phone) and zoomed that via
+  `scaleEffect` (its sub-rect-re-render doc comment was stale); stored
+  rasters carry the full 4 MP budget, decoded at the 2048 px ceiling. The
+  fitted render also fixes the former slot-stretch distortion — pages are
+  now aspect-correct.
 - Storage grows by the raster set (PNG of ≤ 4 MP per page, ≤ 10 pages);
   text-heavy pages compress well, scanned-photo PDFs may exceed the original's
   size — bounded by `DocumentBounds.maxRasterBytes` (20 MiB per raster; a PNG
   materially above the 16 MiB raw-RGBA size is pathological). Accepted;
-  revisit the codec only if real. Import peak memory holds the full raster
-  set (≤ 10 encoded PNGs) plus one render buffer before `persist` — accepted
-  for the 10-page cap, not a shape to grow past it.
+  revisit the codec only if real. Import peak memory holds the accumulating
+  encoded PNGs plus ONE ~16 MiB render buffer — the streaming `renderAllFitted`
+  contract encodes-and-releases each page's raw buffer before the next page
+  renders. Accepted for the 10-page cap, not a shape to grow past it.
 - Display surfaces decode to what they can show, off the main actor: the
   inline pager caps the decoded longer side (`DocumentView.inlineMaxPixelSize`,
   1200 px — ~20 MB of cache across `defaultPageWindow` instead of ~80 MB at

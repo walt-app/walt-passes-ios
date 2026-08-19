@@ -69,10 +69,12 @@ package final class DefaultPDFImporter: PDFImporter {
     package static let thumbHeightPx: Int = 800
 
     /// Pixel budget for each persisted page raster (ios-dts.16 render-once).
-    /// Matches `PDFKitRenderer.maxPixels` and the full-screen surface's former
-    /// live-render ceiling, so stored rasters carry the same fidelity the
-    /// display path used to request — import is now the ONLY place the
-    /// original bytes meet a PDF parser.
+    /// A deliberate literal — `PDFKitRenderer.maxPixels` sits behind
+    /// `#if canImport(PDFKit)` so it cannot be referenced here; the equality
+    /// is pinned by `pageRasterBudgetMatchesRendererCap` instead. Same value
+    /// as the full-screen surface's former live-render ceiling, so stored
+    /// rasters carry the fidelity the display path used to request — import
+    /// is now the ONLY place the original bytes meet a PDF parser.
     package static let pageRasterMaxPixels: Int64 = 4 * 1024 * 1024
 
     package static let headerBytes: Int = 8
@@ -236,39 +238,12 @@ package final class DefaultPDFImporter: PDFImporter {
             return rejectAndReport(.encoderFailed, startedAt: startedAt)
         }
 
-        // Render-once (ios-dts.16): every page is rasterised here, at import,
-        // and persisted; display consumes the stored rasters and never hands
-        // the original bytes to a PDF parser again. The batch entry point
-        // opens the document once for the whole pass rather than per page.
-        // A failure on ANY page rejects the whole import — a partially-
-        // rasterised document would reintroduce the re-parse path this
-        // exists to remove.
-        let fittedResults = await session.client.renderAllFitted(
-            pdf: bytes,
-            pageCount: pages,
-            maxPixels: Self.pageRasterMaxPixels
-        )
-        var pageRasters: [StoredPageRaster] = []
-        pageRasters.reserveCapacity(pages)
-        for page in 0..<pages {
-            guard page < fittedResults.count else {
-                return rejectAndReport(.rendererFailed, startedAt: startedAt)
-            }
-            let fitted = fittedResults[page]
-            guard case .ok(_, let widthPx, let heightPx, _) = fitted else {
-                if case .rejected(let kind) = fitted {
-                    return rejectAndReport(kind, startedAt: startedAt)
-                }
-                return rejectAndReport(.rendererFailed, startedAt: startedAt)
-            }
-            do {
-                let pngBytes = try deps.thumbnailEncoder.encode(render: fitted)
-                pageRasters.append(StoredPageRaster(pngBytes: pngBytes, widthPx: widthPx, heightPx: heightPx))
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                return rejectAndReport(.encoderFailed, startedAt: startedAt)
-            }
+        let pageRasters: [StoredPageRaster]
+        switch try await renderPageRasters(client: session.client, bytes: bytes, pages: pages) {
+        case .rejected(let kind):
+            return rejectAndReport(kind, startedAt: startedAt)
+        case .ok(let rasters):
+            pageRasters = rasters
         }
 
         do {
@@ -294,6 +269,76 @@ package final class DefaultPDFImporter: PDFImporter {
             )
         )
         return .imported(doc: doc)
+    }
+
+    private enum RasterPassOutcome {
+        case ok([StoredPageRaster])
+        case rejected(DocumentRejectedKind)
+    }
+
+    /// The render-once raster pass (ios-dts.16): every page is rasterised here, at
+    /// import, and persisted; display consumes the stored rasters and never hands the
+    /// original bytes to a PDF parser again. The streaming batch entry point opens the
+    /// document once for the whole pass AND lets each raw ~16 MiB render buffer be
+    /// encoded-and-released before the next page renders, so import peak holds one
+    /// render buffer plus the accumulating PNGs. A failure on ANY page rejects the
+    /// whole import — a partially-rasterised document would reintroduce the re-parse
+    /// path this exists to remove. Encoder cancellation rethrows (structured
+    /// concurrency, same rule as the thumbnail leg).
+    private func renderPageRasters(
+        client: any PDFRendererBinder,
+        bytes: Data,
+        pages: Int
+    ) async throws -> RasterPassOutcome {
+        let batch = BatchRasterState()
+        let encoder = deps.thumbnailEncoder
+        await client.renderAllFitted(
+            pdf: bytes,
+            pageCount: pages,
+            maxPixels: Self.pageRasterMaxPixels
+        ) { _, result in
+            guard case .ok(_, let widthPx, let heightPx, _) = result else {
+                if case .rejected(let kind) = result {
+                    batch.rejection = kind
+                } else {
+                    batch.rejection = .rendererFailed
+                }
+                return false
+            }
+            do {
+                let pngBytes = try encoder.encode(render: result)
+                batch.rasters.append(
+                    StoredPageRaster(pngBytes: pngBytes, widthPx: widthPx, heightPx: heightPx)
+                )
+                return true
+            } catch is CancellationError {
+                batch.cancelled = true
+                return false
+            } catch {
+                batch.rejection = .encoderFailed
+                return false
+            }
+        }
+        if batch.cancelled {
+            throw CancellationError()
+        }
+        if let kind = batch.rejection {
+            return .rejected(kind)
+        }
+        guard batch.rasters.count == pages else {
+            return .rejected(.rendererFailed)
+        }
+        return .ok(batch.rasters)
+    }
+
+    /// Accumulator for the streaming raster pass. `@unchecked Sendable` per the repo
+    /// policy: the `renderAllFitted` contract delivers pages serially, so the mutable
+    /// state is never touched concurrently; the annotation only satisfies the
+    /// `@Sendable` closure capture.
+    private final class BatchRasterState: @unchecked Sendable {
+        var rasters: [StoredPageRaster] = []
+        var rejection: DocumentRejectedKind?
+        var cancelled = false
     }
 
     private func rejectAndReport(

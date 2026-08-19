@@ -83,6 +83,54 @@ struct RenderOnceTests {
         #expect(result == .rejected(kind: .encoderFailed))
     }
 
+    @Test func importUsesTheBatchEntryPointOncePerImport() async throws {
+        let binder = BatchRecordingBinder(
+            probeResult: .ok(pageCount: 3), result: Self.okRender(), rejectAtPage: nil
+        )
+        let importer = makeTestImporter(sessionFactory: RecordingSessionFactory(binder: binder))
+        let result = try await importer.import(
+            source: .data(TestFixtures.validPDFBytes),
+            displayLabel: "Doc",
+            persist: { _, _, _, _, _ in }
+        )
+        guard case .imported = result else {
+            Issue.record("expected success, got \(result)")
+            return
+        }
+        // The one-parse claim: exactly one batch call carrying the probe's page count
+        // and the import budget, and NO per-page fitted calls from the importer.
+        #expect(binder.batchCalls.count == 1)
+        #expect(binder.batchCalls.first?.pageCount == 3)
+        #expect(binder.batchCalls.first?.maxPixels == DefaultPDFImporter.pageRasterMaxPixels)
+        #expect(binder.perPageFittedCalls == 0)
+    }
+
+    @Test func batchRejectionMidStreamSurvivesToImportResult() async throws {
+        let binder = BatchRecordingBinder(
+            probeResult: .ok(pageCount: 3), result: Self.okRender(), rejectAtPage: 1
+        )
+        let importer = makeTestImporter(sessionFactory: RecordingSessionFactory(binder: binder))
+        let result = try await importer.import(
+            source: .data(TestFixtures.validPDFBytes),
+            displayLabel: "Doc",
+            persist: { _, _, _, _, _ in
+                Issue.record("persist must not run when the batch rejects mid-stream")
+            }
+        )
+        // The delivered rejection kind is what the import reports, not a generic fold.
+        #expect(result == .rejected(kind: .encrypted))
+    }
+
+    @Test func pageRasterBudgetMatchesRendererCap() {
+        // The literals are deliberately duplicated (PDFKitRenderer sits behind
+        // canImport(PDFKit)); this pin turns a one-sided edit — which would fail
+        // closed as "every import rejected" — into a loud test failure instead.
+        #expect(DefaultPDFImporter.pageRasterMaxPixels == 4 * 1024 * 1024)
+        #if canImport(PDFKit)
+        #expect(DefaultPDFImporter.pageRasterMaxPixels == PDFKitRenderer.maxPixels)
+        #endif
+    }
+
     // MARK: - Fitted dimension math
 
     #if canImport(PDFKit)
@@ -300,6 +348,65 @@ private struct CountingBinder: PDFRendererBinder {
 
 private struct StubRasterEncoder: PageRasterEncoding {
     func encode(render: RenderResult) throws -> Data { Data([0x89, 0x50, 0x4E, 0x47]) }
+}
+
+/// Implements the streaming batch itself so tests can pin that the importer uses
+/// it (and never the per-page path): records each batch call's shape and streams
+/// `result` per page, optionally rejecting `.encrypted` at `rejectAtPage`.
+private final class BatchRecordingBinder: PDFRendererBinder, @unchecked Sendable {
+    struct BatchCall {
+        let pageCount: Int
+        let maxPixels: Int64
+    }
+
+    private let lock = NSLock()
+    private let probeResult: ProbeResult
+    private let result: RenderResult
+    private let rejectAtPage: Int?
+    private var _batchCalls: [BatchCall] = []
+    private var _perPageFittedCalls = 0
+
+    init(probeResult: ProbeResult, result: RenderResult, rejectAtPage: Int?) {
+        self.probeResult = probeResult
+        self.result = result
+        self.rejectAtPage = rejectAtPage
+    }
+
+    var batchCalls: [BatchCall] {
+        syncLocked(lock) { _batchCalls }
+    }
+
+    var perPageFittedCalls: Int {
+        syncLocked(lock) { _perPageFittedCalls }
+    }
+
+    func probe(pdf: Data) async -> ProbeResult { probeResult }
+
+    func render(
+        pdf: Data, page: Int, widthPx: Int, heightPx: Int, sourceRect: RenderSourceRect
+    ) async -> RenderResult {
+        result
+    }
+
+    func renderFitted(pdf: Data, page: Int, maxPixels: Int64) async -> RenderResult {
+        syncLocked(lock) { _perPageFittedCalls += 1 }
+        return result
+    }
+
+    func renderAllFitted(
+        pdf: Data,
+        pageCount: Int,
+        maxPixels: Int64,
+        onPage: @Sendable (Int, RenderResult) -> Bool
+    ) async {
+        syncLocked(lock) { _batchCalls.append(BatchCall(pageCount: pageCount, maxPixels: maxPixels)) }
+        for page in 0..<pageCount {
+            let delivered: RenderResult = page == rejectAtPage ? .rejected(kind: .encrypted) : result
+            let wantsMore = onPage(page, delivered)
+            if case .rejected = delivered { return }
+            if !wantsMore { return }
+        }
+    }
 }
 
 /// Fitted renders take a beat and record how many run at once, so the

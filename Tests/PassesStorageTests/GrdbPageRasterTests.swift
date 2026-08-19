@@ -260,4 +260,12 @@ struct GrdbPageRasterTests {
             return
         }
     }
+
+    @Test func rasterBoundsPinTheSharedBudgetLiterals() {
+        // The 4 MP figure is deliberately duplicated across DefaultPDFImporter,
+        // PDFKitRenderer, and here (module boundaries prevent one constant); each copy
+        // pins it so a one-sided edit fails a test instead of failing every insert.
+        #expect(DocumentBounds.maxRasterPixels == 4 * 1024 * 1024)
+        #expect(DocumentBounds.maxTotalRasterBytes == 4 * DocumentBounds.maxBytes)
+    }
 }

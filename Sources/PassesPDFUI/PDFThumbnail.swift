@@ -35,8 +35,11 @@ public let defaultPageWindow: Int = 5
 
 /// Bounded RAM-bounded cache for page images produced by
 /// ``PDFThumbnailViewModel``. Hoist a single instance to list scope so
-/// every visible row shares a fixed cap. `clear()` is the only
-/// public-mutation surface; the surface lock test pins this.
+/// every visible row shares a fixed cap — but scope ONE cache per surface
+/// resolution: keys are (document, page) only, so sharing a cache between
+/// surfaces that decode at different `maxPixelSize` serves whichever
+/// resolution landed first. `clear()` is the only public-mutation surface;
+/// the surface lock test pins this.
 public final class PDFThumbnailCache: @unchecked Sendable {
     private let backing: RenderedPageCache<PageImage>
     private let lock = NSLock()

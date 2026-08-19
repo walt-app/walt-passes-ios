@@ -98,22 +98,21 @@ package struct PDFKitRenderer: PDFRendererBinder {
     package func renderAllFitted(
         pdf: Data,
         pageCount: Int,
-        maxPixels: Int64
-    ) async -> [RenderResult] {
+        maxPixels: Int64,
+        onPage: @Sendable (Int, RenderResult) -> Bool
+    ) async {
         // ONE parse of the untrusted bytes for the whole import pass — the reason this
         // batch entry point exists; the per-page path re-opens the document per call.
         switch openForFitted(pdf: pdf, maxPixels: maxPixels) {
         case .rejected(let kind):
-            return [.rejected(kind: kind)]
+            _ = onPage(0, .rejected(kind: kind))
         case .ok(let doc):
-            var results: [RenderResult] = []
-            results.reserveCapacity(max(pageCount, 0))
             for page in 0..<max(pageCount, 0) {
                 let result = fittedRender(doc: doc, page: page, maxPixels: maxPixels)
-                results.append(result)
-                if case .rejected = result { break }
+                let wantsMore = onPage(page, result)
+                if case .rejected = result { return }
+                if !wantsMore { return }
             }
-            return results
         }
     }
 

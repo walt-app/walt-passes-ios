@@ -149,8 +149,15 @@ private struct FullScreenPage: View {
     @ViewBuilder
     private var content: some View {
         switch viewModel.state {
-        case .loading, .failed:
+        case .loading:
             Color.clear
+        case .failed:
+            // Nothing renders (Android mirror), but a render-once failure can
+            // be permanent, so the page announces itself to VoiceOver.
+            Color.clear
+                .accessibilityLabel(
+                    "Page \(pageIndex + 1) of \(document.pageCount) couldn't be displayed"
+                )
         case .rendered(let image, _):
             image.image
                 .resizable()

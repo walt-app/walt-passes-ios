@@ -366,11 +366,11 @@ extension GrdbPassRepository {
         do {
             // A missing raster is only "no raster yet" when the document itself exists;
             // an unknown document id stays an integrity violation like the other loads.
+            // The existence probe runs only on a miss — the hot display path is one SELECT.
             let (exists, raster) = try await dbQueue.read { db in
-                (
-                    try GrdbDocumentStore.pageCount(id: id, db) != nil,
-                    try GrdbDocumentStore.loadPageRaster(id: id, page: page, db)
-                )
+                let raster = try GrdbDocumentStore.loadPageRaster(id: id, page: page, db)
+                if raster != nil { return (true, raster) }
+                return (try GrdbDocumentStore.pageCount(id: id, db) != nil, raster)
             }
             guard exists else { return .failure(error: .integrityViolation(recordId: .document(id))) }
             return .success(value: raster)

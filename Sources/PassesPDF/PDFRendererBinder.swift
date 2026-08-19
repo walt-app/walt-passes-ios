@@ -33,15 +33,19 @@ public protocol PDFRendererBinder: Sendable {
         maxPixels: Int64
     ) async -> RenderResult
 
-    /// Fitted renders for pages `0..<pageCount` in order, stopping at the first
-    /// rejection (the returned array then ends with that rejection). Exists so an
-    /// implementation can open the document ONCE for the whole import pass instead of
-    /// re-parsing the untrusted bytes per page; the default loops ``renderFitted``.
+    /// Streaming fitted renders for pages `0..<pageCount`, delivered IN ORDER and
+    /// SERIALLY to `onPage`, which returns whether to continue. Stops after delivering
+    /// a rejection or when `onPage` returns `false`. The shape exists for two memory
+    /// properties at once: an implementation can open the document ONCE for the whole
+    /// import pass (instead of re-parsing the untrusted bytes per page), and the caller
+    /// can encode-and-release each page's raw pixel buffer before the next render, so
+    /// only ONE ~16 MiB render buffer is ever live. The default loops ``renderFitted``.
     func renderAllFitted(
         pdf: Data,
         pageCount: Int,
-        maxPixels: Int64
-    ) async -> [RenderResult]
+        maxPixels: Int64,
+        onPage: @Sendable (Int, RenderResult) -> Bool
+    ) async
 }
 
 extension PDFRendererBinder {
@@ -59,16 +63,15 @@ extension PDFRendererBinder {
     public func renderAllFitted(
         pdf: Data,
         pageCount: Int,
-        maxPixels: Int64
-    ) async -> [RenderResult] {
-        var results: [RenderResult] = []
-        results.reserveCapacity(max(pageCount, 0))
+        maxPixels: Int64,
+        onPage: @Sendable (Int, RenderResult) -> Bool
+    ) async {
         for page in 0..<max(pageCount, 0) {
             let result = await renderFitted(pdf: pdf, page: page, maxPixels: maxPixels)
-            results.append(result)
-            if case .rejected = result { break }
+            let wantsMore = onPage(page, result)
+            if case .rejected = result { return }
+            if !wantsMore { return }
         }
-        return results
     }
 }
 
