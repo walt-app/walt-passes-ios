@@ -9,6 +9,7 @@ import Testing
 /// ink flips at the WCAG tie point (see `inkFlipLuminance`'s doc for the math),
 /// the worst case still clears AA-adjacent contrast, and the code panel stays
 /// literally white — a tint may never reach it.
+@MainActor
 struct ScannableCardFaceTintTests {
 
     @Test func facePaintTakesAnOpaqueTintWithItsDerivedInk() {
