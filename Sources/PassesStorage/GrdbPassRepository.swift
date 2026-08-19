@@ -154,6 +154,10 @@ public final class GrdbPassRepository: PassRepository, @unchecked Sendable {
 
     // MARK: - Documents
 
+    /// An image is a single page (Android IMAGE_PAGE_COUNT); binding 1 in the switch
+    /// below is what makes the page cap unviolable on the image arms by construction.
+    private static let imagePageCount = 1
+
     public func insertDocument(_ insert: DocumentInsert) async -> StorageResult<DocumentRecordId> {
         guard ensureOpen() else { return .failure(error: .databaseLocked) }
         // page_count is the PDF page count; an image is a single page (1), so the page
@@ -222,10 +226,6 @@ public final class GrdbPassRepository: PassRepository, @unchecked Sendable {
             return .failure(error: StorageErrorMapper.map(error))
         }
     }
-
-    /// An image is a single page (Android IMAGE_PAGE_COUNT); binding 1 here is what
-    /// makes the page cap unviolable on the image arms by construction.
-    private static let imagePageCount = 1
 
     private func refreshDocuments() async {
         guard let rows = try? await dbQueue.read({ try GrdbDocumentStore.listRows($0) }) else { return }
@@ -420,16 +420,16 @@ extension GrdbPassRepository {
         }
         do {
             let outcome: PageOutcome = try await dbQueue.write { db in
-                guard let kind = try GrdbDocumentStore.rowKind(id: id, db) else {
+                guard let rowKind = try GrdbDocumentStore.rowKind(id: id, db) else {
                     return .documentMissing
                 }
                 // Page rasters are the PDF lane's render-once artifacts (ios-dts.16);
                 // an image row's display raster is its thumbnail, so a backfill against
                 // one is a caller bug and must not land (ios-dts.1).
-                if kind.format != .pdf {
+                if rowKind.format != .pdf {
                     return .rejected(.pageRastersInvalidAtStorage)
                 }
-                if page < 0 || page >= kind.pageCount {
+                if page < 0 || page >= rowKind.pageCount {
                     return .rejected(.pageRastersInvalidAtStorage)
                 }
                 if let kind = GrdbDocumentStore.rasterRejection(raster) {

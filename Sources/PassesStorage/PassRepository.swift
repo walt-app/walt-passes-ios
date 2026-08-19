@@ -104,14 +104,14 @@ public protocol PassRepository: Sendable {
 
     /// Cold stream of document list-view rows, sorted by `imported_at_epoch_ms`
     /// descending. Emits the current snapshot on subscribe and re-emits when documents
-    /// are inserted or deleted. The PDF and thumbnail blobs are NOT loaded by this
+    /// are inserted or deleted. The document and thumbnail blobs are NOT loaded by this
     /// stream; consumers fetch them with `loadDocumentBytes` / `loadDocumentThumbnail`
     /// on demand.
     func observeDocuments() -> AsyncStream<[DocumentRow]>
 
-    /// Loads the raw PDF bytes for the document with `id`. The bytes are returned to the
-    /// caller untouched; the storage layer never parses, sniffs, decodes, or otherwise
-    /// inspects them (ADR 0005 D4).
+    /// Loads the raw document bytes (PDF or image) for the document with `id`. The bytes
+    /// are returned to the caller untouched; the storage layer never parses, sniffs,
+    /// decodes, or otherwise inspects them (ADR 0005 D4).
     func loadDocumentBytes(id: DocumentRecordId) async -> StorageResult<Data>
 
     /// Loads the rendered thumbnail bytes for the document with `id`. Thumbnails are
@@ -133,7 +133,10 @@ public protocol PassRepository: Sendable {
     /// Backfills (insert-or-replace) ONE page's raster — the lazy self-heal path for
     /// pre-v6 rows, where pages recover one open at a time and a full set is never
     /// available in one call (`RerenderOnMissPageSource.persistRaster` wires here).
-    /// Validates `0 <= page < page_count` and the per-raster pixel/byte bounds
+    /// Validates that the row is a PDF (`pageRastersInvalidAtStorage` otherwise —
+    /// rasters are the PDF lane's render-once artifacts; an image row's display raster
+    /// is its thumbnail, ios-dts.1), `0 <= page < page_count`, and the per-raster
+    /// pixel/byte bounds
     /// (`pageRastersInvalidAtStorage` on violation, checked in the same transaction as
     /// the stored `page_count` read); `integrityViolation` when no document matches `id`.
     func insertDocumentPageRaster(

@@ -106,7 +106,7 @@ struct DocumentKindsTests {
 
     // MARK: - Caps per arm
 
-    @Test func imageInsertSkipsThePageCapButKeepsTheByteCap() async throws {
+    @Test func imageInsertByteCapBindsInBothDirections() async throws {
         let (repo, _) = try makeRepository()
         // An image cannot violate the page cap by construction; the byte cap binds.
         let oversized = Data(count: Int(DocumentBounds.maxBytes) + 1)

@@ -63,6 +63,11 @@ public struct DocumentPageRasterBlob: Sendable, Equatable {
 /// the schema vocabulary mirrored to Android, but is enforced-unreachable at the iOS
 /// importer sniff (§7 resolution on ios-dts.2: the retained-image lane admits JPEG/PNG
 /// only).
+///
+/// Adding a case MUST come with a schema-version bump: without one, an older build
+/// reading the new value falls back to `.pdf` — the one non-tampering trigger for the
+/// permissive fallback — where the `unsupported` downgrade refusal would otherwise
+/// stop it.
 public enum DocumentFormat: String, Sendable, CaseIterable {
     case pdf
     case png
@@ -72,9 +77,9 @@ public enum DocumentFormat: String, Sendable, CaseIterable {
 
 /// What `PassRepository.insertDocument` persists, as a sealed discriminator over the
 /// document kinds the `documents` table holds (mirror of Android `DocumentInsert`,
-/// wpass-i9x / wpass-8lu). Each arm carries exactly the kind-specific fields, so the
-/// mixes the type CAN prevent are unrepresentable (an image with a page count, a PDF
-/// with dimensions). `bytes` is the ORIGINAL document bytes (PDF or compressed image);
+/// wpass-i9x / wpass-8lu). Each arm carries exactly the kind-specific
+/// fields, so the field mixes the type can prevent are unrepresentable (an image with
+/// a page count, a PDF with dimensions). `bytes` is the ORIGINAL document bytes (PDF or compressed image);
 /// storage round-trips them opaque. `thumbnailBytes` is the Walt-produced display
 /// raster, PNG-encoded upstream.
 ///

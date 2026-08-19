@@ -125,8 +125,8 @@ public enum Schema {
     /// so the two paths cannot drift. iOS-ONLY: Android renders pages per-open inside its
     /// isolated `:pdfRenderer` sandbox and stores no rasters; iOS has no sandbox, so pages
     /// are rendered once at import and display consumes these Walt-produced blobs. From
-    /// here on the iOS schema chain runs one version ahead of Android's (iOS v7/v8 will
-    /// mirror Android v6/v7).
+    /// here on the iOS schema chain runs one version ahead of Android's (iOS v7/v8
+    /// mirror Android v6/v7, landed with ios-dts.1).
     private static let v6PageRasterTables: [String] = [
         """
         CREATE TABLE IF NOT EXISTS document_page_rasters (
@@ -175,9 +175,10 @@ public enum Schema {
     /// `sqlite_master` from the migrated one and break the
     /// `freshInstallAndFullMigrationChainLandAtTheSameSchema` parity guard. Every
     /// future column on an existing table must follow the same append-an-ALTER rule.
-    /// Consequence: `ddl` is no longer idempotent (ADD COLUMN has no IF NOT EXISTS);
-    /// harmless because it runs only when no version row exists, and a re-run against
-    /// an unversioned-but-populated file now fails closed instead of re-stamping it.
+    /// Consequence: `ddl` is no longer idempotent (ADD COLUMN has no IF NOT EXISTS): a
+    /// populated file whose version row is absent OR unreadable now refuses to open
+    /// (duplicate column name) where the old idempotent DDL silently re-stamped it —
+    /// fail-closed, at the cost of no self-heal for that tampering-or-bug-only state.
     public static let ddl: [String] =
         ([
             """

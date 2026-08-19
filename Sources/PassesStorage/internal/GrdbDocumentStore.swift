@@ -3,7 +3,7 @@ import GRDB
 import PassesCore
 
 /// Document-table I/O: the `documents` row plus its cascaded `document_thumbnails` child.
-/// Mirrors Android's `internal/SqlCipherDocumentStore.kt`. The PDF and thumbnail blobs
+/// Mirrors Android's `internal/SqlCipherDocumentStore.kt`. The document (PDF or image) and thumbnail blobs
 /// round-trip as opaque bytes — the storage layer never parses, sniffs, or decodes them
 /// (ADR 0005 D4). Every function takes the GRDB `Database` so the repository owns the
 /// transaction boundary.
@@ -60,7 +60,7 @@ enum GrdbDocumentStore {
     }
 
     /// Inserts the document + thumbnail + page rasters in one transaction and returns the
-    /// new id. The persisted `byte_count` is derived from `pdfBytes.count` (not
+    /// new id. The persisted `byte_count` is derived from `bytes.count` (not
     /// caller-asserted), so a stale size cannot bypass the cap.
     static func insert(_ doc: Insert, _ db: Database) throws -> DocumentRecordId {
         let byteCount = Int64(doc.bytes.count)
