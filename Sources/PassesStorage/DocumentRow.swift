@@ -55,10 +55,6 @@ public struct DocumentPageRasterBlob: Sendable, Equatable {
     }
 }
 
-/// The list-view projection of a stored document (PDF or image). Mirrors the indexed
-/// columns of the `documents` table; the heavy `pdf_bytes` and
-/// `document_thumbnails.bytes` blobs are NOT loaded here. Consumers that need the bytes
-/// call `loadDocumentBytes` / `loadDocumentThumbnail`.
 /// The container kind of a stored document — the `documents.format` discriminator
 /// (mirror of Android `DocumentFormat`, wpass-i9x). The storage layer keeps its own enum
 /// because `PassesStorage` is an independent peer of the document modules: the
@@ -76,9 +72,9 @@ public enum DocumentFormat: String, Sendable, CaseIterable {
 
 /// What `PassRepository.insertDocument` persists, as a sealed discriminator over the
 /// document kinds the `documents` table holds (mirror of Android `DocumentInsert`,
-/// wpass-i9x / wpass-8lu). Each arm carries exactly the kind-specific fields — a caller
-/// cannot construct a nonsensical mix (an image with a page count, a PDF with
-/// dimensions). `bytes` is the ORIGINAL document bytes (PDF or compressed image);
+/// wpass-i9x / wpass-8lu). Each arm carries exactly the kind-specific fields, so the
+/// mixes the type CAN prevent are unrepresentable (an image with a page count, a PDF
+/// with dimensions). `bytes` is the ORIGINAL document bytes (PDF or compressed image);
 /// storage round-trips them opaque. `thumbnailBytes` is the Walt-produced display
 /// raster, PNG-encoded upstream.
 ///
@@ -90,9 +86,13 @@ public enum DocumentInsert: Sendable {
     case pdf(
         label: String, bytes: Data, thumbnailBytes: Data, pageCount: Int,
         pageRasters: [DocumentPageRasterBlob])
+    /// A still image. `format` must be one of the image arms of `DocumentFormat` —
+    /// passing `.pdf` here is a caller bug (Android parity: documented, not rejected).
     case image(
         label: String, bytes: Data, thumbnailBytes: Data, format: DocumentFormat,
         widthPx: Int, heightPx: Int)
+    /// A composite (image + extracted barcode) persisted as ONE row. A composite is
+    /// always image-backed: passing `.pdf` as `format` is a caller bug here too.
     case barcodedImage(
         label: String, bytes: Data, thumbnailBytes: Data, format: DocumentFormat,
         widthPx: Int, heightPx: Int, barcodePayload: String, barcodeFormat: ScannableFormat)
@@ -126,6 +126,10 @@ public enum DocumentInsert: Sendable {
     }
 }
 
+/// The list-view projection of a stored document (PDF or image). Mirrors the indexed
+/// columns of the `documents` table; the heavy `pdf_bytes` and
+/// `document_thumbnails.bytes` blobs are NOT loaded here. Consumers that need the bytes
+/// call `loadDocumentBytes` / `loadDocumentThumbnail`.
 public struct DocumentRow: Sendable, Equatable {
     public let id: DocumentRecordId
     public let displayLabel: String
@@ -148,7 +152,7 @@ public struct DocumentRow: Sendable, Equatable {
         id: DocumentRecordId,
         displayLabel: String,
         byteCount: Int64,
-        format: DocumentFormat = .pdf,
+        format: DocumentFormat,
         pageCount: Int,
         widthPx: Int? = nil,
         heightPx: Int? = nil,

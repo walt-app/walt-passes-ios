@@ -147,7 +147,7 @@ public enum Schema {
     /// DEFAULT backfills. `pdf_bytes` is reused verbatim for image bytes — renaming
     /// would force a table rewrite for no audit gain; `loadDocumentBytes` is already
     /// kind-agnostic.
-    static let v7DocumentFormatColumns: [String] = [
+    private static let v7DocumentFormatColumns: [String] = [
         "ALTER TABLE documents ADD COLUMN format TEXT NOT NULL DEFAULT 'pdf'",
         "ALTER TABLE documents ADD COLUMN width_px INTEGER",
         "ALTER TABLE documents ADD COLUMN height_px INTEGER",
@@ -160,7 +160,7 @@ public enum Schema {
     /// detected barcode. A row is a composite iff BOTH are non-null; `format` stays the
     /// image container, so a composite reads back as an image row that additionally
     /// carries a barcode. Pure additive ALTERs; no row can fail.
-    static let v8BarcodeColumns: [String] = [
+    private static let v8BarcodeColumns: [String] = [
         "ALTER TABLE documents ADD COLUMN barcode_payload TEXT",
         "ALTER TABLE documents ADD COLUMN barcode_format TEXT",
     ]
@@ -168,6 +168,16 @@ public enum Schema {
     /// The DDL block that brings a fresh database to `version`. Statements are listed in
     /// dependency order (parent tables before child tables); they are executed in a
     /// single transaction by the implementation.
+    ///
+    /// The `documents` table is created in its historical v2 shape and brought to
+    /// current by appending the v7/v8 ALTERs, exactly as the migration chain does —
+    /// baking new columns into the CREATE instead would diverge the fresh-install
+    /// `sqlite_master` from the migrated one and break the
+    /// `freshInstallAndFullMigrationChainLandAtTheSameSchema` parity guard. Every
+    /// future column on an existing table must follow the same append-an-ALTER rule.
+    /// Consequence: `ddl` is no longer idempotent (ADD COLUMN has no IF NOT EXISTS);
+    /// harmless because it runs only when no version row exists, and a re-run against
+    /// an unversioned-but-populated file now fails closed instead of re-stamping it.
     public static let ddl: [String] =
         ([
             """

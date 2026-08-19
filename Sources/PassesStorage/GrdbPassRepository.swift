@@ -170,10 +170,12 @@ public final class GrdbPassRepository: PassRepository, @unchecked Sendable {
             (pageCount, format, widthPx, heightPx, pageRasters) = (pages, .pdf, nil, nil, rasters)
             (barcodePayload, barcodeFormat) = (nil, nil)
         case .image(_, _, _, let imageFormat, let width, let height):
-            (pageCount, format, widthPx, heightPx, pageRasters) = (1, imageFormat, width, height, [])
+            (pageCount, format, widthPx, heightPx, pageRasters) =
+                (Self.imagePageCount, imageFormat, width, height, [])
             (barcodePayload, barcodeFormat) = (nil, nil)
         case .barcodedImage(_, _, _, let imageFormat, let width, let height, let payload, let symbology):
-            (pageCount, format, widthPx, heightPx, pageRasters) = (1, imageFormat, width, height, [])
+            (pageCount, format, widthPx, heightPx, pageRasters) =
+                (Self.imagePageCount, imageFormat, width, height, [])
             (barcodePayload, barcodeFormat) = (payload, symbology)
         }
         // Same label normalization as updateDocumentLabel, so both paths writing
@@ -220,6 +222,10 @@ public final class GrdbPassRepository: PassRepository, @unchecked Sendable {
             return .failure(error: StorageErrorMapper.map(error))
         }
     }
+
+    /// An image is a single page (Android IMAGE_PAGE_COUNT); binding 1 here is what
+    /// makes the page cap unviolable on the image arms by construction.
+    private static let imagePageCount = 1
 
     private func refreshDocuments() async {
         guard let rows = try? await dbQueue.read({ try GrdbDocumentStore.listRows($0) }) else { return }
@@ -390,7 +396,7 @@ extension GrdbPassRepository {
             let (exists, raster) = try await dbQueue.read { db in
                 let raster = try GrdbDocumentStore.loadPageRaster(id: id, page: page, db)
                 if raster != nil { return (true, raster) }
-                return (try GrdbDocumentStore.pageCount(id: id, db) != nil, raster)
+                return (try GrdbDocumentStore.rowKind(id: id, db) != nil, raster)
             }
             guard exists else { return .failure(error: .integrityViolation(recordId: .document(id))) }
             return .success(value: raster)
@@ -414,10 +420,16 @@ extension GrdbPassRepository {
         }
         do {
             let outcome: PageOutcome = try await dbQueue.write { db in
-                guard let pageCount = try GrdbDocumentStore.pageCount(id: id, db) else {
+                guard let kind = try GrdbDocumentStore.rowKind(id: id, db) else {
                     return .documentMissing
                 }
-                if page < 0 || page >= pageCount {
+                // Page rasters are the PDF lane's render-once artifacts (ios-dts.16);
+                // an image row's display raster is its thumbnail, so a backfill against
+                // one is a caller bug and must not land (ios-dts.1).
+                if kind.format != .pdf {
+                    return .rejected(.pageRastersInvalidAtStorage)
+                }
+                if page < 0 || page >= kind.pageCount {
                     return .rejected(.pageRastersInvalidAtStorage)
                 }
                 if let kind = GrdbDocumentStore.rasterRejection(raster) {

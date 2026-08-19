@@ -204,6 +204,72 @@ struct DocumentKindsTests {
         #expect(rows.first?.barcodeFormat == nil)
     }
 
+    @Test func reverseHalfCompositeAlsoDecodesAsNoBarcode() async throws {
+        let (repo, queue) = try makeRepository()
+        guard
+            case .success = await repo.insertDocument(
+                .image(label: "Img", bytes: png, thumbnailBytes: thumb, format: .png, widthPx: 5, heightPx: 5))
+        else {
+            Issue.record("insert failed")
+            return
+        }
+        // The mirror tamper: a decodable format with NO payload must also read
+        // back as no barcode (both-or-neither, in both directions).
+        try await queue.write { db in
+            try db.execute(sql: "UPDATE documents SET barcode_payload = NULL, barcode_format = 'qr'")
+        }
+
+        let rows = try await queue.read { try GrdbDocumentStore.listRows($0) }
+        #expect(rows.first?.barcodePayload == nil)
+        #expect(rows.first?.barcodeFormat == nil)
+    }
+
+    // MARK: - Image rows and the PDF-only raster lane
+
+    /// The one genuinely new control flow of ios-dts.1: image arms write ZERO
+    /// page-raster rows, an image row's raster read is a clean nil (never an
+    /// error the self-heal would act on), and the per-page backfill refuses a
+    /// non-PDF row so a wrong image row cannot grow PDF-lane artifacts later.
+    @Test func imageRowsCarryNoPageRastersAndRefuseBackfill() async throws {
+        let (repo, queue) = try makeRepository()
+        let result = await repo.insertDocument(
+            .image(label: "Img", bytes: png, thumbnailBytes: thumb, format: .png, widthPx: 5, heightPx: 5))
+        guard case .success(let id) = result else {
+            Issue.record("insert failed: \(result)")
+            return
+        }
+
+        let rasterRows = try await queue.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM document_page_rasters") ?? -1
+        }
+        #expect(rasterRows == 0)
+
+        guard case .success(let raster) = await repo.loadDocumentPageRaster(id: id, page: 0) else {
+            Issue.record("raster read errored for an image row")
+            return
+        }
+        #expect(raster == nil)
+
+        let backfill = await repo.insertDocumentPageRaster(
+            id: id, page: 0,
+            raster: DocumentPageRasterBlob(bytes: Data([0x01]), widthPx: 1, heightPx: 1))
+        guard case .failure(let error) = backfill else {
+            Issue.record("backfill landed on an image row")
+            return
+        }
+        #expect(error == .documentRejected(kind: .pageRastersInvalidAtStorage))
+    }
+
+    /// The on-disk `format` vocabulary is frozen (the column stores these exact
+    /// strings); a case rename would silently re-vocabulary the schema.
+    @Test func documentFormatPersistsUnderItsFrozenRawValues() {
+        #expect(DocumentFormat.pdf.rawValue == "pdf")
+        #expect(DocumentFormat.png.rawValue == "png")
+        #expect(DocumentFormat.jpeg.rawValue == "jpeg")
+        #expect(DocumentFormat.webp.rawValue == "webp")
+        #expect(DocumentFormat.allCases.count == 4)
+    }
+
     /// The composite pair persists under the same frozen vocabulary as
     /// `scannable_cards.format`, for every symbology in the roster.
     @Test func everyBarcodeFormatRoundTripsThroughTheColumn() async throws {

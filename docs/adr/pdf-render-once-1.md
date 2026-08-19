@@ -94,6 +94,6 @@ bounded re-render per missed page).
 - **iOS-only deviation from Android** (human-approved 2026-08-18): Android
   re-renders per open inside its isolated sandbox and stores no rasters. The
   iOS schema chain therefore runs one version ahead from v6 on (iOS v7/v8
-  will mirror Android v6/v7 — see `Schema.swift`).
+  mirror Android v6/v7, landed with ios-dts.1 — see `Schema.swift`).
 - The importer's page-zero 600×800 thumbnail leg is unchanged
   (`document_thumbnails` consumers untouched).

@@ -78,7 +78,7 @@ public protocol PassRepository: Sendable {
     /// page cap binds only the PDF arm; the composite's barcode pair lands on the same
     /// row (a row is a composite iff BOTH barcode columns are non-null).
     ///
-    /// Defense in depth (ADR 0005 D7): rejects PDFs whose size exceeds
+    /// Defense in depth (ADR 0005 D7): rejects documents whose size exceeds
     /// `DocumentBounds.maxBytes` with `DocumentStorageRejectedKind.oversizedAtStorage`,
     /// page counts exceeding `DocumentBounds.maxPages` with
     /// `DocumentStorageRejectedKind.tooManyPagesAtStorage`, and labels longer than

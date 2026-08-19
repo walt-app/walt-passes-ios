@@ -129,14 +129,25 @@ enum GrdbDocumentStore {
         }
     }
 
-    /// The `page_count` of the document row matching `id`, or `nil` when absent. Used to
-    /// validate a raster backfill against the stored page count.
-    static func pageCount(id: DocumentRecordId, _ db: Database) throws -> Int? {
+    /// The row kind fields a raster read/backfill validates against: the stored
+    /// `page_count` (the page-range reference) and the `format` discriminator (rasters
+    /// belong to the PDF lane only). `nil` when no row matches `id`.
+    struct RowKind {
+        let pageCount: Int
+        let format: DocumentFormat
+    }
+
+    static func rowKind(id: DocumentRecordId, _ db: Database) throws -> RowKind? {
         try Row.fetchOne(
             db,
-            sql: "SELECT page_count FROM \(Schema.Tables.documents) WHERE id = ?",
+            sql: "SELECT page_count, format FROM \(Schema.Tables.documents) WHERE id = ?",
             arguments: [id.value]
-        ).map { $0["page_count"] }
+        ).map { row in
+            RowKind(
+                pageCount: row["page_count"],
+                format: DocumentFormat(rawValue: row["format"]) ?? .pdf
+            )
+        }
     }
 
     static func loadBytes(id: DocumentRecordId, _ db: Database) throws -> Data? {
