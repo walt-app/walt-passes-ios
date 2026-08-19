@@ -379,52 +379,14 @@ extension GrdbPassRepository {
         }
     }
 
-    public func insertDocumentPageRasters(
-        id: DocumentRecordId,
-        pageRasters: [DocumentPageRasterBlob]
-    ) async -> StorageResult<Void> {
-        guard ensureOpen() else { return .failure(error: .databaseLocked) }
-        // The stored page_count is the validation reference, so the lookup and the write
-        // share one transaction (the count cannot change between them).
-        enum BackfillOutcome {
-            case written
-            case documentMissing
-            case rejected(DocumentStorageRejectedKind)
-        }
-        do {
-            let outcome: BackfillOutcome = try await dbQueue.write { db in
-                guard let pageCount = try GrdbDocumentStore.pageCount(id: id, db) else {
-                    return .documentMissing
-                }
-                if let kind = GrdbDocumentStore.pageRasterRejection(
-                    pageRasters: pageRasters, pageCount: pageCount
-                ) {
-                    return .rejected(kind)
-                }
-                try GrdbDocumentStore.writePageRasters(documentId: id.value, pageRasters, db)
-                return .written
-            }
-            switch outcome {
-            case .documentMissing:
-                return .failure(error: .integrityViolation(recordId: .document(id)))
-            case .rejected(let kind):
-                return .failure(error: .documentRejected(kind: kind))
-            case .written:
-                return .success(value: ())
-            }
-        } catch {
-            return .failure(error: StorageErrorMapper.map(error))
-        }
-    }
-
     public func insertDocumentPageRaster(
         id: DocumentRecordId,
         page: Int,
         raster: DocumentPageRasterBlob
     ) async -> StorageResult<Void> {
         guard ensureOpen() else { return .failure(error: .databaseLocked) }
-        // Same one-transaction shape as the full-set backfill: the stored page_count is
-        // the range reference for `page`, so the lookup and the write cannot race.
+        // The stored page_count is the range reference for `page`, so the lookup and
+        // the write share one transaction and cannot race.
         enum PageOutcome {
             case written
             case documentMissing

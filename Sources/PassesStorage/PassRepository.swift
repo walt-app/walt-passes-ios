@@ -131,15 +131,6 @@ public protocol PassRepository: Sendable {
         page: Int
     ) async -> StorageResult<DocumentPageRasterBlob?>
 
-    /// Backfills (insert-or-replace) the full raster set for an existing document.
-    /// Same completeness and per-raster bound validation as `insertDocument`; rejected
-    /// sets leave existing rows untouched. Returns `integrityViolation` when no document
-    /// row matches `id`.
-    func insertDocumentPageRasters(
-        id: DocumentRecordId,
-        pageRasters: [DocumentPageRasterBlob]
-    ) async -> StorageResult<Void>
-
     /// Backfills (insert-or-replace) ONE page's raster — the lazy self-heal path for
     /// pre-v6 rows, where pages recover one open at a time and a full set is never
     /// available in one call (`RerenderOnMissPageSource.persistRaster` wires here).

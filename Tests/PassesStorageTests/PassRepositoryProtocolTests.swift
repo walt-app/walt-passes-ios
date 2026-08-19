@@ -281,13 +281,6 @@ private final class FakePassRepository: PassRepository, @unchecked Sendable {
         .success(value: nil)
     }
 
-    func insertDocumentPageRasters(
-        id: DocumentRecordId,
-        pageRasters: [DocumentPageRasterBlob]
-    ) async -> StorageResult<Void> {
-        .success(value: ())
-    }
-
     func insertDocumentPageRaster(
         id: DocumentRecordId,
         page: Int,

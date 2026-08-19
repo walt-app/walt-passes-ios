@@ -58,9 +58,7 @@ enum GrdbDocumentStore {
         return DocumentRecordId(rowId)
     }
 
-    /// Insert-or-replace the raster rows for `documentId`. `INSERT OR REPLACE` keys off
-    /// the `(document_id, page_index)` primary key, so a backfill over a partial set
-    /// converges to exactly the given rasters for pages 0..<count.
+    /// Writes the raster rows for `documentId`, one row per page in order.
     static func writePageRasters(
         documentId: Int64,
         _ rasters: [DocumentPageRasterBlob],

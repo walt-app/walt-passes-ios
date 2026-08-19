@@ -5,8 +5,8 @@ import Testing
 @testable import PassesStorage
 
 /// Page-raster lane of the documents store (ios-dts.16 render-once): round-trip,
-/// cascade delete (asserted with a direct row count), the full-set and per-page
-/// backfill validation, and the pixel/byte bounds.
+/// cascade delete (asserted with a direct row count), the per-page backfill
+/// validation, and the pixel/byte bounds.
 @Suite("GrdbDocumentStore page rasters")
 struct GrdbPageRasterTests {
 
@@ -172,50 +172,6 @@ struct GrdbPageRasterTests {
             return
         }
         #expect(atBackfill == .documentRejected(kind: .pageRastersInvalidAtStorage))
-    }
-
-    @Test func backfillWritesRastersForLegacyDocumentAndValidates() async throws {
-        let repo = try makeRepository()
-        guard
-            case .success(let id) = await repo.insertDocument(
-                label: "L", pdfBytes: pdf, pageCount: 2, thumbnailBytes: thumb, pageRasters: rasters(2)
-            )
-        else {
-            Issue.record("insert failed")
-            return
-        }
-        // Replacement set converges (insert-or-replace on the composite key).
-        let replacement = [
-            DocumentPageRasterBlob(bytes: Data([0x0A]), widthPx: 5, heightPx: 5),
-            DocumentPageRasterBlob(bytes: Data([0x0B]), widthPx: 5, heightPx: 5),
-        ]
-        guard case .success = await repo.insertDocumentPageRasters(id: id, pageRasters: replacement) else {
-            Issue.record("backfill failed")
-            return
-        }
-        guard case .success(let page0) = await repo.loadDocumentPageRaster(id: id, page: 0) else {
-            Issue.record("load failed")
-            return
-        }
-        #expect(page0 == replacement[0])
-        // Wrong count validates against the STORED page_count.
-        guard
-            case .failure(let wrongCount) = await repo.insertDocumentPageRasters(id: id, pageRasters: rasters(1))
-        else {
-            Issue.record("expected count-mismatch rejection")
-            return
-        }
-        #expect(wrongCount == .documentRejected(kind: .pageRastersInvalidAtStorage))
-        // Unknown document is an integrity violation.
-        guard
-            case .failure(let unknown) = await repo.insertDocumentPageRasters(
-                id: DocumentRecordId(404), pageRasters: rasters(2)
-            )
-        else {
-            Issue.record("expected integrity violation")
-            return
-        }
-        #expect(unknown == .integrityViolation(recordId: .document(DocumentRecordId(404))))
     }
 
     @Test func aggregateRasterByteCapRejectsOnBothWritePaths() async throws {
