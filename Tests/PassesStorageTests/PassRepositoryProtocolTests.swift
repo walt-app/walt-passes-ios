@@ -88,12 +88,12 @@ struct PassRepositoryProtocolTests {
             insertDocumentResult: .failure(error: .documentRejected(kind: .oversizedAtStorage))
         )
         let result = await (repo as any PassRepository).insertDocument(
-            label: "x",
-            pdfBytes: Data(),
-            pageCount: 1,
-            thumbnailBytes: Data(),
-            pageRasters: [DocumentPageRasterBlob(bytes: Data([0x01]), widthPx: 1, heightPx: 1)]
-        )
+            .pdf(
+                label: "x",
+                bytes: Data(),
+                thumbnailBytes: Data(),
+                pageCount: 1,
+                pageRasters: [DocumentPageRasterBlob(bytes: Data([0x01]), widthPx: 1, heightPx: 1)]))
         switch result {
         case .success:
             Issue.record("expected failure, got success")
@@ -264,13 +264,7 @@ private final class FakePassRepository: PassRepository, @unchecked Sendable {
         .success(value: ())
     }
 
-    func insertDocument(
-        label: String,
-        pdfBytes: Data,
-        pageCount: Int,
-        thumbnailBytes: Data,
-        pageRasters: [DocumentPageRasterBlob]
-    ) async -> StorageResult<DocumentRecordId> {
+    func insertDocument(_ insert: DocumentInsert) async -> StorageResult<DocumentRecordId> {
         insertDocumentResult
     }
 

@@ -67,12 +67,16 @@ public protocol PassRepository: Sendable {
     /// `integrityViolation` when no row matches `id` and the label was within bounds.
     func updatePassUserLabel(id: PassRecordId, label: String?) async -> StorageResult<Void>
 
-    /// Insert a stored PDF document. Bytes and thumbnail bytes are written into the
-    /// `documents` and `document_thumbnails` tables in the same transaction; the assigned
-    /// row id is returned. The repository never decodes `pdfBytes` or `thumbnailBytes`;
-    /// they round-trip as opaque blobs. The persisted `byte_count` is `pdfBytes.count` —
-    /// derived rather than caller-asserted, so a stale or zero size header from a future
-    /// caller cannot bypass the cap.
+    /// Insert a stored document — a PDF, a still image, or a composite (image + extracted
+    /// barcode) per the sealed `DocumentInsert` arms (mirror of Android wpass-i9x /
+    /// wpass-8lu). Bytes and thumbnail bytes are written into the `documents` and
+    /// `document_thumbnails` tables in the same transaction; the assigned row id is
+    /// returned. The repository never decodes `bytes` or `thumbnailBytes`; they
+    /// round-trip as opaque blobs. The persisted `byte_count` is `bytes.count` — derived
+    /// rather than caller-asserted, so a stale or zero size header from a future caller
+    /// cannot bypass the cap. An image persists as a single page (`page_count` 1), so the
+    /// page cap binds only the PDF arm; the composite's barcode pair lands on the same
+    /// row (a row is a composite iff BOTH barcode columns are non-null).
     ///
     /// Defense in depth (ADR 0005 D7): rejects PDFs whose size exceeds
     /// `DocumentBounds.maxBytes` with `DocumentStorageRejectedKind.oversizedAtStorage`,
@@ -90,18 +94,13 @@ public protocol PassRepository: Sendable {
     /// Returns `StorageError.documentRejected` when any cap is violated; the typed arm
     /// lets callers distinguish a defensive-rejection from a transient infra failure
     /// without listening to telemetry.
-    /// Since ios-dts.16 (render-once), the complete per-page raster set is inserted in the
-    /// same transaction: `pageRasters[i]` is page `i`'s Walt-produced PNG. The set must
-    /// have exactly `pageCount` entries and every raster must be within
+    /// Since ios-dts.16 (render-once), the PDF arm's complete per-page raster set is
+    /// inserted in the same transaction: `pageRasters[i]` is page `i`'s Walt-produced
+    /// PNG. The set must have exactly `pageCount` entries and every raster must be within
     /// `DocumentBounds.maxRasterPixels`, else the insert is rejected with
-    /// `DocumentStorageRejectedKind.pageRastersInvalidAtStorage` and nothing lands.
-    func insertDocument(
-        label: String,
-        pdfBytes: Data,
-        pageCount: Int,
-        thumbnailBytes: Data,
-        pageRasters: [DocumentPageRasterBlob]
-    ) async -> StorageResult<DocumentRecordId>
+    /// `DocumentStorageRejectedKind.pageRastersInvalidAtStorage` and nothing lands. The
+    /// image arms carry no raster set — their thumbnail IS the display raster.
+    func insertDocument(_ insert: DocumentInsert) async -> StorageResult<DocumentRecordId>
 
     /// Cold stream of document list-view rows, sorted by `imported_at_epoch_ms`
     /// descending. Emits the current snapshot on subscribe and re-emits when documents

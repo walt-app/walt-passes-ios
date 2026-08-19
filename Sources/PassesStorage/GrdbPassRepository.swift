@@ -154,30 +154,50 @@ public final class GrdbPassRepository: PassRepository, @unchecked Sendable {
 
     // MARK: - Documents
 
-    public func insertDocument(
-        label: String,
-        pdfBytes: Data,
-        pageCount: Int,
-        thumbnailBytes: Data,
-        pageRasters: [DocumentPageRasterBlob]
-    ) async -> StorageResult<DocumentRecordId> {
+    public func insertDocument(_ insert: DocumentInsert) async -> StorageResult<DocumentRecordId> {
         guard ensureOpen() else { return .failure(error: .databaseLocked) }
+        // page_count is the PDF page count; an image is a single page (1), so the page
+        // cap cannot bind on the image arms by construction (Android parity).
+        let pageCount: Int
+        let format: DocumentFormat
+        let widthPx: Int?
+        let heightPx: Int?
+        let pageRasters: [DocumentPageRasterBlob]
+        let barcodePayload: String?
+        let barcodeFormat: ScannableFormat?
+        switch insert {
+        case .pdf(_, _, _, let pages, let rasters):
+            (pageCount, format, widthPx, heightPx, pageRasters) = (pages, .pdf, nil, nil, rasters)
+            (barcodePayload, barcodeFormat) = (nil, nil)
+        case .image(_, _, _, let imageFormat, let width, let height):
+            (pageCount, format, widthPx, heightPx, pageRasters) = (1, imageFormat, width, height, [])
+            (barcodePayload, barcodeFormat) = (nil, nil)
+        case .barcodedImage(_, _, _, let imageFormat, let width, let height, let payload, let symbology):
+            (pageCount, format, widthPx, heightPx, pageRasters) = (1, imageFormat, width, height, [])
+            (barcodePayload, barcodeFormat) = (payload, symbology)
+        }
         // Same label normalization as updateDocumentLabel, so both paths writing
         // display_label agree (an all-whitespace label cannot land at import either).
-        let label = label.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let kind = GrdbDocumentStore.rejection(pdfBytes: pdfBytes, pageCount: pageCount, label: label) {
+        let label = insert.label.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let kind = GrdbDocumentStore.rejection(bytes: insert.bytes, pageCount: pageCount, label: label) {
             return .failure(error: .documentRejected(kind: kind))
         }
-        if let kind = GrdbDocumentStore.pageRasterRejection(pageRasters: pageRasters, pageCount: pageCount) {
-            return .failure(error: .documentRejected(kind: kind))
+        // Render-once raster completeness applies to the PDF arm only; the image arms'
+        // display raster is their thumbnail (ios-dts.16 / ios-dts.1).
+        if case .pdf = insert {
+            let kind = GrdbDocumentStore.pageRasterRejection(
+                pageRasters: pageRasters, pageCount: pageCount)
+            if let kind { return .failure(error: .documentRejected(kind: kind)) }
         }
         let now = clock()
         do {
             let id = try await dbQueue.write { db in
                 try GrdbDocumentStore.insert(
                     GrdbDocumentStore.Insert(
-                        label: label, pdfBytes: pdfBytes, pageCount: pageCount,
-                        thumbnailBytes: thumbnailBytes, pageRasters: pageRasters, nowEpochMs: now
+                        label: label, bytes: insert.bytes, format: format, pageCount: pageCount,
+                        widthPx: widthPx, heightPx: heightPx, thumbnailBytes: insert.thumbnailBytes,
+                        pageRasters: pageRasters, barcodePayload: barcodePayload,
+                        barcodeFormat: barcodeFormat, nowEpochMs: now
                     ),
                     db
                 )
