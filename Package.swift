@@ -2,7 +2,7 @@
 
 import PackageDescription
 
-// Mirrors `walt-passes-android`'s 7-module split 1:1:
+// Mirrors `walt-passes-android`'s module split:
 //   passes-core    -> PassesCore     (entity types, importer/parser surface)
 //   passes-pdf-core -> PassesPDFCore (PDF parsing primitives)
 //   passes-pdf     -> PassesPDF      (PDF importer; depends on PassesPDFCore)

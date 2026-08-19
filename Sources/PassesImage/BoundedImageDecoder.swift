@@ -26,32 +26,30 @@ public func makeBoundedImageDecoder(
 
 struct DefaultBoundedImageDecoder: BoundedImageDecoder {
     let config: ImageDecodeConfig
-    /// Injectable so tests run against their own banks (contention on the shared
-    /// bank made the suite flake — K2 review round 1); production always uses
-    /// `.shared` via the public factory.
+    /// Injectable so tests run against their own banks (parallel tests contend on
+    /// the shared bank); production always uses `.shared` via the public factory.
     var lanes: ImageDecodeLanes = .shared
 
     func decode(
         source: ImageDecodeSource, maxWidthPx: Int, maxHeightPx: Int
     ) async -> ImageDecodeResult {
         let config = self.config
-        // The codec-free preflight runs OUTSIDE the lanes: an out-of-bounds
-        // request, unreadable source, or over-cap file rejects with its real arm
-        // even when every lane is busy, and never occupies one.
+        // The I/O-free preflight runs OUTSIDE the lanes: an out-of-bounds request
+        // or an over-cap `.data` source rejects with its real arm even when every
+        // lane is busy, and never occupies one. The `.fileURL` read runs INSIDE
+        // the lane so a slow source is covered by the bounded wait.
         let preflight = BoundedRasterDecoder.preflight(
             source: source, maxWidthPx: maxWidthPx, maxHeightPx: maxHeightPx, config: config)
-        let bytes: Data
-        switch preflight {
-        case .rejected(let kind): return .rejected(kind)
-        case .ok(let preflighted): bytes = preflighted
+        if case .rejected(let kind) = preflight {
+            return .rejected(kind)
         }
         return await withImageDecodeTimeout(
             config.decodeTimeout,
             lanes: lanes,
             timeoutValue: .rejected(.decoderUnavailable)
         ) {
-            BoundedRasterDecoder.decodePreflighted(
-                bytes: bytes, maxWidthPx: maxWidthPx, maxHeightPx: maxHeightPx,
+            BoundedRasterDecoder.decodeOnLane(
+                source: source, maxWidthPx: maxWidthPx, maxHeightPx: maxHeightPx,
                 config: config)
         }
     }

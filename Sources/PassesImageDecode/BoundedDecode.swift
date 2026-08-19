@@ -44,9 +44,11 @@ package struct BoundedDecodePolicy<R> {
 }
 
 package enum BoundedDecodeOutcome<R> {
-    /// The decoded bitmap. A `CGImage` is immutable; handing it across concurrency
-    /// seams is the consumer's concern.
-    case decoded(CGImage)
+    /// The decoded bitmap plus the header's EXIF orientation (1...8; 1 when
+    /// absent), carried out of the SINGLE properties read so no consumer re-runs
+    /// the metadata parser over the untrusted bytes. A `CGImage` is immutable;
+    /// handing it across concurrency seams is the consumer's concern.
+    case decoded(CGImage, orientation: Int)
     case rejected(R)
 }
 
@@ -61,21 +63,33 @@ package func decodeBounded<R>(
     if let rejection = policy.containerGate(containerType) {
         return .rejected(rejection)
     }
-    guard let (width, height) = headerDimensions(source) else {
+    guard let header = headerProperties(source) else {
         return .rejected(policy.onMalformed())
     }
-    if let rejection = policy.dimensionGate(width, height) {
+    if let rejection = policy.dimensionGate(header.width, header.height) {
         return .rejected(rejection)
     }
-    guard let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+    // ShouldCacheImmediately forces the pixel decode HERE — without it ImageIO
+    // returns a lazy image whose codec work runs at first draw, outside the
+    // caller's bounded wait (K2 review round 2).
+    let options = [kCGImageSourceShouldCacheImmediately: true] as CFDictionary
+    guard let image = CGImageSourceCreateImageAtIndex(source, 0, options) else {
         return .rejected(policy.onDecodeFailed())
     }
-    return .decoded(image)
+    return .decoded(image, orientation: header.orientation)
 }
 
-/// The advertised pixel dimensions from the image header, read without decoding
-/// pixels.
-private func headerDimensions(_ source: CGImageSource) -> (Int, Int)? {
+private struct Header {
+    let width: Int
+    let height: Int
+    let orientation: Int
+}
+
+/// The advertised pixel dimensions and EXIF orientation from the image header,
+/// read without decoding pixels. `CGImageSourceCreateImageAtIndex` returns STORED
+/// pixels (Android's `ImageDecoder` orients for you; ImageIO does not), so the
+/// orientation travels with the decode for the consumer's fit to apply.
+private func headerProperties(_ source: CGImageSource) -> Header? {
     guard
         let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
         let width = properties[kCGImagePropertyPixelWidth] as? Int,
@@ -84,38 +98,25 @@ private func headerDimensions(_ source: CGImageSource) -> (Int, Int)? {
     else {
         return nil
     }
-    return (width, height)
-}
-
-/// The header's EXIF orientation (1...8; 1 when absent or unreadable), read without
-/// decoding pixels. Consumers that fit or persist dimensions must apply it —
-/// `CGImageSourceCreateImageAtIndex` returns STORED pixels (Android's `ImageDecoder`
-/// applies orientation itself; ImageIO does not).
-package func headerOrientation(rawBytes: Data) -> Int {
-    guard
-        let source = CGImageSourceCreateWithData(rawBytes as CFData, nil),
-        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-        let orientation = properties[kCGImagePropertyOrientation] as? UInt32,
-        (1...8).contains(orientation)
-    else {
-        return 1
-    }
-    return Int(orientation)
+    let raw = properties[kCGImagePropertyOrientation] as? UInt32
+    let orientation = raw.flatMap { (1...8).contains($0) ? Int($0) : nil } ?? 1
+    return Header(width: width, height: height, orientation: orientation)
 }
 
 /// Saturating `Duration` → `DispatchTimeInterval`, shared by the consumers' bounded
-/// waits: an absurd budget saturates rather than trapping (the overflow hardening
-/// `PassesBarcode`'s copy carries; duplicating it re-introduced the trap once —
-/// K2 review round 1).
+/// waits: an absurd budget saturates TOWARD ITS SIGN rather than trapping or
+/// wrapping — a negative budget fires immediately (`Int.min`), never becomes a
+/// ~292-year deadline (the semantics `PassesBarcode.dispatchInterval` pins;
+/// converging the two copies is tracked kernel-side).
 package func saturatingDispatchInterval(_ duration: Duration) -> DispatchTimeInterval {
     let (seconds, attoseconds) = duration.components
     let (scaled, overflowed) = seconds.multipliedReportingOverflow(by: 1_000_000_000)
     if overflowed {
-        return .nanoseconds(Int.max)
+        return .nanoseconds(seconds < 0 ? Int.min : Int.max)
     }
     let (nanos, addOverflowed) = scaled.addingReportingOverflow(attoseconds / 1_000_000_000)
     if addOverflowed {
-        return .nanoseconds(Int.max)
+        return .nanoseconds(scaled < 0 ? Int.min : Int.max)
     }
     return .nanoseconds(Int(clamping: nanos))
 }

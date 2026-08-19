@@ -199,8 +199,8 @@ struct BoundedImageDecoderTests {
 
     @Test func orientedJpegComesOutUprightWithTransposedDimensions() async throws {
         // Stored 100x60 landscape, left half red / right half blue, EXIF 6
-        // (rotate 90 CW to display): displayed 60x100 portrait with the red
-        // stored-left edge on top.
+        // (camera rotated 90 CW; stored-left is the display TOP): displayed
+        // 60x100 portrait with the red stored-left edge on top.
         let jpeg = try ImageFixtures.orientedJpeg(
             width: 100, height: 60, orientation: 6)
         let result = await makeDecoder().decode(
@@ -216,6 +216,55 @@ struct BoundedImageDecoderTests {
         let bottom = try #require(ImageFixtures.pixel(of: raster.image, x: 30, y: 95))
         #expect(top.red > top.blue, "top of the upright image should be the red stored-left edge")
         #expect(bottom.blue > bottom.red, "bottom should be the blue stored-right edge")
+    }
+
+    /// Every orientation is checked against ImageIO's own transform
+    /// (`kCGImageSourceCreateThumbnailWithTransform`) with a four-quadrant
+    /// fixture, so a mirror cannot pass as a rotation and a pairwise case swap
+    /// (the K2 round-2 defect) cannot return.
+    @Test(arguments: 1...8)
+    func everyOrientationMatchesImageIOsOwnTransform(orientation: Int) async throws {
+        let jpeg = try ImageFixtures.quadrantJpeg(
+            width: 40, height: 24, orientation: orientation)
+        let result = await makeDecoder().decode(
+            source: .data(jpeg), maxWidthPx: 64, maxHeightPx: 64)
+        guard case .ok(let raster) = result else {
+            Issue.record("expected ok for orientation \(orientation), got \(result)")
+            return
+        }
+        let reference = try #require(
+            ImageFixtures.imageIOOrientedReference(jpeg), "reference decode failed")
+        #expect(raster.widthPx == reference.width)
+        #expect(raster.heightPx == reference.height)
+        let corners = [
+            (3, 3), (raster.widthPx - 4, 3), (3, raster.heightPx - 4),
+            (raster.widthPx - 4, raster.heightPx - 4),
+        ]
+        for (x, y) in corners {
+            let ours = try #require(ImageFixtures.pixel(of: raster.image, x: x, y: y))
+            let theirs = try #require(ImageFixtures.pixel(of: reference, x: x, y: y))
+            #expect(
+                abs(ours.red - theirs.red) < 60 && abs(ours.blue - theirs.blue) < 60,
+                "orientation \(orientation) mismatch at (\(x),\(y)): ours r\(ours.red) b\(ours.blue) vs ref r\(theirs.red) b\(theirs.blue)"
+            )
+        }
+    }
+
+    /// Discover-and-pin: what ImageIO actually does with a truncated body behind
+    /// a valid header. Either arm is bounded and safe; the pin records which one
+    /// this platform takes so the taxonomy claim stays honest.
+    @Test func truncatedBodyBehindValidHeaderIsBoundedAndClassified() async throws {
+        let whole = try ImageFixtures.jpeg(width: 64, height: 64)
+        let truncated = whole.prefix(whole.count / 2)
+        let result = await makeDecoder().decode(
+            source: .data(Data(truncated)), maxWidthPx: 64, maxHeightPx: 64)
+        switch result {
+        case .ok(let raster):
+            // ImageIO returned a partial image: dimensions still bounded.
+            #expect(raster.widthPx <= 64 && raster.heightPx <= 64)
+        case .rejected(let kind):
+            #expect(kind == .decodeFailed || kind == .notAnImage)
+        }
     }
 
     // MARK: - Bounded wait (the §7 term: bounds the WAIT, not the work)
@@ -314,6 +363,51 @@ enum ImageFixtures {
         let blue: Int
     }
 
+    /// Four distinct quadrants (TL red, TR green, BL blue, BR white in stored
+    /// space), with an EXIF orientation tag — a mirror is distinguishable from a
+    /// rotation.
+    static func quadrantJpeg(width: Int, height: Int, orientation: Int) throws -> Data {
+        guard
+            let context = CGContext(
+                data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )
+        else { throw EncodeUnsupported() }
+        let halfW = width / 2
+        let halfH = height / 2
+        // CG user-space y=0 is the bottom; stored-space top-left is high y.
+        context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: halfH, width: halfW, height: height - halfH))
+        context.setFillColor(CGColor(red: 0, green: 1, blue: 0, alpha: 1))
+        context.fill(CGRect(x: halfW, y: halfH, width: width - halfW, height: height - halfH))
+        context.setFillColor(CGColor(red: 0, green: 0, blue: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: halfW, height: halfH))
+        context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+        context.fill(CGRect(x: halfW, y: 0, width: width - halfW, height: halfH))
+        guard let image = context.makeImage() else { throw EncodeUnsupported() }
+        let out = NSMutableData()
+        guard
+            let destination = CGImageDestinationCreateWithData(
+                out, UTType.jpeg.identifier as CFString, 1, nil)
+        else { throw EncodeUnsupported() }
+        let properties = [kCGImagePropertyOrientation: orientation] as CFDictionary
+        CGImageDestinationAddImage(destination, image, properties)
+        guard CGImageDestinationFinalize(destination) else { throw EncodeUnsupported() }
+        return out as Data
+    }
+
+    /// The oracle: ImageIO's own orientation-applied decode of the same bytes.
+    static func imageIOOrientedReference(_ bytes: Data) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(bytes as CFData, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: 4096,
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+    }
+
     /// Stored-space left half red / right half blue, with an EXIF orientation tag.
     static func orientedJpeg(width: Int, height: Int, orientation: Int) throws -> Data {
         guard
@@ -352,8 +446,10 @@ enum ImageFixtures {
         context.draw(
             image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
         guard let data = context.data else { return nil }
-        // CG's origin is bottom-left; sample in top-left image coordinates.
-        let row = image.height - 1 - y
+        // A CGBitmapContext buffer stores row 0 as the image's TOP row, so
+        // top-left image coordinates index the buffer directly (the flipped
+        // version of this line once cancelled an orientation bug — K2 round 2).
+        let row = y
         let offset = (row * image.width + x) * 4
         let pixels = data.assumingMemoryBound(to: UInt8.self)
         return Pixel(red: Int(pixels[offset]), blue: Int(pixels[offset + 2]))

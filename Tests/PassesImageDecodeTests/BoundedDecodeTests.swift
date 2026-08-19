@@ -33,12 +33,13 @@ struct BoundedDecodeTests {
     @Test func decodesAPngTheGateAllows() throws {
         let png = try TestImages.png(width: 8, height: 6)
         let outcome = decodeBounded(rawBytes: png, policy: allowAll())
-        guard case .decoded(let image) = outcome else {
+        guard case .decoded(let image, let orientation) = outcome else {
             Issue.record("expected decode, got \(outcome)")
             return
         }
         #expect(image.width == 8)
         #expect(image.height == 6)
+        #expect(orientation == 1)
     }
 
     @Test func gatesSeeContainerTypeAndHeaderDimensions() throws {
@@ -110,6 +111,26 @@ extension BoundedDecodeOutcome {
     fileprivate var rejection: R? {
         if case .rejected(let reason) = self { return reason }
         return nil
+    }
+}
+
+/// The shared saturating interval: absurd budgets saturate toward their sign —
+/// positive overflow waits effectively forever, a negative budget fires
+/// immediately, and neither traps (the semantics PassesBarcode's copy pins;
+/// convergence tracked kernel-side).
+@Suite("Saturating dispatch interval")
+struct SaturatingDispatchIntervalTests {
+    @Test func normalBudgetsConvertExactly() {
+        #expect(saturatingDispatchInterval(.milliseconds(5000)) == .nanoseconds(5_000_000_000))
+    }
+
+    @Test func positiveOverflowSaturatesHigh() {
+        #expect(saturatingDispatchInterval(.seconds(Int64.max)) == .nanoseconds(Int.max))
+    }
+
+    @Test func negativeBudgetsFireImmediatelyInsteadOfWrapping() {
+        #expect(saturatingDispatchInterval(.seconds(Int64.min)) == .nanoseconds(Int.min))
+        #expect(saturatingDispatchInterval(.milliseconds(-5)) == .nanoseconds(-5_000_000))
     }
 }
 

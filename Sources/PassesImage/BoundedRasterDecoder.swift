@@ -12,11 +12,14 @@ import UniformTypeIdentifiers
 /// aspect-fit, which never upscales and applies the header's EXIF orientation
 /// (ImageIO returns STORED pixels; Android's `ImageDecoder` orients for you).
 enum BoundedRasterDecoder {
-    /// The codec-free preflight (output bound, bounded read, byte cap), split out so
-    /// the facade can run it OUTSIDE the decode lanes: a rejection here never
-    /// occupies a lane and can never be masked by lane refusal.
+    /// The I/O-free, codec-free preflight (output bound; the `.data` arm's byte
+    /// cap), split out so the facade can run it OUTSIDE the decode lanes: a
+    /// rejection here never occupies a lane and can never be masked by lane
+    /// refusal. The `.fileURL` arm's read stays INSIDE the lane under the bounded
+    /// wait — a slow source (file provider, network volume) must never block the
+    /// caller's thread with no deadline.
     enum Preflight {
-        case ok(Data)
+        case proceed
         case rejected(ImageDecodeRejectedKind)
     }
 
@@ -33,6 +36,21 @@ enum BoundedRasterDecoder {
         else {
             return .rejected(.decodeFailed)
         }
+        if case .data(let bytes) = source, bytes.count > config.maxBytes {
+            return .rejected(.oversizedAtImport)
+        }
+        return .proceed
+    }
+
+    /// The lane half: source read (for `.fileURL`), byte cap, header gates,
+    /// materialization, orientation-aware fit. Runs on a decode lane under the
+    /// bounded wait.
+    static func decodeOnLane(
+        source: ImageDecodeSource,
+        maxWidthPx: Int,
+        maxHeightPx: Int,
+        config: ImageDecodeConfig
+    ) -> ImageDecodeResult {
         guard let bytes = boundedBytes(source, maxBytes: config.maxBytes) else {
             // The read failed outright — the Android read-throw analogue.
             return .rejected(.decodeFailed)
@@ -40,12 +58,11 @@ enum BoundedRasterDecoder {
         if bytes.count > config.maxBytes {
             return .rejected(.oversizedAtImport)
         }
-        return .ok(bytes)
+        return decodeBytes(
+            bytes: bytes, maxWidthPx: maxWidthPx, maxHeightPx: maxHeightPx, config: config)
     }
 
-    /// The codec half: header gates, materialization, orientation-aware fit. Runs
-    /// on a decode lane under the bounded wait.
-    static func decodePreflighted(
+    private static func decodeBytes(
         bytes: Data,
         maxWidthPx: Int,
         maxHeightPx: Int,
@@ -62,8 +79,7 @@ enum BoundedRasterDecoder {
         switch decodeBounded(rawBytes: bytes, policy: policy) {
         case .rejected(let kind):
             return .rejected(kind)
-        case .decoded(let image):
-            let orientation = headerOrientation(rawBytes: bytes)
+        case .decoded(let image, let orientation):
             guard
                 let raster = fitted(
                     image, orientation: orientation,
@@ -124,6 +140,9 @@ enum BoundedRasterDecoder {
     ) {
         let width = CGFloat(outputWidth)
         let height = CGFloat(outputHeight)
+        // Case bodies verified against ImageIO's own
+        // kCGImageSourceCreateThumbnailWithTransform for all eight orientations
+        // (K2 review round 2 caught 5-8 swapped pairwise).
         switch orientation {
         case 2:  // mirrored horizontal
             context.translateBy(x: width, y: 0)
@@ -134,19 +153,19 @@ enum BoundedRasterDecoder {
         case 4:  // mirrored vertical
             context.translateBy(x: 0, y: height)
             context.scaleBy(x: 1, y: -1)
-        case 5:  // mirrored horizontal, rotated 270 CW
-            context.rotate(by: .pi / 2)
-            context.scaleBy(x: 1, y: -1)
-        case 6:  // rotated 90 CW
-            context.translateBy(x: width, y: 0)
-            context.rotate(by: .pi / 2)
-        case 7:  // mirrored horizontal, rotated 90 CW
+        case 5:
             context.translateBy(x: width, y: height)
             context.rotate(by: -.pi / 2)
             context.scaleBy(x: 1, y: -1)
-        case 8:  // rotated 270 CW
+        case 6:
             context.translateBy(x: 0, y: height)
             context.rotate(by: -.pi / 2)
+        case 7:
+            context.rotate(by: .pi / 2)
+            context.scaleBy(x: 1, y: -1)
+        case 8:
+            context.translateBy(x: width, y: 0)
+            context.rotate(by: .pi / 2)
         default:
             break
         }
@@ -183,16 +202,16 @@ func containerRejection(type: UTType?, config: ImageDecodeConfig) -> ImageDecode
 }
 
 /// Dimension half of the header gate, pure so cap trips are testable without giant
-/// fixtures (Android `headerRejection` mirror). Per-side precedes area — an
-/// ordering that is load-bearing beyond semantics: with both sides bounded at
-/// `maxDimensionPx`, the area multiply cannot overflow `Int`.
+/// fixtures (Android `headerRejection` mirror): per-side, then area, with the
+/// area multiply overflow-safe (Android's `toLong()` widening).
 func dimensionRejection(
     width: Int, height: Int, config: ImageDecodeConfig
 ) -> ImageDecodeRejectedKind? {
     if width > config.maxDimensionPx || height > config.maxDimensionPx {
         return .dimensionsTooLarge
     }
-    if width * height > config.maxAreaPx {
+    let (area, overflowed) = width.multipliedReportingOverflow(by: height)
+    if overflowed || area > config.maxAreaPx {
         return .dimensionsTooLarge
     }
     return nil

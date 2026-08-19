@@ -32,8 +32,10 @@ struct DocumentSealedSetTests {
         #expect(ids.map(\.value) == ["p1", "i1"])
     }
 
-    /// The closed arm set. Adding a `Document` conformance without updating this pin
-    /// is the compile-adjacent signal Swift's missing sealed protocols cannot give.
+    /// The arm roster travels with `documentArms` in the source file; this checks
+    /// the roster's CONTENT (a conformance added without touching `documentArms`
+    /// is caught in review by the doc contract, not by this test — Swift has no
+    /// sealed protocols to make that mechanical).
     @Test func theArmSetIsExactlyPdfAndImage() {
         let arms = documentArms.map(ObjectIdentifier.init)
         #expect(arms == [ObjectIdentifier(PDFDocument.self), ObjectIdentifier(ImageDocument.self)])

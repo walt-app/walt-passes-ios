@@ -14,8 +14,8 @@ import PassesImageDecode
 /// Neither racer touches the Swift cooperative pool: decodes run on this module's
 /// own serial lanes, deadlines on their own queue. A submission arriving with every
 /// lane occupied is REFUSED — and resolved with `timeoutValue` immediately, not
-/// after the full budget (a refusal is known synchronously; making the caller wait
-/// out the deadline for it was K2 review round 1's blocker).
+/// after the full budget: a refusal is known synchronously, so the caller never
+/// waits out the deadline for it.
 func withImageDecodeTimeout<T: Sendable>(
     _ duration: Duration,
     lanes: ImageDecodeLanes = .shared,

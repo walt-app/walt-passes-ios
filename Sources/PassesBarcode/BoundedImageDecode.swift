@@ -54,7 +54,10 @@ enum BoundedImageDecode {
             onDecodeFailed: { .imageDecodeFailed }
         )
         switch decodeBounded(rawBytes: data, policy: policy) {
-        case .decoded(let cgImage): return .decoded(cgImage)
+        // The read lane decodes to scan, never to retain or persist dimensions,
+        // so the header orientation is deliberately unused (Vision is
+        // rotation-tolerant across the roster).
+        case .decoded(let cgImage, _): return .decoded(cgImage)
         case .rejected(let reason): return .rejected(reason)
         }
     }

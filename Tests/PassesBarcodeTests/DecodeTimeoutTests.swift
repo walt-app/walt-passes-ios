@@ -83,7 +83,11 @@ struct DecodeTimeoutTests {
         }
         // Asserted, not discarded: an unsaturated bank would never exercise the spill path. Every
         // hog, so the bank is settled rather than still minting spill threads under the probe.
-        let started = await awaitSignals(occupied, upTo: hogs, seconds: 20)
+        // The rendezvous bound matches the hogs' own 60s hold: a passing run signals in
+        // milliseconds, and the old 20s bound lost to cooperative-pool scheduling under parallel
+        // suite load, misreporting slow scheduling as refusal (kernel #71 — the failure was
+        // always 'one hog short', never a real spill defect).
+        let started = await awaitSignals(occupied, upTo: hogs, seconds: 60)
         #expect(started == hogs, "hogs that never started were refused, or the runner is saturated")
         defer { for _ in 0..<started { gate.signal() } }
 
