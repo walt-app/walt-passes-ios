@@ -73,9 +73,21 @@ enum BoundedImageDecode {
         case .fileURL(let url):
             guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
             defer { try? handle.close() }
-            // Read one byte past the cap so an over-cap file is flagged rather than truncated
-            // into a decodable prefix.
-            return try? handle.read(upToCount: maxBytes + 1)
+            // Read one byte past the cap so an over-cap file is flagged rather than
+            // truncated into a decodable prefix, looping to count-or-EOF (a single
+            // read may short-read on a non-regular source and silently truncate).
+            var bytes = Data()
+            do {
+                while bytes.count <= maxBytes {
+                    guard let chunk = try handle.read(upToCount: maxBytes + 1 - bytes.count),
+                        !chunk.isEmpty
+                    else { break }
+                    bytes.append(chunk)
+                }
+            } catch {
+                return nil
+            }
+            return bytes
         }
     }
 
