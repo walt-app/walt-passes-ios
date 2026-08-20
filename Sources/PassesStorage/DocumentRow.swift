@@ -61,13 +61,14 @@ public struct DocumentPageRasterBlob: Sendable, Equatable {
 /// `Document <-> documents-table` mapping is a consumer-defined seam. Persisted as the
 /// raw value ('pdf' / 'png' / 'jpeg' / 'webp'). `webp` stays in the value space to keep
 /// the schema vocabulary mirrored to Android, but is enforced-unreachable at the iOS
-/// importer sniff (§7 resolution on ios-dts.2: the retained-image lane admits JPEG/PNG
-/// only).
+/// importer sniff once ios-dts.3 lands it (§7 resolution recorded on ios-dts.2: the
+/// retained-image lane admits JPEG/PNG only).
 ///
-/// Adding a case MUST come with a schema-version bump: without one, an older build
-/// reading the new value falls back to `.pdf` — the one non-tampering trigger for the
-/// permissive fallback — where the `unsupported` downgrade refusal would otherwise
-/// stop it.
+/// Adding a case MUST come with a schema-version bump — without one, an older build
+/// reading the new value falls back to `.pdf`, the one non-tampering trigger for the
+/// permissive fallback, where the `unsupported` downgrade refusal would otherwise
+/// stop it — and, for an image container, a matching `DocumentInsert.ImageFormat`
+/// arm: the insert arms cannot express a format `ImageFormat` lacks.
 public enum DocumentFormat: String, Sendable, CaseIterable {
     case pdf
     case png
@@ -75,36 +76,12 @@ public enum DocumentFormat: String, Sendable, CaseIterable {
     case webp
 }
 
-/// The three image containers the image arms of `DocumentInsert` may carry —
-/// deliberately its OWN list, without `pdf`, so an image-with-pdf-format row is
-/// unrepresentable at compile time (§7 human decision, walt-ios ios-6o2,
-/// 2026-08-20). That mix would defeat the PDF-only raster-lane guard on iOS,
-/// where a mislabeled row reads back as a PDF. Android carries the same enum one
-/// layer up in its importer (`is.walt.passes.document.ImageFormat`); iOS promotes
-/// it onto the insert arms — a recorded iOS-ahead deviation, not drift. `webp`
-/// stays in the value space for schema-vocabulary parity and is
-/// enforced-unreachable at the importer sniff (§7 resolution on ios-dts.2).
-public enum ImageFormat: Sendable, CaseIterable {
-    case png
-    case jpeg
-    case webp
-
-    /// The `documents.format` column value this container persists as (never
-    /// `.pdf`, by construction).
-    public var documentFormat: DocumentFormat {
-        switch self {
-        case .png: return .png
-        case .jpeg: return .jpeg
-        case .webp: return .webp
-        }
-    }
-}
-
 /// What `PassRepository.insertDocument` persists, as a sealed discriminator over the
 /// document kinds the `documents` table holds (mirror of Android `DocumentInsert`,
 /// wpass-i9x / wpass-8lu). Each arm carries exactly the kind-specific
 /// fields, so the nonsensical mixes are unrepresentable: an image with a page count,
-/// a PDF with dimensions, and (via `ImageFormat`, ios-6o2) an image labeled `pdf`. `bytes` is the ORIGINAL document bytes (PDF or compressed image);
+/// a PDF with dimensions, and (via `ImageFormat`, ios-6o2) an image labeled `pdf`.
+/// `bytes` is the ORIGINAL document bytes (PDF or compressed image);
 /// storage round-trips them opaque. `thumbnailBytes` is the Walt-produced display
 /// raster, PNG-encoded upstream.
 ///
@@ -113,6 +90,31 @@ public enum ImageFormat: Sendable, CaseIterable {
 /// does not store (it re-renders per open inside its sandbox). The image arms carry no
 /// rasters: their `thumbnailBytes` IS the single Walt-produced display raster.
 public enum DocumentInsert: Sendable {
+    /// The three image containers the image arms may carry — deliberately their
+    /// OWN list, without `pdf`, so an image-with-pdf-format row is unrepresentable
+    /// at compile time (§7 human decision, walt-ios ios-6o2, 2026-08-20; that mix
+    /// would defeat the PDF-only raster-lane guard, where a mislabeled row reads
+    /// back as a PDF). Android carries the same enum one layer up in its importer
+    /// (`is.walt.passes.document.ImageFormat`); iOS promotes it onto the insert
+    /// arms — a recorded iOS-ahead deviation. Nested here (not top-level) so the
+    /// K3 importer's own port of Android's `ImageFormat` cannot collide. `webp`
+    /// stays for schema-vocabulary parity (see `DocumentFormat`'s note).
+    public enum ImageFormat: Sendable, CaseIterable {
+        case png
+        case jpeg
+        case webp
+
+        /// The `documents.format` column value this container persists as (never
+        /// `.pdf`, by construction).
+        public var documentFormat: DocumentFormat {
+            switch self {
+            case .png: return .png
+            case .jpeg: return .jpeg
+            case .webp: return .webp
+            }
+        }
+    }
+
     case pdf(
         label: String, bytes: Data, thumbnailBytes: Data, pageCount: Int,
         pageRasters: [DocumentPageRasterBlob])

@@ -46,15 +46,20 @@ struct DocumentKindsTests {
     /// would defeat the PDF-only raster-lane guard). Android carries the same
     /// enum one layer up in its importer; iOS promotes it onto the insert arms.
     @Test func imageFormatIsExactlyTheThreeImageContainers() {
-        #expect(ImageFormat.allCases == [.png, .jpeg, .webp])
+        #expect(DocumentInsert.ImageFormat.allCases == [.png, .jpeg, .webp])
     }
 
     /// Each image container maps onto the frozen documents.format column value
-    /// (never onto .pdf, by construction).
+    /// (never onto .pdf, by construction), and the two enums are exact
+    /// complements: an image container added to DocumentFormat without a matching
+    /// ImageFormat arm would be unwritable through the only insert path.
     @Test func imageFormatMapsOntoItsDocumentFormatColumnValue() {
-        #expect(ImageFormat.png.documentFormat == .png)
-        #expect(ImageFormat.jpeg.documentFormat == .jpeg)
-        #expect(ImageFormat.webp.documentFormat == .webp)
+        #expect(DocumentInsert.ImageFormat.png.documentFormat == .png)
+        #expect(DocumentInsert.ImageFormat.jpeg.documentFormat == .jpeg)
+        #expect(DocumentInsert.ImageFormat.webp.documentFormat == .webp)
+        #expect(
+            Set(DocumentInsert.ImageFormat.allCases.map(\.documentFormat))
+                == Set(DocumentFormat.allCases).subtracting([.pdf]))
     }
 
     // MARK: - Per-arm round-trips
@@ -162,7 +167,7 @@ struct DocumentKindsTests {
         let (repo, _) = try makeRepository()
         let result = await repo.insertDocument(
             .barcodedImage(
-                label: "Loyalty", bytes: png, thumbnailBytes: thumb, format: .png,
+                label: "Loyalty", bytes: png, thumbnailBytes: thumb, format: .webp,
                 widthPx: 320, heightPx: 240, barcodePayload: "P", barcodeFormat: .aztec))
         guard case .success(let id) = result else {
             Issue.record("insert failed: \(result)")
@@ -176,7 +181,9 @@ struct DocumentKindsTests {
 
         let row = await firstRow(repo)
         #expect(row?.displayLabel == "Gym card")
-        #expect(row?.format == .png)
+        // .webp deliberately: the one ImageFormat arm no other test writes
+        // through to the column (policy-unreachable at the importer, not here).
+        #expect(row?.format == .webp)
         #expect(row?.widthPx == 320)
         #expect(row?.heightPx == 240)
         #expect(row?.barcodePayload == "P")
