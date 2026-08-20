@@ -39,6 +39,24 @@ struct DocumentKindsTests {
         return nil
     }
 
+    // MARK: - ImageFormat (ios-6o2, §7 human decision 2026-08-20)
+
+    /// The image arms take their OWN three-container format list, so an
+    /// image-with-pdf-format row is unrepresentable at compile time (the mix that
+    /// would defeat the PDF-only raster-lane guard). Android carries the same
+    /// enum one layer up in its importer; iOS promotes it onto the insert arms.
+    @Test func imageFormatIsExactlyTheThreeImageContainers() {
+        #expect(ImageFormat.allCases == [.png, .jpeg, .webp])
+    }
+
+    /// Each image container maps onto the frozen documents.format column value
+    /// (never onto .pdf, by construction).
+    @Test func imageFormatMapsOntoItsDocumentFormatColumnValue() {
+        #expect(ImageFormat.png.documentFormat == .png)
+        #expect(ImageFormat.jpeg.documentFormat == .jpeg)
+        #expect(ImageFormat.webp.documentFormat == .webp)
+    }
+
     // MARK: - Per-arm round-trips
 
     @Test func pdfRowListsWithPdfFormatAndNullDimensionsAndNoBarcode() async throws {

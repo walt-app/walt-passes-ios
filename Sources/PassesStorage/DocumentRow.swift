@@ -75,11 +75,36 @@ public enum DocumentFormat: String, Sendable, CaseIterable {
     case webp
 }
 
+/// The three image containers the image arms of `DocumentInsert` may carry —
+/// deliberately its OWN list, without `pdf`, so an image-with-pdf-format row is
+/// unrepresentable at compile time (§7 human decision, walt-ios ios-6o2,
+/// 2026-08-20). That mix would defeat the PDF-only raster-lane guard on iOS,
+/// where a mislabeled row reads back as a PDF. Android carries the same enum one
+/// layer up in its importer (`is.walt.passes.document.ImageFormat`); iOS promotes
+/// it onto the insert arms — a recorded iOS-ahead deviation, not drift. `webp`
+/// stays in the value space for schema-vocabulary parity and is
+/// enforced-unreachable at the importer sniff (§7 resolution on ios-dts.2).
+public enum ImageFormat: Sendable, CaseIterable {
+    case png
+    case jpeg
+    case webp
+
+    /// The `documents.format` column value this container persists as (never
+    /// `.pdf`, by construction).
+    public var documentFormat: DocumentFormat {
+        switch self {
+        case .png: return .png
+        case .jpeg: return .jpeg
+        case .webp: return .webp
+        }
+    }
+}
+
 /// What `PassRepository.insertDocument` persists, as a sealed discriminator over the
 /// document kinds the `documents` table holds (mirror of Android `DocumentInsert`,
 /// wpass-i9x / wpass-8lu). Each arm carries exactly the kind-specific
-/// fields, so the field mixes the type can prevent are unrepresentable (an image with
-/// a page count, a PDF with dimensions). `bytes` is the ORIGINAL document bytes (PDF or compressed image);
+/// fields, so the nonsensical mixes are unrepresentable: an image with a page count,
+/// a PDF with dimensions, and (via `ImageFormat`, ios-6o2) an image labeled `pdf`. `bytes` is the ORIGINAL document bytes (PDF or compressed image);
 /// storage round-trips them opaque. `thumbnailBytes` is the Walt-produced display
 /// raster, PNG-encoded upstream.
 ///
@@ -91,15 +116,15 @@ public enum DocumentInsert: Sendable {
     case pdf(
         label: String, bytes: Data, thumbnailBytes: Data, pageCount: Int,
         pageRasters: [DocumentPageRasterBlob])
-    /// A still image. `format` must be one of the image arms of `DocumentFormat` —
-    /// passing `.pdf` here is a caller bug (Android parity: documented, not rejected).
+    /// A still image. `format` is `ImageFormat`, so a PDF-labeled image cannot be
+    /// constructed (ios-6o2).
     case image(
-        label: String, bytes: Data, thumbnailBytes: Data, format: DocumentFormat,
+        label: String, bytes: Data, thumbnailBytes: Data, format: ImageFormat,
         widthPx: Int, heightPx: Int)
-    /// A composite (image + extracted barcode) persisted as ONE row. A composite is
-    /// always image-backed: passing `.pdf` as `format` is a caller bug here too.
+    /// A composite (image + extracted barcode) persisted as ONE row; always
+    /// image-backed by the same `ImageFormat` construction.
     case barcodedImage(
-        label: String, bytes: Data, thumbnailBytes: Data, format: DocumentFormat,
+        label: String, bytes: Data, thumbnailBytes: Data, format: ImageFormat,
         widthPx: Int, heightPx: Int, barcodePayload: String, barcodeFormat: ScannableFormat)
 
     /// Shared accessors, mirroring the Android sealed interface's common vals.

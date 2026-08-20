@@ -175,11 +175,11 @@ public final class GrdbPassRepository: PassRepository, @unchecked Sendable {
             (barcodePayload, barcodeFormat) = (nil, nil)
         case .image(_, _, _, let imageFormat, let width, let height):
             (pageCount, format, widthPx, heightPx, pageRasters) =
-                (Self.imagePageCount, imageFormat, width, height, [])
+                (Self.imagePageCount, imageFormat.documentFormat, width, height, [])
             (barcodePayload, barcodeFormat) = (nil, nil)
         case .barcodedImage(_, _, _, let imageFormat, let width, let height, let payload, let symbology):
             (pageCount, format, widthPx, heightPx, pageRasters) =
-                (Self.imagePageCount, imageFormat, width, height, [])
+                (Self.imagePageCount, imageFormat.documentFormat, width, height, [])
             (barcodePayload, barcodeFormat) = (payload, symbology)
         }
         // Same label normalization as updateDocumentLabel, so both paths writing
