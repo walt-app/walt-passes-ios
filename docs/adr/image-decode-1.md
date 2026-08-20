@@ -54,6 +54,10 @@ same approval):
 
 The storage `DocumentFormat` value space keeps `webp` for Android schema-vocabulary
 parity; the importer sniff (walt-ios ios-dts.3) is where it is enforced-unreachable.
+The insert-side carrier is `DocumentInsert.ImageFormat` (png/jpeg/webp, §7 decision
+walt-ios ios-6o2): an image row cannot be constructed with a `pdf` label at all, so
+the PDF-only raster-lane guard's trust in the format column is backed by
+construction on the write path.
 
 ## Caps (mirror of Android `ImageDecodeConfig`, enforced pre-allocation)
 
