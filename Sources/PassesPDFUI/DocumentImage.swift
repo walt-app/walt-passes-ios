@@ -39,9 +39,10 @@ public struct DocumentImageHandle: Sendable {
 ///
 /// The same facade renders the image of an `ImageDocument` and the image half
 /// of a `BarcodedImageDocument` (wpass-8lu) — `documentId` is the `DocumentId`
-/// supertype and is the RESTART KEY (Android's `produceState` key): an
-/// unchanged key never restarts a live or settled decode, a changed key
-/// supersedes it. The barcode half is rendered by the consumer with
+/// supertype and is the RESTART KEY (Android keys on id + decoder + file +
+/// size; iOS narrows to the id alone — the source and decoder derive from the
+/// document and the size is the `inlineMaxPixelSize` constant): an unchanged
+/// key never restarts a live or settled decode, a changed key supersedes it. The barcode half is rendered by the consumer with
 /// `PassesUI`, never here.
 ///
 /// Lifecycle the facade owns so consumers do not reimplement it: a
@@ -84,6 +85,7 @@ public final class DocumentImageViewModel {
                 source: source, maxWidthPx: bound, maxHeightPx: bound)
             guard !Task.isCancelled else { return }
             self?.publish(result: result, telemetry: telemetry)
+            self?.loadTask = nil
         }
     }
 
@@ -94,7 +96,9 @@ public final class DocumentImageViewModel {
 
     /// Stop any in-flight decode and release the decoded pixels (the Android
     /// dispose-recycles analogue). Called by hosting views on disappearance;
-    /// the restart key re-decodes on reappearance.
+    /// the restart key re-decodes on reappearance — a full re-decode per
+    /// return to the surface is INTENDED (drop-and-redecode over retention),
+    /// not a leak.
     public func stop() {
         loadTask?.cancel()
         loadTask = nil

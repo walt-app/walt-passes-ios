@@ -62,6 +62,54 @@ struct RenderOnceGuardTests {
         }
         #expect(scanned > 5, "source scan found too few files — wrong directory?")
     }
+
+    /// The image lane's analogue of the parser scan (ios-dts.4): untrusted
+    /// original image bytes entered this module with `imageSource`, and the
+    /// ONLY sanctioned decode path for them is the §7 `BoundedImageDecoder`
+    /// PROTOCOL, caller-supplied. Two rosters enforce that structurally:
+    /// nothing in this module may construct a decoder (widening the §7 config
+    /// is a composition-root decision), and the image-lane files may not reach
+    /// ImageIO or the stored-raster inflate — `decodeStoredRaster`'s raw
+    /// `CGImageSource` is safe ONLY for Walt-produced raster bytes, so routing
+    /// an untrusted source into it would bypass every §7 cap.
+    @Test func imageLaneCannotConstructADecoderOrReachImageIO() throws {
+        let sourcesDir = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/PassesPDFUI")
+        let files = try #require(
+            FileManager.default.enumerator(at: sourcesDir, includingPropertiesForKeys: nil)
+        )
+        // Module-wide: the kernel never constructs a bounded decoder.
+        let constructionNeedles = ["makeBoundedImageDecoder", "DefaultBoundedImageDecoder"]
+        // Image-lane files: no ImageIO, no raw decode, no stored-raster inflate.
+        let imageLaneFiles = ["DocumentView.swift", "DocumentImage.swift", "ImageRendering.swift"]
+        let imageLaneNeedles = [
+            "CGImageSource", "UIImage(", "CIImage(", "import ImageIO",
+            "decodeStoredRaster(", "StoredPageRaster(",
+        ]
+        var scanned = 0
+        for case let url as URL in files where url.pathExtension == "swift" {
+            let text = try String(contentsOf: url, encoding: .utf8)
+            scanned += 1
+            for needle in constructionNeedles {
+                #expect(
+                    !text.contains(needle),
+                    "\(url.lastPathComponent) constructs a bounded decoder: \(needle)"
+                )
+            }
+            if imageLaneFiles.contains(url.lastPathComponent) {
+                for needle in imageLaneNeedles {
+                    #expect(
+                        !text.contains(needle),
+                        "\(url.lastPathComponent) bypasses the bounded image lane: \(needle)"
+                    )
+                }
+            }
+        }
+        #expect(scanned > 5, "source scan found too few files — wrong directory?")
+    }
 }
 
 /// Behavior of the stored-raster load path in `PDFThumbnailViewModel`.
@@ -248,52 +296,5 @@ private final class RecordingTelemetry: DocumentTelemetryGuard, @unchecked Senda
         lock.lock()
         _consumerFailures.append(reason)
         lock.unlock()
-    }
-    /// The image lane's analogue of the parser scan (ios-dts.4): untrusted
-    /// original image bytes entered this module with `imageSource`, and the
-    /// ONLY sanctioned decode path for them is the §7 `BoundedImageDecoder`
-    /// PROTOCOL, caller-supplied. Two rosters enforce that structurally:
-    /// nothing in this module may construct a decoder (widening the §7 config
-    /// is a composition-root decision), and the image-lane files may not reach
-    /// ImageIO or the stored-raster inflate — `decodeStoredRaster`'s raw
-    /// `CGImageSource` is safe ONLY for Walt-produced raster bytes, so routing
-    /// an untrusted source into it would bypass every §7 cap.
-    @Test func imageLaneCannotConstructADecoderOrReachImageIO() throws {
-        let sourcesDir = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("Sources/PassesPDFUI")
-        let files = try #require(
-            FileManager.default.enumerator(at: sourcesDir, includingPropertiesForKeys: nil)
-        )
-        // Module-wide: the kernel never constructs a bounded decoder.
-        let constructionNeedles = ["makeBoundedImageDecoder", "DefaultBoundedImageDecoder"]
-        // Image-lane files: no ImageIO, no raw decode, no stored-raster inflate.
-        let imageLaneFiles = ["DocumentView.swift", "DocumentImage.swift", "ImageRendering.swift"]
-        let imageLaneNeedles = [
-            "CGImageSource", "UIImage(", "CIImage(", "import ImageIO",
-            "decodeStoredRaster(", "StoredPageRaster(",
-        ]
-        var scanned = 0
-        for case let url as URL in files where url.pathExtension == "swift" {
-            let text = try String(contentsOf: url, encoding: .utf8)
-            scanned += 1
-            for needle in constructionNeedles {
-                #expect(
-                    !text.contains(needle),
-                    "\(url.lastPathComponent) constructs a bounded decoder: \(needle)"
-                )
-            }
-            if imageLaneFiles.contains(url.lastPathComponent) {
-                for needle in imageLaneNeedles {
-                    #expect(
-                        !text.contains(needle),
-                        "\(url.lastPathComponent) bypasses the bounded image lane: \(needle)"
-                    )
-                }
-            }
-        }
-        #expect(scanned > 0, "the scan found no sources — the path walk is broken")
     }
 }
