@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import PassesPDFUI
@@ -34,5 +35,31 @@ struct DocumentTrustSurfaceTests {
 
     @Test func documentsLaneHeaderLabelIsDocuments() {
         #expect(DocumentsLane.laneHeaderText == "Documents")
+    }
+
+    /// Every per-arm document view composes the caption unconditionally —
+    /// there is no placement parameter and no arm may omit it. Source-pinned
+    /// (the iOS stand-in for Android's Compose-tree assertion): each private
+    /// arm struct's section of DocumentView.swift must construct
+    /// `DocumentTrustCaption()`.
+    @Test func everyDocumentArmComposesTheTrustCaption() throws {
+        let file = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()  // PassesPDFUITests
+            .deletingLastPathComponent()  // Tests
+            .deletingLastPathComponent()  // repo root
+            .appendingPathComponent("Sources/PassesPDFUI/DocumentView.swift")
+        let text = try String(contentsOf: file, encoding: .utf8)
+        for arm in ["struct PdfDocumentView", "struct ImageDocumentView"] {
+            guard let armRange = text.range(of: arm) else {
+                Issue.record("\(arm) not found — reconcile this pin with the rename")
+                continue
+            }
+            let tail = text[armRange.upperBound...]
+            let nextStruct = tail.range(of: "\nprivate struct ")
+            let body = nextStruct.map { tail[..<$0.lowerBound] } ?? tail
+            #expect(
+                body.contains("DocumentTrustCaption()"),
+                "\(arm) does not compose the non-suppressible trust caption")
+        }
     }
 }

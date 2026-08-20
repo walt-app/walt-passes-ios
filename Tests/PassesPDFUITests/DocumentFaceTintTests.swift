@@ -1,3 +1,4 @@
+import Foundation
 import PassesPDFCore
 import PassesUICore
 import Testing
@@ -22,5 +23,21 @@ struct DocumentFaceTintTests {
         #expect(DocumentView.resolvedFace(nil) == nil)
         // Transparent-but-specified is the wpass-80y.5 bug arm.
         #expect(DocumentView.resolvedFace(ArgbColor(argb: 0x00CE_E6FF)) == nil)
+    }
+
+    /// Both arms paint their slot through the ONE shared `documentFace` helper
+    /// (which routes through `resolvedFace` above), so the PDF and image
+    /// surfaces cannot drift apart on the single thing `faceTint` touches.
+    /// Source-pinned because the helper is free and private — nothing else
+    /// stops an arm from growing its own background.
+    @Test func bothArmsRouteTheirBackgroundThroughTheSharedFace() throws {
+        let file = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()  // PassesPDFUITests
+            .deletingLastPathComponent()  // Tests
+            .deletingLastPathComponent()  // repo root
+            .appendingPathComponent("Sources/PassesPDFUI/DocumentView.swift")
+        let text = try String(contentsOf: file, encoding: .utf8)
+        let sites = text.components(separatedBy: ".background(documentFace(").count - 1
+        #expect(sites == 2, "expected the PDF and image arms' two shared-face sites, found \(sites)")
     }
 }

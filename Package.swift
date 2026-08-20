@@ -102,8 +102,10 @@ let package = Package(
             name: "PassesPDFUI",
             // No PassesPDF dependency (ios-dts.16 render-once): the display layer is
             // compile-time incapable of reaching a PDF parser. Pages arrive as stored
-            // Walt-produced rasters via PassesPDFCore.DocumentPageSource.
-            dependencies: ["PassesPDFCore", "PassesUICore"],
+            // Walt-produced rasters via PassesPDFCore.DocumentPageSource. PassesImage
+            // is the image arm's bounded decode (ios-dts.4, the Android
+            // passes-document-ui -> passes-image edge).
+            dependencies: ["PassesPDFCore", "PassesUICore", "PassesImage"],
             path: "Sources/PassesPDFUI"
         ),
         .target(

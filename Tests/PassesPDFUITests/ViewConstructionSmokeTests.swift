@@ -1,3 +1,5 @@
+import Foundation
+import PassesImage
 import PassesPDFCore
 import PassesUICore
 import SwiftUI
@@ -23,6 +25,15 @@ struct ViewConstructionSmokeTests {
     )
 
     private static let pages: any DocumentPageSource = StaticEmptyPageSource()
+
+    private static let imageDoc = ImageDocument(
+        id: ImageDocumentId("img-1"), displayLabel: "Receipt", byteCount: 100,
+        widthPx: 640, heightPx: 480, importedAtEpochMs: 0)
+
+    private static let compositeDoc = BarcodedImageDocument(
+        id: BarcodedImageDocumentId("bimg-1"), displayLabel: "Loyalty", byteCount: 100,
+        widthPx: 640, heightPx: 480, barcodePayload: "M-1", barcodeFormat: .qr,
+        importedAtEpochMs: 0)
 
     @Test func documentTrustCaptionConstructs() {
         let v = DocumentTrustCaption()
@@ -81,6 +92,28 @@ struct ViewConstructionSmokeTests {
         #expect(type(of: v.body) != Never.self)
     }
 
+    @Test func documentViewConstructsTheImageArm() {
+        let v = DocumentView(
+            doc: Self.imageDoc,
+            imageSource: .data(Data([0x89])),
+            imageDecoder: RejectingDecoder(),
+            onOpenFullScreen: {}
+        )
+        #expect(type(of: v.body) != Never.self)
+    }
+
+    @Test func documentViewConstructsTheCompositeArmOverTheSameImagePair() {
+        // wpass-8lu: same imageSource/imageDecoder pair, no composite-specific
+        // parameter — the barcode half is consumer-composed with PassesUI.
+        let v = DocumentView(
+            doc: Self.compositeDoc,
+            imageSource: .data(Data([0x89])),
+            imageDecoder: RejectingDecoder(),
+            faceTint: ArgbColor(argb: 0xFFCE_E6FF)
+        )
+        #expect(type(of: v.body) != Never.self)
+    }
+
     @Test func fullScreenDocumentViewConstructs() {
         let v = FullScreenDocumentView(
             doc: Self.doc,
@@ -98,6 +131,15 @@ struct ViewConstructionSmokeTests {
         // handing the string to the SwiftUI text node.
         let isolated = isolated(Self.doc.displayLabel)
         #expect(isolated == "\u{2068}tax-2025.pdf\u{2069}")
+    }
+}
+
+/// Minimal decoder fake for the image-arm constructions: every decode rejects.
+private struct RejectingDecoder: BoundedImageDecoder {
+    func decode(
+        source: ImageDecodeSource, maxWidthPx: Int, maxHeightPx: Int
+    ) async -> ImageDecodeResult {
+        .rejected(.decodeFailed)
     }
 }
 
