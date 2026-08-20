@@ -1,4 +1,5 @@
 import Foundation
+import PassesCore
 
 /// The sealed supertype over Walt's stored document kinds (mirror of Android's
 /// `sealed interface Document`, wpass-gyn / wpass-bsf; ios-dts.2). Shared fields live
@@ -7,10 +8,10 @@ import Foundation
 /// with `Pass` (ADR 0005 D1), and no `SignatureStatus` analogue exists for documents
 /// (D5) — the trust caption is sourced from `provenance`.
 ///
-/// Swift has no sealed protocols: the closed arm set (`PDFDocument` | `ImageDocument`)
-/// is pinned by `documentArms` + `DocumentSealedSetTests`, so a new conformance must
-/// reconcile the pin deliberately. The composite arm (`BarcodedImageDocument`) rides
-/// ios-dts.3 with the importer that produces it.
+/// Swift has no sealed protocols: the closed arm set
+/// (`PDFDocument` | `ImageDocument` | `BarcodedImageDocument`) is pinned by
+/// `documentArms` + `DocumentSealedSetTests`, so a new conformance must reconcile
+/// the pin deliberately.
 public protocol Document: Sendable {
     /// The arm's id through the supertype (Android's `val id: DocumentId`).
     /// Named `documentId` because each arm's concrete `id` keeps its precise type;
@@ -32,7 +33,9 @@ public protocol DocumentId: Sendable, Hashable {
 
 /// The closed arm set — the executable stand-in for `sealed`. Kept in the source file
 /// (not the test) so the pin and the arms travel together in review.
-package let documentArms: [Any.Type] = [PDFDocument.self, ImageDocument.self]
+package let documentArms: [Any.Type] = [
+    PDFDocument.self, ImageDocument.self, BarcodedImageDocument.self,
+]
 
 extension PDFDocument: Document {
     public var documentId: any DocumentId { id }
@@ -92,6 +95,74 @@ public struct ImageDocument: Sendable, Equatable, Document {
         self.byteCount = byteCount
         self.widthPx = widthPx
         self.heightPx = heightPx
+        self.importedAtEpochMs = importedAtEpochMs
+        self.provenance = provenance
+    }
+}
+
+/// Opaque identifier for a stored `BarcodedImageDocument`. Its own type so a
+/// composite id cannot be substituted for a plain-image id (or vice versa).
+public struct BarcodedImageDocumentId: Sendable, Hashable, Equatable, DocumentId {
+    public let value: String
+
+    public init(_ value: String) {
+        self.value = value
+    }
+}
+
+/// The composite artifact (mirror of Android `BarcodedImageDocument`, wpass-8lu;
+/// ios-dts.3): a still image plus a barcode extracted from it, ONE artifact id
+/// rendering as one wallet row — never a host-side join of an image entity and a
+/// card entity.
+///
+/// `barcodePayload` is the VERBATIM decoded symbol contents; the consumer
+/// re-encodes it across symbologies with `PassesCore.BarcodeEncoder` for the
+/// detail-surface format switcher, so a single stored payload backs every
+/// rendered symbology. It is untrusted text lifted out of image content —
+/// display routes it through `BidiIsolation` (binding note on ios-dts.3).
+/// `barcodeFormat` is the symbology the code was originally detected as.
+///
+/// The barcode half was produced by the bounded in-process barcode read lane
+/// (`PassesBarcode`; §7-approved — on Android this ran in an isolated process and
+/// only the pair crossed the binder, the C2 delta recorded in `image-decode-1`).
+/// The image half is identical to `ImageDocument`: dimensions are the bounded
+/// raster's, never a re-decoded canvas, and the model carries no container
+/// format. When an imported image yields NO barcode the importer degrades to a
+/// plain `ImageDocument` rather than a composite with an empty payload; the
+/// model carries only what was FOUND, never why nothing was (the degrade reason
+/// rides the persist seam, `BarcodeExtractionOutcome`). `displayLabel` is
+/// consumer-supplied, never derived from EXIF/XMP or the payload (D4).
+public struct BarcodedImageDocument: Sendable, Equatable, Document {
+    public var documentId: any DocumentId { id }
+
+    public let id: BarcodedImageDocumentId
+    public let displayLabel: String
+    public let byteCount: Int64
+    public let widthPx: Int
+    public let heightPx: Int
+    public let barcodePayload: String
+    public let barcodeFormat: ScannableFormat
+    public let importedAtEpochMs: Int64
+    public let provenance: Provenance
+
+    public init(
+        id: BarcodedImageDocumentId,
+        displayLabel: String,
+        byteCount: Int64,
+        widthPx: Int,
+        heightPx: Int,
+        barcodePayload: String,
+        barcodeFormat: ScannableFormat,
+        importedAtEpochMs: Int64,
+        provenance: Provenance = .userProvided
+    ) {
+        self.id = id
+        self.displayLabel = displayLabel
+        self.byteCount = byteCount
+        self.widthPx = widthPx
+        self.heightPx = heightPx
+        self.barcodePayload = barcodePayload
+        self.barcodeFormat = barcodeFormat
         self.importedAtEpochMs = importedAtEpochMs
         self.provenance = provenance
     }

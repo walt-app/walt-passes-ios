@@ -123,6 +123,33 @@ ImageIO-then-Vision pipeline inside `withDecodeTimeout` for exactly this reason 
 relying on laziness left the codec placement implicit, and forcing it once
 escaped the lane entirely).
 
+## The composite importer (ios-dts.3 addendum, §7-approved 2026-08-20)
+
+`PassesDocument` (mirror of Android `passes-document`) orchestrates the
+sniff-and-branch import and the composite confirm seam. Two §7 items, both
+compositions of previously-approved deviations:
+
+**The C2 delta, bluntly.** On Android, barcode extraction from an imported image
+runs inside the isolated barcode worker and only `{payload, format}` crosses the
+binder; the host process never runs a codec over the source bytes. iOS has no
+isolated worker: the extraction runs in-process, through the SAME bounded
+barcode read lane this repo already ships and `barcode-decode-1` Deviation 2
+already priced (caps, lanes, five-container read allowlist). The seam shape is
+preserved — the importer's internal `BarcodeExtraction` never threads a raw
+decode result past it; only the distilled pair and the payload-free
+`BarcodeExtractionOutcome` cross.
+
+**Two-decode accounting.** A composite import runs TWO bounded decodes of the
+same once-read bytes: the retained-lane decode (display raster/thumbnail,
+JPEG/PNG only) and the barcode read-lane decode (extraction, five-container).
+That count is Android parity — Android also decodes the same bytes twice, once
+per sandbox — so the §7 delta remains only in-process vs sandboxed, priced
+above. The composite opt-in keeps the second decode off every plain import:
+extraction runs ONLY when the consumer supplies `confirmBarcode`, and the
+decoded payload crosses to the app pre-persist only through that hook (and,
+post-confirm, `DocumentPersist.barcodedImage`). `webp` is enforced-unreachable
+at the importer sniff: recognized, then rejected before any codec contact.
+
 ## Structure mapping (Android module ↔ iOS target)
 
 - `passes-image-decode` ↔ `PassesImageDecode`: the mechanism-only header-gated
