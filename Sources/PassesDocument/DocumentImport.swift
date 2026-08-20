@@ -75,6 +75,7 @@ public struct DocumentImportConfig: Sendable {
         maxImageDecodePx: Int = Self.defaultMaxImageDecodePx,
         sourceReadTimeout: Duration = Self.defaultSourceReadTimeout
     ) {
+        precondition(maxBytes > 0, "a non-positive read cap would reject or trap on every source")
         self.maxBytes = maxBytes
         self.pdfConfig = pdfConfig
         self.imageTelemetryGuard = imageTelemetryGuard

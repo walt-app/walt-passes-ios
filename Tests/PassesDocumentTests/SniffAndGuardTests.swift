@@ -137,6 +137,9 @@ struct PassesDocumentGuardTests {
     @Test func documentImportConfigDefaultsAreLocked() {
         let config = DocumentImportConfig()
         #expect(config.maxBytes == 25 * 1024 * 1024)
+        // The reader-thread ceiling is a security bound (image-decode-1); the
+        // primitive tests build their own banks, so the production cap pins here.
+        #expect(SourceReadSlots.defaultCapacity <= 4)
         #expect(Int64(config.maxBytes) == config.pdfConfig.maxBytes)
         #expect(config.maxImageDecodePx == 2048)
         #expect(config.sourceReadTimeout == .seconds(10))
