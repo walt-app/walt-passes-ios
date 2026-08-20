@@ -112,26 +112,18 @@ public struct BarcodedImageDocumentId: Sendable, Hashable, Equatable, DocumentId
 
 /// The composite artifact (mirror of Android `BarcodedImageDocument`, wpass-8lu;
 /// ios-dts.3): a still image plus a barcode extracted from it, ONE artifact id
-/// rendering as one wallet row — never a host-side join of an image entity and a
-/// card entity.
+/// rendering as one wallet row — never a host-side join of two entities.
 ///
-/// `barcodePayload` is the VERBATIM decoded symbol contents; the consumer
-/// re-encodes it across symbologies with `PassesCore.BarcodeEncoder` for the
-/// detail-surface format switcher, so a single stored payload backs every
-/// rendered symbology. It is untrusted text lifted out of image content —
-/// display routes it through `BidiIsolation` (binding note on ios-dts.3).
-/// `barcodeFormat` is the symbology the code was originally detected as.
-///
-/// The barcode half was produced by the bounded in-process barcode read lane
-/// (`PassesBarcode`; §7-approved — on Android this ran in an isolated process and
-/// only the pair crossed the binder, the C2 delta recorded in `image-decode-1`).
-/// The image half is identical to `ImageDocument`: dimensions are the bounded
-/// raster's, never a re-decoded canvas, and the model carries no container
-/// format. When an imported image yields NO barcode the importer degrades to a
-/// plain `ImageDocument` rather than a composite with an empty payload; the
-/// model carries only what was FOUND, never why nothing was (the degrade reason
-/// rides the persist seam, `BarcodeExtractionOutcome`). `displayLabel` is
-/// consumer-supplied, never derived from EXIF/XMP or the payload (D4).
+/// `barcodePayload` is the VERBATIM decoded symbol contents — untrusted text
+/// lifted out of image content; display routes it through `BidiIsolation`
+/// (binding note on ios-dts.3) and the consumer re-encodes it across
+/// symbologies with `PassesCore.BarcodeEncoder`. It was produced by the bounded
+/// in-process barcode read lane (§7; the C2 delta is recorded in
+/// `image-decode-1`). The model carries only what was FOUND — an image with no
+/// confirmed code degrades to a plain `ImageDocument`, and the degrade reason
+/// rides the persist seam (`BarcodeExtractionOutcome`), not this type.
+/// `displayLabel` is consumer-supplied, never derived from EXIF/XMP or the
+/// payload (D4).
 public struct BarcodedImageDocument: Sendable, Equatable, Document {
     public var documentId: any DocumentId { id }
 
@@ -169,9 +161,10 @@ public struct BarcodedImageDocument: Sendable, Equatable, Document {
 }
 
 /// Default reflection would print `barcodePayload` verbatim (a BCBP payload
-/// carries passenger name + PNR); redacted so a stray log of the model can
-/// never leak it. Android's data-class `toString` does print the payload —
-/// a deliberate iOS-ahead tightening of the no-PII-in-logs invariant.
+/// carries passenger name + PNR); redacted so a stray log of the model cannot
+/// leak it (raw Mirror walks and `dump()` still can; none exist in kernel
+/// sources). Android's data-class `toString` does print the payload — a
+/// deliberate iOS-ahead tightening of the no-PII-in-logs invariant.
 extension BarcodedImageDocument: CustomStringConvertible, CustomDebugStringConvertible {
     public var description: String {
         "BarcodedImageDocument(id: \(id.value), displayLabel: \(displayLabel), "

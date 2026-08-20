@@ -47,11 +47,26 @@ struct RecordingGuard: ImageImportTelemetryGuard {
     }
 }
 
+struct RecordingPdfGuard: DocumentTelemetryGuard {
+    let seams: Seams
+    func onImportStarted() { seams.record("pdf-started") }
+    func onImportSucceeded(event: DocumentImportSucceededEvent) {
+        seams.record("pdf-ok:\(event.pageCount)")
+    }
+    func onImportFailed(event: DocumentImportFailedEvent) {
+        seams.record("pdf-failed:\(event.outcome)")
+    }
+    func onConsumerRenderFailed(reason: ConsumerRenderFailure) {
+        seams.record("pdf-render-failed:\(reason)")
+    }
+}
+
 func makeImporter(
     _ seams: Seams, maxBytes: Int = Int(PDFImportConfig.defaultMaxBytes)
 ) -> DefaultDocumentImporter {
     var config = DocumentImportConfig()
     config.maxBytes = maxBytes
+    config.pdfConfig = PDFImportConfig(telemetryGuard: RecordingPdfGuard(seams: seams))
     config.imageTelemetryGuard = RecordingGuard(seams: seams)
     return DefaultDocumentImporter(
         config: config,

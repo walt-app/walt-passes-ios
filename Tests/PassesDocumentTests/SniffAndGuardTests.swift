@@ -1,4 +1,5 @@
 import Foundation
+import PassesStorage
 import Testing
 
 @testable import PassesDocument
@@ -104,16 +105,29 @@ struct PassesDocumentGuardTests {
         for file in files {
             let text = try String(contentsOf: file, encoding: .utf8)
             for pin in ["makeBoundedImageDecoder", "VisionBarcodeImageDecoder"] {
-                for line in text.components(separatedBy: .newlines) where line.contains(pin) {
+                for rawLine in text.components(separatedBy: .newlines) {
+                    // Comments naming a decoder are not call sites.
+                    let code = rawLine.components(separatedBy: "//").first ?? rawLine
+                    guard code.contains(pin) else { continue }
                     callSites += 1
                     #expect(
-                        line.contains("\(pin)()"),
-                        "decoder constructed with arguments: \(line.trimmingCharacters(in: .whitespaces))"
+                        code.contains("\(pin)()"),
+                        "decoder constructed with arguments: \(code.trimmingCharacters(in: .whitespaces))"
                     )
                 }
             }
         }
         try #require(callSites >= 2, "both production decoder call sites must exist")
+    }
+
+    /// The importer's `ImageFormat` and storage's `DocumentInsert.ImageFormat`
+    /// are two rosters with no compile-time link (the mapping is the consumer's
+    /// seam); adding a container to one and not the other must fail HERE, not at
+    /// the app's switch in another repo.
+    @Test func imageFormatRosterMatchesStorage() {
+        let importer = ImageFormat.allCases.map { "\($0)" }.sorted()
+        let storage = DocumentInsert.ImageFormat.allCases.map { "\($0)" }.sorted()
+        #expect(importer == storage)
     }
 
     /// Flipping a default is a deliberate, test-breaking change (the

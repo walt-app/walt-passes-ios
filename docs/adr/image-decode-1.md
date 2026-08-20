@@ -156,7 +156,11 @@ prefix's sniff — Android delegates oversize to its sandbox caps, which silentl
 persists truncated bytes as the original if a backend cap is ever raised above
 the read ceiling — and the `.fileURL` read runs off the cooperative pool under
 a bounded wait (`withSourceReadDeadline`; Android gets this placement free from
-`Dispatchers.IO`). The `.fileURL` arm is also where Android's `content://`
+`Dispatchers.IO`). The reader threads are CAPPED (`SourceReadSlots`, 4) with
+refuse-past-cap — a wedged provider read parks its thread for the process
+lifetime, so without the ceiling each stalled import would mint a permanent
+thread; the cap is a security bound like the decode banks'. A FIFO or device
+node is rejected at open (`O_NONBLOCK` + `S_ISREG`) and never holds a slot. The `.fileURL` arm is also where Android's `content://`
 scheme allowlist maps: iOS refuses non-`file` schemes at the arm, and acquiring
 security-scoped access to a picker URL is the caller's job.
 

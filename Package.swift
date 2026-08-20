@@ -8,6 +8,9 @@ import PackageDescription
 //   passes-pdf     -> PassesPDF      (PDF importer; depends on PassesPDFCore)
 //   passes-pdf-ui  -> PassesPDFUI    (PDF rendering UI)
 //   passes-storage -> PassesStorage  (encrypted storage + auto-backup guards)
+//   passes-barcode -> PassesBarcode  (bounded Vision barcode decode)
+//   passes-image   -> PassesImage    (bounded image decode-and-retain; PassesImageDecode beneath)
+//   passes-document -> PassesDocument (sniff-and-branch import + composite confirm seam)
 //   passes-ui-core -> PassesUICore   (shared UI primitives: ArgbColor, BidiIsolation, faceIsTinted)
 //   passes-ui      -> PassesUI       (pass list/detail UI)
 //
@@ -139,7 +142,8 @@ let package = Package(
         ),
         .testTarget(
             name: "PassesDocumentTests",
-            dependencies: ["PassesDocument", "PassesCore"],
+            // PassesStorage: the ImageFormat roster-parity guard only.
+            dependencies: ["PassesDocument", "PassesCore", "PassesStorage"],
             path: "Tests/PassesDocumentTests"
         ),
         .testTarget(

@@ -99,12 +99,13 @@ struct DefaultDocumentImporter: DocumentImporter {
         // One bounded read closes the offset-corruption hazard a peek-then-reopen
         // would open: whatever a backend receives is materialized from this exact
         // buffer, not a second read of the source.
+        let startedAt = now()
         let bytes: Data
         switch await readBounded(source) {
         case .unavailable:
             return .unrecognized
         case .oversized(let prefix):
-            return rejectOversized(prefix: prefix)
+            return rejectOversized(prefix: prefix, durationMillis: now() - startedAt)
         case .bytes(let read):
             bytes = read
         }
@@ -123,16 +124,24 @@ struct DefaultDocumentImporter: DocumentImporter {
     /// never reaches a backend, a codec, or `persist`. Delegating oversize to
     /// the backends (Android's shape) silently persists TRUNCATED bytes as the
     /// original whenever a backend cap is raised above `maxBytes` — the buffer
-    /// clears the widened gate at `maxBytes + 1` and imports corrupt.
-    private func rejectOversized(prefix: Data) -> DocumentImportResult {
-        if isPDFHeader(prefix) { return .pdfRejected(.oversizedAtImport) }
-        if sniffImageFormat(prefix) != nil {
-            // Same guard events the image lane emits for its own oversize arm.
+    /// clears the widened gate at `maxBytes + 1` and imports corrupt. Each arm
+    /// emits the same guard events its backend would have for its own oversize.
+    private func rejectOversized(prefix: Data, durationMillis: Int64) -> DocumentImportResult {
+        if isPDFHeader(prefix) {
+            let pdfGuard = config.pdfConfig.telemetryGuard
+            pdfGuard.onImportStarted()
+            pdfGuard.onImportFailed(
+                event: DocumentImportFailedEvent(
+                    outcome: .oversizedAtImport, durationMillis: durationMillis))
+            return .pdfRejected(.oversizedAtImport)
+        }
+        if let format = sniffImageFormat(prefix) {
             let guardHook = config.imageTelemetryGuard
             guardHook.onImportStarted()
             guardHook.onImportFailed(
-                event: ImageImportFailedEvent(outcome: .decode, durationMillis: 0))
-            return .imageRejected(.oversizedAtImport)
+                event: ImageImportFailedEvent(outcome: .decode, durationMillis: durationMillis))
+            // An over-cap webp reports the same arm its under-cap path does.
+            return .imageRejected(format == .webp ? .notAnImage : .oversizedAtImport)
         }
         return .unrecognized
     }
@@ -199,6 +208,10 @@ struct DefaultDocumentImporter: DocumentImporter {
             extraction: extraction, displayLabel: displayLabel, bytes: bytes,
             decoded: decoded, format: format)
         do {
+            // The bounded waits above return values rather than throwing, so a
+            // cancellation raised during them is surfaced here — nothing is
+            // stored for an import the user has already abandoned.
+            try Task.checkCancellation()
             try await persist(persistValue)
         } catch is CancellationError {
             throw CancellationError()
@@ -318,13 +331,28 @@ struct DefaultDocumentImporter: DocumentImporter {
     }
 
     private static func blockingFileRead(url: URL, maxBytes: Int) -> BoundedSourceRead {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return .unavailable }
+        // O_NONBLOCK so a FIFO cannot park the thread at open(); only a regular
+        // file proceeds (a FIFO or device rejects instantly, never holding a
+        // read slot). O_NONBLOCK is then cleared: regular-file reads block
+        // normally under the deadline.
+        let fd = open(url.path, O_RDONLY | O_NONBLOCK)
+        guard fd >= 0 else { return .unavailable }
+        var status = stat()
+        guard fstat(fd, &status) == 0, (status.st_mode & S_IFMT) == S_IFREG else {
+            close(fd)
+            return .unavailable
+        }
+        _ = fcntl(fd, F_SETFL, 0)
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         defer { try? handle.close() }
-        let ceiling = maxBytes + 1
+        // Saturating: a Int.max cap cannot trap the +1 into a crash.
+        let ceiling = maxBytes < Int.max ? maxBytes + 1 : Int.max
+        let chunkSize = 64 * 1024
         var bytes = Data()
         do {
             while bytes.count < ceiling {
-                guard let chunk = try handle.read(upToCount: min(64 * 1024, ceiling - bytes.count)),
+                guard
+                    let chunk = try handle.read(upToCount: min(chunkSize, ceiling - bytes.count)),
                     !chunk.isEmpty
                 else { break }
                 bytes.append(chunk)

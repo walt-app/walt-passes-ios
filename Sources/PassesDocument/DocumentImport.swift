@@ -114,9 +114,11 @@ public enum ImageFormat: Sendable, Equatable, CaseIterable {
 /// What the importer hands `persist` (mirror of Android `DocumentPersist`).
 /// `bytes` is always the ORIGINAL document bytes — persist them verbatim (the
 /// "persist original" half of the import contract); `thumbnailBytes` is a
-/// Walt-produced PNG (page-0 for a PDF, the bounded raster for an image). The
-/// iOS `pdf` arm additionally carries the render-once `pageRasters`
-/// (ios-dts.16), which Android does not store.
+/// Walt-produced PNG: page-0 for a PDF, but on the image arms the FULL bounded
+/// display raster (up to `maxImageDecodePx` square, `DocumentInsert`'s "display
+/// raster") — not a list-cell-cheap blob. The iOS `pdf` arm additionally
+/// carries the render-once `pageRasters` (ios-dts.16), which Android does not
+/// store.
 public enum DocumentPersist: Sendable, Equatable {
     case pdf(
         label: String, bytes: Data, thumbnailBytes: Data, pageCount: Int,
@@ -158,7 +160,8 @@ public enum DocumentPersist: Sendable, Equatable {
 
 /// Default reflection would print `barcodePayload` verbatim (a BCBP payload
 /// carries passenger name + PNR), so the ONE payload-bearing arm redacts it —
-/// a stray interpolation or log of a persist value can never leak it.
+/// a stray interpolation or log of a persist value cannot leak it (raw Mirror
+/// walks and `dump()` still can; none exist in kernel sources).
 extension DocumentPersist: CustomStringConvertible, CustomDebugStringConvertible {
     public var description: String {
         switch self {
