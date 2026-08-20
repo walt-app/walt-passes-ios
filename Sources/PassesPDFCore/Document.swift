@@ -1,4 +1,5 @@
 import Foundation
+import PassesCore
 
 /// The sealed supertype over Walt's stored document kinds (mirror of Android's
 /// `sealed interface Document`, wpass-gyn / wpass-bsf; ios-dts.2). Shared fields live
@@ -7,10 +8,10 @@ import Foundation
 /// with `Pass` (ADR 0005 D1), and no `SignatureStatus` analogue exists for documents
 /// (D5) — the trust caption is sourced from `provenance`.
 ///
-/// Swift has no sealed protocols: the closed arm set (`PDFDocument` | `ImageDocument`)
-/// is pinned by `documentArms` + `DocumentSealedSetTests`, so a new conformance must
-/// reconcile the pin deliberately. The composite arm (`BarcodedImageDocument`) rides
-/// ios-dts.3 with the importer that produces it.
+/// Swift has no sealed protocols: the closed arm set
+/// (`PDFDocument` | `ImageDocument` | `BarcodedImageDocument`) is pinned by
+/// `documentArms` + `DocumentSealedSetTests`, so a new conformance must reconcile
+/// the pin deliberately.
 public protocol Document: Sendable {
     /// The arm's id through the supertype (Android's `val id: DocumentId`).
     /// Named `documentId` because each arm's concrete `id` keeps its precise type;
@@ -32,7 +33,9 @@ public protocol DocumentId: Sendable, Hashable {
 
 /// The closed arm set — the executable stand-in for `sealed`. Kept in the source file
 /// (not the test) so the pin and the arms travel together in review.
-package let documentArms: [Any.Type] = [PDFDocument.self, ImageDocument.self]
+package let documentArms: [Any.Type] = [
+    PDFDocument.self, ImageDocument.self, BarcodedImageDocument.self,
+]
 
 extension PDFDocument: Document {
     public var documentId: any DocumentId { id }
@@ -95,4 +98,81 @@ public struct ImageDocument: Sendable, Equatable, Document {
         self.importedAtEpochMs = importedAtEpochMs
         self.provenance = provenance
     }
+}
+
+/// Opaque identifier for a stored `BarcodedImageDocument`. Its own type so a
+/// composite id cannot be substituted for a plain-image id (or vice versa).
+public struct BarcodedImageDocumentId: Sendable, Hashable, Equatable, DocumentId {
+    public let value: String
+
+    public init(_ value: String) {
+        self.value = value
+    }
+}
+
+/// The composite artifact (mirror of Android `BarcodedImageDocument`, wpass-8lu;
+/// ios-dts.3): a still image plus a barcode extracted from it, ONE artifact id
+/// rendering as one wallet row — never a host-side join of two entities.
+///
+/// `barcodePayload` is the VERBATIM decoded symbol contents — untrusted text
+/// lifted out of image content; display routes it through `BidiIsolation`
+/// (binding note on ios-dts.3) and the consumer re-encodes it across
+/// symbologies with `PassesCore.BarcodeEncoder`. It was produced by the bounded
+/// in-process barcode read lane (§7; the C2 delta is recorded in
+/// `image-decode-1`). The model carries only what was FOUND — an image with no
+/// confirmed code degrades to a plain `ImageDocument`, and the degrade reason
+/// rides the persist seam (`BarcodeExtractionOutcome`), not this type.
+/// `displayLabel` is consumer-supplied, never derived from EXIF/XMP or the
+/// payload (D4).
+public struct BarcodedImageDocument: Sendable, Equatable, Document {
+    public var documentId: any DocumentId { id }
+
+    public let id: BarcodedImageDocumentId
+    public let displayLabel: String
+    public let byteCount: Int64
+    public let widthPx: Int
+    public let heightPx: Int
+    public let barcodePayload: String
+    public let barcodeFormat: ScannableFormat
+    public let importedAtEpochMs: Int64
+    public let provenance: Provenance
+
+    public init(
+        id: BarcodedImageDocumentId,
+        displayLabel: String,
+        byteCount: Int64,
+        widthPx: Int,
+        heightPx: Int,
+        barcodePayload: String,
+        barcodeFormat: ScannableFormat,
+        importedAtEpochMs: Int64,
+        provenance: Provenance = .userProvided
+    ) {
+        self.id = id
+        self.displayLabel = displayLabel
+        self.byteCount = byteCount
+        self.widthPx = widthPx
+        self.heightPx = heightPx
+        self.barcodePayload = barcodePayload
+        self.barcodeFormat = barcodeFormat
+        self.importedAtEpochMs = importedAtEpochMs
+        self.provenance = provenance
+    }
+}
+
+/// Default reflection would print `barcodePayload` verbatim (a BCBP payload
+/// carries passenger name + PNR); redacted so a stray log of the model cannot
+/// leak it (raw Mirror walks and `dump()` still can; none exist in kernel
+/// sources). Android's data-class `toString` does print the payload — a
+/// deliberate iOS-ahead tightening of the no-PII-in-logs invariant.
+extension BarcodedImageDocument: CustomStringConvertible, CustomDebugStringConvertible {
+    public var description: String {
+        "BarcodedImageDocument(id: \(id.value), displayLabel: \(displayLabel), "
+            + "byteCount: \(byteCount), \(widthPx)x\(heightPx), "
+            + "barcodePayload: <redacted \(barcodePayload.count) chars>, "
+            + "barcodeFormat: \(barcodeFormat), importedAtEpochMs: \(importedAtEpochMs), "
+            + "provenance: \(provenance))"
+    }
+
+    public var debugDescription: String { description }
 }

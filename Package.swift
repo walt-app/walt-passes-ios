@@ -8,6 +8,9 @@ import PackageDescription
 //   passes-pdf     -> PassesPDF      (PDF importer; depends on PassesPDFCore)
 //   passes-pdf-ui  -> PassesPDFUI    (PDF rendering UI)
 //   passes-storage -> PassesStorage  (encrypted storage + auto-backup guards)
+//   passes-barcode -> PassesBarcode  (bounded Vision barcode decode)
+//   passes-image   -> PassesImage    (bounded image decode-and-retain; PassesImageDecode beneath)
+//   passes-document -> PassesDocument (sniff-and-branch import + composite confirm seam)
 //   passes-ui-core -> PassesUICore   (shared UI primitives: ArgbColor, BidiIsolation, faceIsTinted)
 //   passes-ui      -> PassesUI       (pass list/detail UI)
 //
@@ -23,6 +26,7 @@ let package = Package(
         .library(name: "PassesCore", targets: ["PassesCore"]),
         .library(name: "PassesBarcode", targets: ["PassesBarcode"]),
         .library(name: "PassesImage", targets: ["PassesImage"]),
+        .library(name: "PassesDocument", targets: ["PassesDocument"]),
         .library(name: "PassesPDFCore", targets: ["PassesPDFCore"]),
         .library(name: "PassesPDF", targets: ["PassesPDF"]),
         .library(name: "PassesPDFUI", targets: ["PassesPDFUI"]),
@@ -75,8 +79,18 @@ let package = Package(
             path: "Sources/PassesImage"
         ),
         .target(
+            // Sniff-and-branch import orchestration (Android passes-document
+            // mirror, §7-approved ios-dts.3): the single place the PDF and image
+            // peers meet — they gain no edge to each other.
+            name: "PassesDocument",
+            dependencies: ["PassesCore", "PassesPDFCore", "PassesPDF", "PassesImage", "PassesBarcode"],
+            path: "Sources/PassesDocument"
+        ),
+        .target(
             name: "PassesPDFCore",
-            dependencies: [],
+            // PassesCore edge for ScannableFormat on the composite arm (mirror of
+            // Android 87e6752's pure api edge; adds no platform dependency).
+            dependencies: ["PassesCore"],
             path: "Sources/PassesPDFCore"
         ),
         .target(
@@ -125,6 +139,12 @@ let package = Package(
                 // verbatim from the Android side. Regression guard for walt-passes-ios#31.
                 .copy("Fixtures"),
             ]
+        ),
+        .testTarget(
+            name: "PassesDocumentTests",
+            // PassesStorage: the ImageFormat roster-parity guard only.
+            dependencies: ["PassesDocument", "PassesCore", "PassesStorage"],
+            path: "Tests/PassesDocumentTests"
         ),
         .testTarget(
             name: "PassesImageDecodeTests",

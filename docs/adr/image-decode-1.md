@@ -123,6 +123,47 @@ ImageIO-then-Vision pipeline inside `withDecodeTimeout` for exactly this reason 
 relying on laziness left the codec placement implicit, and forcing it once
 escaped the lane entirely).
 
+## The composite importer (ios-dts.3 addendum, §7-approved 2026-08-20)
+
+`PassesDocument` (mirror of Android `passes-document`) orchestrates the
+sniff-and-branch import and the composite confirm seam. Two §7 items, both
+compositions of previously-approved deviations:
+
+**The C2 delta, bluntly.** On Android, barcode extraction from an imported image
+runs inside the isolated barcode worker and only `{payload, format}` crosses the
+binder; the host process never runs a codec over the source bytes. iOS has no
+isolated worker: the extraction runs in-process, through the SAME bounded
+barcode read lane this repo already ships and `barcode-decode-1` Deviation 2
+already priced (caps, lanes, five-container read allowlist). The seam shape is
+preserved — the importer's internal `BarcodeExtraction` never threads a raw
+decode result past it; only the distilled pair and the payload-free
+`BarcodeExtractionOutcome` cross.
+
+**Two-decode accounting.** A composite import runs TWO bounded decodes of the
+same once-read bytes: the retained-lane decode (display raster/thumbnail,
+JPEG/PNG only) and the barcode read-lane decode (extraction, five-container).
+That count is Android parity — Android also decodes the same bytes twice, once
+per sandbox — so the §7 delta remains only in-process vs sandboxed, priced
+above. The composite opt-in keeps the second decode off every plain import:
+extraction runs ONLY when the consumer supplies `confirmBarcode`, and the
+decoded payload crosses to the app pre-persist only through that hook (and,
+post-confirm, `DocumentPersist.barcodedImage`). `webp` is enforced-unreachable
+at the importer sniff: recognized, then rejected before any codec contact.
+
+Two iOS-ahead hardenings on the read (deviations from Android's shape, both
+tightenings): an over-cap source is rejected AT the importer from the truncated
+prefix's sniff — Android delegates oversize to its sandbox caps, which silently
+persists truncated bytes as the original if a backend cap is ever raised above
+the read ceiling — and the `.fileURL` read runs off the cooperative pool under
+a bounded wait (`withSourceReadDeadline`; Android gets this placement free from
+`Dispatchers.IO`). The reader threads are CAPPED (`SourceReadSlots`, 4) with
+refuse-past-cap — a wedged provider read parks its thread for the process
+lifetime, so without the ceiling each stalled import would mint a permanent
+thread; the cap is a security bound like the decode banks'. A FIFO or device
+node is rejected at open (`O_NONBLOCK` + `S_ISREG`) and never holds a slot. The `.fileURL` arm is also where Android's `content://`
+scheme allowlist maps: iOS refuses non-`file` schemes at the arm, and acquiring
+security-scoped access to a picker URL is the caller's job.
+
 ## Structure mapping (Android module ↔ iOS target)
 
 - `passes-image-decode` ↔ `PassesImageDecode`: the mechanism-only header-gated
@@ -135,6 +176,9 @@ escaped the lane entirely).
 - `passes-image` ↔ `PassesImage`: policy (config, allowlist, taxonomy, facade).
   The binder/service/client/wire plumbing has no iOS analogue and is not mirrored;
   the watchdog maps to the bounded wait above, per-consumer as on Android.
+- `passes-document` ↔ `PassesDocument`: the sniff-and-branch import orchestration
+  and the composite confirm seam (the addendum above). The single meeting point of
+  the PDF, image and barcode peers — they gain no edge to each other.
 - `ImageSource`'s no-byte-array rule is NOT mirrored: Android forbids a `ByteArray`
   arm because bytes in the caller's heap would defeat its process sandbox; there is
   no sandbox to defeat in-process, and the importer reads its source once into
@@ -147,5 +191,6 @@ escaped the lane entirely).
 `documentArms` + `DocumentSealedSetTests` (Swift has no sealed protocols).
 `ImageDocument` carries `widthPx`/`heightPx` — the bounded raster's dimensions,
 never a re-decoded canvas — and deliberately no container format (persistence
-detail; display renders a Walt-produced raster). The composite arm rides the
-importer step (walt-ios ios-dts.3), as it did on Android (wpass-8lu).
+detail; display renders a Walt-produced raster). The composite arm
+(`BarcodedImageDocument`) landed with the importer (walt-ios ios-dts.3), as it
+did on Android (wpass-8lu).
