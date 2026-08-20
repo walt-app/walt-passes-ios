@@ -37,6 +37,32 @@ struct DocumentTrustSurfaceTests {
         #expect(DocumentsLane.laneHeaderText == "Documents")
     }
 
+    /// The full-screen caption is a SIBLING of the arm dispatch (Z.8):
+    /// composed exactly once, inside the dispatcher's own body — never inside
+    /// an arm, where a zoom transform could touch it or a new arm could omit
+    /// it. Sliced to the dispatcher body so relocating the caption into ANY
+    /// arm (public func or private struct) fails.
+    @Test func fullScreenCaptionIsASiblingOfTheArmDispatch() throws {
+        let file = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()  // PassesPDFUITests
+            .deletingLastPathComponent()  // Tests
+            .deletingLastPathComponent()  // repo root
+            .appendingPathComponent("Sources/PassesPDFUI/FullScreenDocumentView.swift")
+        let text = try String(contentsOf: file, encoding: .utf8)
+        let code = text.components(separatedBy: .newlines)
+            .map { $0.components(separatedBy: "//").first ?? $0 }
+            .joined(separator: "\n")
+        #expect(
+            code.components(separatedBy: "DocumentTrustCaption()").count == 2,
+            "exactly one caption site — the dispatcher's")
+        let bodyStart = try #require(code.range(of: "public var body"))
+        let bodyEnd = try #require(code.range(of: "private func arm"))
+        let dispatcherBody = code[bodyStart.upperBound..<bodyEnd.lowerBound]
+        #expect(
+            dispatcherBody.contains("DocumentTrustCaption()"),
+            "the caption must sit in the dispatcher body, before the arm dispatch")
+    }
+
     /// Every per-arm document view composes the caption unconditionally —
     /// there is no placement parameter and no arm may omit it. Source-pinned
     /// (the iOS stand-in for Android's Compose-tree assertion): each private

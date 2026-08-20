@@ -1,5 +1,11 @@
 # passes-pdf-ui-4: Sub-rect zoom render path deferred on iOS full-screen surface
 
+> **ios-dts.12 (2026-08-20):** the gesture surface moved from `FullScreenDocumentView`'s
+> per-page inline gestures into the shared `Internal/ZoomableContent` primitive (both the
+> PDF pager pages and the new image/composite arm compose it), gaining Android's pan clamp
+> (±((scale-1) × slot/2)) and the slot-framed unscaled clip. The record below predates that
+> move.
+
 > **Superseded in part by `pdf-render-once-1` (ios-dts.16, 2026-08-18):** the deferred
 > sub-rect render is now permanently foreclosed — the display layer no longer holds a
 > renderer at all; full-screen zoom is a `scaleEffect` over the stored 4 MP raster, and
