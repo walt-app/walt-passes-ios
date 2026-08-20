@@ -120,7 +120,6 @@ public struct FullScreenDocumentView: View {
             fatalError("FullScreenDocumentView: unknown Document arm \(type(of: doc))")
         }
     }
-
 }
 
 /// The PDF arm: swipeable pager of zoomable stored-raster pages (render-once).

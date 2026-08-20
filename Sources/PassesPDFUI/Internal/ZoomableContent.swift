@@ -39,7 +39,7 @@ struct ZoomableContent<Content: View>: View {
                     .offset(offset)
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
-            // The unscaled ancestor: this clip shape never scales (see above).
+            // Framed to the slot, so the clip rect is the unscaled slot.
             .clipped()
             .contentShape(Rectangle())
             .gesture(
