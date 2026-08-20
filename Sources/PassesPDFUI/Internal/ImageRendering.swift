@@ -21,8 +21,11 @@ enum DocumentImageFold {
 }
 
 /// Folds the bounded decode's outcome onto the display state. `telemetry` is
-/// accepted for shape parity with the PDF fold; with no reconstruction step
-/// nothing here can fail after a successful decode, so it is never notified.
+/// accepted for shape parity with the PDF fold and is DELIBERATELY never
+/// notified: with no reconstruction step nothing here can fail after a
+/// successful decode, and a rejection's kind rides the state, not telemetry.
+/// Do not "wire it up" — a string-shaped report here would be the PII leak
+/// the guard shapes exist to prevent.
 func foldDecodedImage(
     _ result: ImageDecodeResult, telemetry: DocumentTelemetryGuard
 ) -> DocumentImageFold {

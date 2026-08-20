@@ -117,17 +117,17 @@ struct DocumentImageViewModelTests {
         }
     }
 
-    @Test func restartSupersedesThePriorDecode() async throws {
+    @Test func aChangedKeySupersedesThePriorDecode() async throws {
         let first = FakeBoundedImageDecoder(
             result: .ok(Self.raster(widthPx: 1, heightPx: 1, sourceAspect: 1.0)))
         first.gate = true
         let second = FakeBoundedImageDecoder(result: .rejected(.decodeFailed))
         let viewModel = DocumentImageViewModel()
         viewModel.start(
-            documentId: Self.imageId, source: .data(Data([1])), decoder: first,
+            documentId: ImageDocumentId("doc-a"), source: .data(Data([1])), decoder: first,
             maxPixelSize: 100)
         viewModel.start(
-            documentId: Self.imageId, source: .data(Data([2])), decoder: second,
+            documentId: ImageDocumentId("doc-b"), source: .data(Data([2])), decoder: second,
             maxPixelSize: 100)
         let state = try await Self.settledState(of: viewModel)
         first.releaseGate()
@@ -136,6 +136,83 @@ struct DocumentImageViewModelTests {
         // second's outcome (failed).
         guard case .failed = state, case .failed = viewModel.state else {
             Issue.record("expected the second decode's outcome, got \(viewModel.state)")
+            return
+        }
+    }
+
+    @Test func anUnchangedKeyNeverRestartsALiveOrSettledDecode() async throws {
+        // The produceState-key semantics: SwiftUI may re-fire the view's task
+        // (reappear at a stable identity) — the same document must not decode
+        // twice.
+        let decoder = FakeBoundedImageDecoder(
+            result: .ok(Self.raster(widthPx: 1, heightPx: 1, sourceAspect: 1.0)))
+        let viewModel = DocumentImageViewModel()
+        viewModel.start(
+            documentId: Self.imageId, source: .data(Data([1])), decoder: decoder,
+            maxPixelSize: 100)
+        viewModel.start(
+            documentId: Self.imageId, source: .data(Data([1])), decoder: decoder,
+            maxPixelSize: 100)
+        _ = try await Self.settledState(of: viewModel)
+        viewModel.start(
+            documentId: Self.imageId, source: .data(Data([1])), decoder: decoder,
+            maxPixelSize: 100)
+        for _ in 0..<50 { await Task.yield() }
+        #expect(decoder.calls.count == 1, "an unchanged key decoded more than once")
+    }
+
+    @Test func stopReleasesThePixelsAndASameKeyRestartReDecodes() async throws {
+        // stop() is the dispose analogue (pixels released); a reappearance at
+        // the same key re-decodes rather than showing a released handle.
+        let decoder = FakeBoundedImageDecoder(
+            result: .ok(Self.raster(widthPx: 1, heightPx: 1, sourceAspect: 1.0)))
+        let viewModel = DocumentImageViewModel()
+        viewModel.start(
+            documentId: Self.imageId, source: .data(Data([1])), decoder: decoder,
+            maxPixelSize: 100)
+        _ = try await Self.settledState(of: viewModel)
+        viewModel.stop()
+        guard case .loading = viewModel.state else {
+            Issue.record("stop() must release the rendered handle")
+            return
+        }
+        viewModel.start(
+            documentId: Self.imageId, source: .data(Data([1])), decoder: decoder,
+            maxPixelSize: 100)
+        _ = try await Self.settledState(of: viewModel)
+        #expect(decoder.calls.count == 2)
+    }
+
+    @Test func theViewKeysItsDecodeTaskOnTheDocumentId() throws {
+        // The facade's key semantics only fire if the VIEW re-invokes start on
+        // a document change; source-pinned because SwiftUI lifecycle cannot be
+        // driven from a unit test.
+        let file = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/PassesPDFUI/DocumentView.swift")
+        let text = try String(contentsOf: file, encoding: .utf8)
+        #expect(
+            text.contains(".task(id: documentId.value)"),
+            "ImageDocumentView must key its decode task on the document id")
+    }
+
+    @Test func foldMapsOkAndRejectedVerbatim() {
+        // The fold seam directly (its reason to be a seam): aspect preserved
+        // on ok, kind verbatim on rejected, telemetry deliberately untouched.
+        let ok = foldDecodedImage(
+            .ok(Self.raster(widthPx: 3, heightPx: 1, sourceAspect: 3.0)),
+            telemetry: DocumentTelemetryGuardNoOp.shared)
+        guard case .rendered(let decoded) = ok else {
+            Issue.record("expected rendered fold")
+            return
+        }
+        #expect(decoded.sourceAspect == 3.0)
+        let rejected = foldDecodedImage(
+            .rejected(.oversizedAtImport), telemetry: DocumentTelemetryGuardNoOp.shared)
+        guard case .failed(.oversizedAtImport) = rejected else {
+            Issue.record("expected failed fold with the kind verbatim")
             return
         }
     }

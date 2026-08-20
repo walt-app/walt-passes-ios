@@ -39,20 +39,24 @@ public struct DocumentImageHandle: Sendable {
 ///
 /// The same facade renders the image of an `ImageDocument` and the image half
 /// of a `BarcodedImageDocument` (wpass-8lu) — `documentId` is the `DocumentId`
-/// supertype, used only to name the load; the barcode half is rendered by the
-/// consumer with `PassesUI`, never here.
+/// supertype and is the RESTART KEY (Android's `produceState` key): an
+/// unchanged key never restarts a live or settled decode, a changed key
+/// supersedes it. The barcode half is rendered by the consumer with
+/// `PassesUI`, never here.
 ///
 /// Lifecycle the facade owns so consumers do not reimplement it: a
-/// `start` → `start` rebind cancels the prior load; `stop()` cancels the
-/// in-flight load on disappearance; a decode superseded mid-flight never
-/// overwrites the newer state (the task checks its own cancellation before
-/// publishing). There is no cache — an image is a single page.
+/// new-key `start` cancels the prior load; `stop()` cancels the in-flight
+/// load and releases the pixels on disappearance; a decode superseded
+/// mid-flight never overwrites the newer state (the task checks its own
+/// cancellation before publishing). There is no cache — an image is a
+/// single page.
 @MainActor
 @Observable
 public final class DocumentImageViewModel {
     public private(set) var state: DocumentImageState = .loading
 
     private var loadTask: Task<Void, Never>?
+    private var activeKey: String?
 
     public init() {}
 
@@ -65,6 +69,13 @@ public final class DocumentImageViewModel {
         maxPixelSize: Int,
         telemetry: DocumentTelemetryGuard = DocumentTelemetryGuardNoOp.shared
     ) {
+        let key = documentId.value
+        // The produceState-key semantics: an unchanged key never restarts a
+        // decode that is in flight or has settled. After stop() the state is
+        // back at .loading with no task, so a reappearance re-decodes.
+        if key == activeKey, loadTask != nil { return }
+        if key == activeKey, !isLoading { return }
+        activeKey = key
         loadTask?.cancel()
         state = .loading
         let bound = max(1, maxPixelSize)
@@ -76,12 +87,18 @@ public final class DocumentImageViewModel {
         }
     }
 
-    /// Stop any in-flight decode. Called by hosting views on disappearance so
-    /// the task does not survive the view; the decoded pixels release with the
-    /// state's handle (ARC).
+    private var isLoading: Bool {
+        if case .loading = state { return true }
+        return false
+    }
+
+    /// Stop any in-flight decode and release the decoded pixels (the Android
+    /// dispose-recycles analogue). Called by hosting views on disappearance;
+    /// the restart key re-decodes on reappearance.
     public func stop() {
         loadTask?.cancel()
         loadTask = nil
+        state = .loading
     }
 
     private func publish(result: ImageDecodeResult, telemetry: DocumentTelemetryGuard) {

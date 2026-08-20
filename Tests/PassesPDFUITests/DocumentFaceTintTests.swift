@@ -37,7 +37,17 @@ struct DocumentFaceTintTests {
             .deletingLastPathComponent()  // repo root
             .appendingPathComponent("Sources/PassesPDFUI/DocumentView.swift")
         let text = try String(contentsOf: file, encoding: .utf8)
-        let sites = text.components(separatedBy: ".background(documentFace(").count - 1
+        let shared = try #require(
+            try? NSRegularExpression(pattern: #"\.background\(\s*documentFace\("#))
+        let range = NSRange(text.startIndex..., in: text)
+        let sites = shared.numberOfMatches(in: text, range: range)
         #expect(sites == 2, "expected the PDF and image arms' two shared-face sites, found \(sites)")
+        // And no arm grows a face of its own beside the shared one: every
+        // other `.background(` in the file is the full-screen banner's chrome.
+        let any = try #require(try? NSRegularExpression(pattern: #"\.background\("#))
+        let banner = try #require(
+            try? NSRegularExpression(pattern: #"\.background\(style\.fullScreenBannerBackground"#))
+        let bannerSites = banner.numberOfMatches(in: text, range: range)
+        #expect(any.numberOfMatches(in: text, range: range) == sites + bannerSites)
     }
 }

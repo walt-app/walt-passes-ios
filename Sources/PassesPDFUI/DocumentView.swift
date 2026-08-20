@@ -29,7 +29,10 @@ import SwiftUI
 /// `imageSource` / `imageDecoder` pair for an `ImageDocument` or
 /// `BarcodedImageDocument` — `imageSource` is the ORIGINAL image bytes, whose
 /// display-scale re-decode is allowed only through the bounded decoder (the
-/// §7 lane; `image-decode-1`). The dispatcher requires the pair matching the
+/// §7 lane; `image-decode-1`). Prefer `.fileURL` for display: a `.data` source
+/// keeps the whole original resident on this struct for the surface lifetime,
+/// where a file URL keeps Data Protection on the bytes until the lane reads
+/// them. The dispatcher requires the pair matching the
 /// arm; passing a document without its backend is a programming error and
 /// fails fast, so a consumer showing one kind never fabricates the other
 /// backend.
@@ -94,8 +97,9 @@ public struct DocumentView: View {
                 faceTint: faceTint
             )
         default:
-            // Unreachable while `documentArms` stays the closed three-arm set
-            // (`DocumentSealedSetTests`); a new arm must reconcile this switch.
+            // `DocumentSealedSetTests` fails when `documentArms` grows; this
+            // switch must then be reconciled BY HAND — the pin is test-time,
+            // not compile-time (Swift has no sealed protocols).
             fatalError("DocumentView: unknown Document arm \(type(of: doc))")
         }
     }
@@ -127,14 +131,9 @@ public struct DocumentView: View {
     static let inlineMaxPixelSize: Int = 1200
 }
 
-/// The frame the page render / decoded image sits on (showing through the fit
-/// letterbox bars), shared by both arms so the PDF and image surfaces cannot
-/// drift apart on the one thing `faceTint` touches. Background only: it never
-/// clips or filters the content, which is what makes the frame-not-content
-/// constraint structural. The rounded card shape arrives with the tint: an
-/// untinted frame is the host's own `laneBackground` tone bleeding to the slot
-/// edge, and rounding it would change every consumer already shipping the
-/// surface.
+/// The ONE face both arms paint their slot with, so they cannot drift on the
+/// single thing `faceTint` touches (contract on `DocumentView`'s type doc).
+/// Background only — never a clip or filter over the content.
 @MainActor
 @ViewBuilder
 private func documentFace(faceTint: ArgbColor?, style: DocumentSemantics) -> some View {
@@ -245,7 +244,11 @@ private struct ImageDocumentView: View {
                     label: style.fullScreenBannerLabel, style: style, action: onOpenFullScreen)
             }
         }
-        .onAppear {
+        // The restart key (Android's produceState keys, wpass-8lu): fires on
+        // appear, on REappear, and whenever the document changes in place — a
+        // consumer swapping `doc` at a stable tree position must never keep
+        // the previous document's pixels on a trust surface.
+        .task(id: documentId.value) {
             viewModel.start(
                 documentId: documentId,
                 source: source,
@@ -268,7 +271,10 @@ private struct ImageDocumentView: View {
             case .failed:
                 // Nothing renders inline (Android parity); the slot at least
                 // announces itself to VoiceOver, like the PDF arm's pages.
+                // `.accessibilityElement()` makes the empty color an element —
+                // a label on a non-element is silently skipped.
                 Color.clear
+                    .accessibilityElement()
                     .accessibilityLabel("Image couldn't be displayed")
             case .rendered(let handle, _):
                 handle.image
@@ -276,6 +282,9 @@ private struct ImageDocumentView: View {
                     .aspectRatio(contentMode: .fit)
                     // D4 forbids extracting text/metadata from the image; a
                     // fixed neutral label is the only safe VoiceOver fallback.
+                    // The handle's Image is decorative, so the element is
+                    // created here.
+                    .accessibilityElement()
                     .accessibilityLabel("Image document")
             }
         }
@@ -345,6 +354,7 @@ private struct DocumentPage: View {
             // render-once a failure can be permanent (missing raster), so the
             // page at least announces itself to VoiceOver.
             Color.clear
+                .accessibilityElement()
                 .accessibilityLabel(
                     "Page \(pageIndex + 1) of \(document.pageCount) couldn't be displayed"
                 )
@@ -352,6 +362,7 @@ private struct DocumentPage: View {
             image.image
                 .resizable()
                 .aspectRatio(contentMode: .fit)
+                .accessibilityElement()
                 .accessibilityLabel("Page \(pageIndex + 1) of \(document.pageCount)")
         }
     }

@@ -49,14 +49,23 @@ struct DocumentTrustSurfaceTests {
             .deletingLastPathComponent()  // repo root
             .appendingPathComponent("Sources/PassesPDFUI/DocumentView.swift")
         let text = try String(contentsOf: file, encoding: .utf8)
-        for arm in ["struct PdfDocumentView", "struct ImageDocumentView"] {
-            guard let armRange = text.range(of: arm) else {
-                Issue.record("\(arm) not found — reconcile this pin with the rename")
-                continue
+        // Derive the arm roster from the source (never hardcode it): a new
+        // arm struct is checked the moment it exists.
+        let armPattern = try #require(
+            try? NSRegularExpression(pattern: #"private struct (\w+DocumentView): View"#))
+        let range = NSRange(text.startIndex..., in: text)
+        let matches = armPattern.matches(in: text, range: range)
+        #expect(matches.count >= 2, "expected at least the PDF and image arm structs")
+        for (index, match) in matches.enumerated() {
+            let start = text.index(text.startIndex, offsetBy: match.range.location)
+            let end: String.Index
+            if index + 1 < matches.count {
+                end = text.index(text.startIndex, offsetBy: matches[index + 1].range.location)
+            } else {
+                end = text.endIndex
             }
-            let tail = text[armRange.upperBound...]
-            let nextStruct = tail.range(of: "\nprivate struct ")
-            let body = nextStruct.map { tail[..<$0.lowerBound] } ?? tail
+            let body = text[start..<end]
+            let arm = (text as NSString).substring(with: match.range(at: 1))
             #expect(
                 body.contains("DocumentTrustCaption()"),
                 "\(arm) does not compose the non-suppressible trust caption")
