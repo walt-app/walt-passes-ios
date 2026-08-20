@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import PassesPDFUI
@@ -34,5 +35,40 @@ struct DocumentTrustSurfaceTests {
 
     @Test func documentsLaneHeaderLabelIsDocuments() {
         #expect(DocumentsLane.laneHeaderText == "Documents")
+    }
+
+    /// Every per-arm document view composes the caption unconditionally —
+    /// there is no placement parameter and no arm may omit it. Source-pinned
+    /// (the iOS stand-in for Android's Compose-tree assertion): each private
+    /// arm struct's section of DocumentView.swift must construct
+    /// `DocumentTrustCaption()`.
+    @Test func everyDocumentArmComposesTheTrustCaption() throws {
+        let file = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()  // PassesPDFUITests
+            .deletingLastPathComponent()  // Tests
+            .deletingLastPathComponent()  // repo root
+            .appendingPathComponent("Sources/PassesPDFUI/DocumentView.swift")
+        let text = try String(contentsOf: file, encoding: .utf8)
+        // Derive the arm roster from the source (never hardcode it): a new
+        // arm struct is checked the moment it exists.
+        let armPattern = try #require(
+            try? NSRegularExpression(pattern: #"private struct (\w+DocumentView): View"#))
+        let range = NSRange(text.startIndex..., in: text)
+        let matches = armPattern.matches(in: text, range: range)
+        #expect(matches.count >= 2, "expected at least the PDF and image arm structs")
+        for (index, match) in matches.enumerated() {
+            let start = text.index(text.startIndex, offsetBy: match.range.location)
+            let end: String.Index
+            if index + 1 < matches.count {
+                end = text.index(text.startIndex, offsetBy: matches[index + 1].range.location)
+            } else {
+                end = text.endIndex
+            }
+            let body = text[start..<end]
+            let arm = (text as NSString).substring(with: match.range(at: 1))
+            #expect(
+                body.contains("DocumentTrustCaption()"),
+                "\(arm) does not compose the non-suppressible trust caption")
+        }
     }
 }

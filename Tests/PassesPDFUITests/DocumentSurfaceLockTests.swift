@@ -1,3 +1,4 @@
+import PassesImage
 import PassesPDFCore
 import PassesUICore
 import SwiftUI
@@ -45,19 +46,40 @@ struct DocumentSurfaceLockTests {
         _ = DocumentTile(doc: Self.doc, thumbnail: nil, onTap: {})
     }
 
-    @Test func documentViewExposesExactlyFivePublicInitialiserParameters() {
-        // (doc, pages, telemetry, onOpenFullScreen, faceTint). `pages` is the
-        // stored-raster source (ios-dts.16 render-once) — there is no pdfData
-        // and no renderer slot, which is the structural trust claim: the view
-        // cannot be handed the original bytes. `faceTint` (wpass-80y.2)
-        // paints the frame the page sits on and nothing else. Exact-arity
-        // reference so even a defaulted addition fails to compile.
-        let lockedInit:
-            (PDFDocument, any DocumentPageSource, DocumentTelemetryGuard, (() -> Void)?, ArgbColor?)
-                -> DocumentView =
-                DocumentView.init(
-                    doc:pages:telemetry:onOpenFullScreen:faceTint:)
+    @Test func documentViewExposesExactlySevenPublicInitialiserParameters() {
+        // (doc, pages, imageSource, imageDecoder, telemetry, onOpenFullScreen,
+        // faceTint) — the sealed-arm dispatcher (ios-dts.4, Android mirror).
+        // `pages` is the PDF arm's stored-raster source (ios-dts.16
+        // render-once: no pdfData, no renderer slot — the view cannot be
+        // handed original PDF bytes); `imageSource`/`imageDecoder` are the
+        // image arms' pair, and the ONLY re-decode path for original image
+        // bytes is the §7 bounded decoder protocol. A composite gets no
+        // parameter of its own (wpass-8lu: its barcode half is
+        // consumer-composed). Exact-arity reference so even a defaulted
+        // addition fails to compile.
+        typealias LockedInit = (
+            any Document, (any DocumentPageSource)?, ImageDecodeSource?,
+            (any BoundedImageDecoder)?, DocumentTelemetryGuard, (() -> Void)?, ArgbColor?
+        ) -> DocumentView
+        let lockedInit: LockedInit = DocumentView.init(
+            doc:pages:imageSource:imageDecoder:telemetry:onOpenFullScreen:faceTint:)
         _ = lockedInit
+    }
+
+    @Test func documentImageViewModelExposesOnlyStartStopAndReadOnlyState() {
+        // The image facade's whole public surface: a read-only state, start,
+        // stop. No accessor returns the raster out of band of the state, and
+        // start's exact arity means a metadata-shaped parameter cannot be
+        // added silently.
+        typealias LockedStart = (DocumentImageViewModel) -> (
+            any DocumentId, ImageDecodeSource, any BoundedImageDecoder, Int, DocumentTelemetryGuard
+        ) -> Void
+        let lockedStart: LockedStart = DocumentImageViewModel.start(
+            documentId:source:decoder:maxPixelSize:telemetry:)
+        _ = lockedStart
+        let viewModel = DocumentImageViewModel()
+        viewModel.stop()
+        _ = viewModel.state
     }
 
     @Test func documentsLaneExposesExactlyThreePublicInitialiserParameters() {
