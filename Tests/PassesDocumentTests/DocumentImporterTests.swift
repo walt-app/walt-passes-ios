@@ -5,6 +5,84 @@ import Testing
 
 @testable import PassesDocument
 
+// MARK: - Shared fixtures + seams (also used by DocumentImporterSourceReadTests)
+
+let pngBytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3, 4])
+let pdfBytes = Data("%PDF-1.7\n%binary".utf8)
+let webpBytes = Data("RIFF".utf8) + Data([0, 0, 0, 0]) + Data("WEBP".utf8) + Data([9, 9])
+let secretPayload = "M1DOE/JANE       EABC123 SFOJFK"
+let fixedWallClockMs: Int64 = 1_700_000_000_000
+
+/// Call-recording seams with benign defaults; each test overrides only the
+/// arm it exercises (Android's importer() helper).
+final class Seams: @unchecked Sendable {
+    let lock = NSLock()
+    var pdfCalls: [(bytes: Data, label: String)] = []
+    var imageCalls: [(bytes: Data, maxPx: Int)] = []
+    var extractCalls: [Data] = []
+    var persisted: [DocumentPersist] = []
+    var telemetry: [String] = []
+
+    var pdfResult: PDFImportResult = .rejected(kind: .notAPdf)
+    var imageOutcome = ImageDecodeOutcome.decoded(
+        thumbnailBytes: Data([0xAA]), widthPx: 800, heightPx: 600)
+    var extractResult = BarcodeDecodeResult.noBarcodeFound
+    var persistError: (any Error)?
+
+    func record(_ line: String) {
+        lock.lock()
+        telemetry.append(line)
+        lock.unlock()
+    }
+}
+
+struct RecordingGuard: ImageImportTelemetryGuard {
+    let seams: Seams
+    func onImportStarted() { seams.record("started") }
+    func onImportSucceeded(event: ImageImportSucceededEvent) {
+        seams.record("ok:\(event.format):\(event.widthPx):\(event.heightPx)")
+    }
+    func onImportFailed(event: ImageImportFailedEvent) {
+        seams.record("failed:\(event.outcome)")
+    }
+}
+
+func makeImporter(
+    _ seams: Seams, maxBytes: Int = Int(PDFImportConfig.defaultMaxBytes)
+) -> DefaultDocumentImporter {
+    var config = DocumentImportConfig()
+    config.maxBytes = maxBytes
+    config.imageTelemetryGuard = RecordingGuard(seams: seams)
+    return DefaultDocumentImporter(
+        config: config,
+        pdfImport: { bytes, label, persist in
+            seams.lock.withLock { seams.pdfCalls.append((bytes, label)) }
+            if case .imported = seams.pdfResult {
+                try await persist(label, bytes, 3, Data([0xBB]), [])
+            }
+            return seams.pdfResult
+        },
+        imageDecode: { bytes, maxPx in
+            seams.lock.withLock { seams.imageCalls.append((bytes, maxPx)) }
+            return seams.imageOutcome
+        },
+        barcodeExtract: { bytes in
+            seams.lock.withLock { seams.extractCalls.append(bytes) }
+            return seams.extractResult
+        },
+        now: { 0 },
+        wallClock: { fixedWallClockMs },
+        idGenerator: { "fixed-id" }
+    )
+}
+
+func persistRecorder(_ seams: Seams) -> @Sendable (DocumentPersist) async throws -> Void {
+    { value in
+        if let error = seams.persistError { throw error }
+        seams.lock.withLock { seams.persisted.append(value) }
+    }
+}
+
 /// The sniff-and-branch import orchestration (mirror of Android
 /// `DocumentImporterTest`, ios-dts.3): magic routing, per-backend rejection
 /// mapping, the composite second decode over the SAME once-read bytes, the
@@ -12,84 +90,6 @@ import Testing
 /// payload-free degrade taxonomy at the persist seam.
 @Suite("Document importer")
 struct DocumentImporterTests {
-
-    // MARK: - Fixtures (Android parity: signature + a few payload bytes)
-
-    static let pngBytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3, 4])
-    static let pdfBytes = Data("%PDF-1.7\n%binary".utf8)
-    static let webpBytes = Data("RIFF".utf8) + Data([0, 0, 0, 0]) + Data("WEBP".utf8) + Data([9, 9])
-    static let secretPayload = "M1DOE/JANE       EABC123 SFOJFK"
-    static let fixedWallClockMs: Int64 = 1_700_000_000_000
-
-    /// Call-recording seams with benign defaults; each test overrides only the
-    /// arm it exercises (Android's importer() helper).
-    final class Seams: @unchecked Sendable {
-        let lock = NSLock()
-        var pdfCalls: [(bytes: Data, label: String)] = []
-        var imageCalls: [(bytes: Data, maxPx: Int)] = []
-        var extractCalls: [Data] = []
-        var persisted: [DocumentPersist] = []
-        var telemetry: [String] = []
-
-        var pdfResult: PDFImportResult = .rejected(kind: .notAPdf)
-        var imageOutcome = ImageDecodeOutcome.decoded(
-            thumbnailBytes: Data([0xAA]), widthPx: 800, heightPx: 600)
-        var extractResult = BarcodeDecodeResult.noBarcodeFound
-        var persistError: (any Error)?
-
-        func record(_ line: String) {
-            lock.lock()
-            telemetry.append(line)
-            lock.unlock()
-        }
-    }
-
-    struct RecordingGuard: ImageImportTelemetryGuard {
-        let seams: Seams
-        func onImportStarted() { seams.record("started") }
-        func onImportSucceeded(event: ImageImportSucceededEvent) {
-            seams.record("ok:\(event.format):\(event.widthPx):\(event.heightPx)")
-        }
-        func onImportFailed(event: ImageImportFailedEvent) {
-            seams.record("failed:\(event.outcome)")
-        }
-    }
-
-    func makeImporter(
-        _ seams: Seams, maxBytes: Int = Int(PDFImportConfig.defaultMaxBytes)
-    ) -> DefaultDocumentImporter {
-        var config = DocumentImportConfig()
-        config.maxBytes = maxBytes
-        config.imageTelemetryGuard = RecordingGuard(seams: seams)
-        return DefaultDocumentImporter(
-            config: config,
-            pdfImport: { bytes, label, persist in
-                seams.lock.withLock { seams.pdfCalls.append((bytes, label)) }
-                if case .imported = seams.pdfResult {
-                    try await persist(label, bytes, 3, Data([0xBB]), [])
-                }
-                return seams.pdfResult
-            },
-            imageDecode: { bytes, maxPx in
-                seams.lock.withLock { seams.imageCalls.append((bytes, maxPx)) }
-                return seams.imageOutcome
-            },
-            barcodeExtract: { bytes in
-                seams.lock.withLock { seams.extractCalls.append(bytes) }
-                return seams.extractResult
-            },
-            now: { 0 },
-            wallClock: { Self.fixedWallClockMs },
-            idGenerator: { "fixed-id" }
-        )
-    }
-
-    func persistRecorder(_ seams: Seams) -> @Sendable (DocumentPersist) async throws -> Void {
-        { value in
-            if let error = seams.persistError { throw error }
-            seams.lock.withLock { seams.persisted.append(value) }
-        }
-    }
 
     // MARK: - Branch routing
 
@@ -100,14 +100,14 @@ struct DocumentImporterTests {
                 id: PDFDocumentId("p"), displayLabel: "Doc", byteCount: 16, pageCount: 3,
                 importedAtEpochMs: 1))
         let result = try await makeImporter(seams).import(
-            source: .data(Self.pdfBytes), displayLabel: "Doc",
+            source: .data(pdfBytes), displayLabel: "Doc",
             persist: persistRecorder(seams))
 
         guard case .importedPdf = result else {
             Issue.record("expected importedPdf, got \(result)")
             return
         }
-        #expect(seams.pdfCalls.first?.bytes == Self.pdfBytes)
+        #expect(seams.pdfCalls.first?.bytes == pdfBytes)
         #expect(seams.pdfCalls.first?.label == "Doc")
         guard case .pdf(let label, let bytes, let thumb, let pageCount, _) = seams.persisted.first
         else {
@@ -115,7 +115,7 @@ struct DocumentImporterTests {
             return
         }
         #expect(label == "Doc")
-        #expect(bytes == Self.pdfBytes)
+        #expect(bytes == pdfBytes)
         #expect(thumb == Data([0xBB]))
         #expect(pageCount == 3)
         #expect(seams.imageCalls.isEmpty)
@@ -125,7 +125,7 @@ struct DocumentImporterTests {
         let seams = Seams()
         seams.pdfResult = .rejected(kind: .storageHandoffFailed)
         let result = try await makeImporter(seams).import(
-            source: .data(Self.pdfBytes), displayLabel: "D", persist: persistRecorder(seams))
+            source: .data(pdfBytes), displayLabel: "D", persist: persistRecorder(seams))
         guard case .storageHandoffFailed = result else {
             Issue.record("expected storageHandoffFailed, got \(result)")
             return
@@ -136,7 +136,7 @@ struct DocumentImporterTests {
         let seams = Seams()
         seams.pdfResult = .rejected(kind: .rendererFailed)
         let result = try await makeImporter(seams).import(
-            source: .data(Self.pdfBytes), displayLabel: "D", persist: persistRecorder(seams))
+            source: .data(pdfBytes), displayLabel: "D", persist: persistRecorder(seams))
         guard case .pdfRejected(let kind) = result else {
             Issue.record("expected pdfRejected, got \(result)")
             return
@@ -147,7 +147,7 @@ struct DocumentImporterTests {
     @Test func imageMagicPersistsOriginalBytesWithDimensions() async throws {
         let seams = Seams()
         let result = try await makeImporter(seams).import(
-            source: .data(Self.pngBytes), displayLabel: "Pic", persist: persistRecorder(seams))
+            source: .data(pngBytes), displayLabel: "Pic", persist: persistRecorder(seams))
 
         guard case .importedImage(let doc) = result else {
             Issue.record("expected importedImage, got \(result)")
@@ -155,8 +155,8 @@ struct DocumentImporterTests {
         }
         #expect(doc.widthPx == 800)
         #expect(doc.heightPx == 600)
-        #expect(doc.byteCount == Int64(Self.pngBytes.count))
-        #expect(doc.importedAtEpochMs == Self.fixedWallClockMs)
+        #expect(doc.byteCount == Int64(pngBytes.count))
+        #expect(doc.importedAtEpochMs == fixedWallClockMs)
         #expect(doc.id.value == "fixed-id")
         #expect(seams.imageCalls.first?.maxPx == DocumentImportConfig.defaultMaxImageDecodePx)
         guard
@@ -167,7 +167,7 @@ struct DocumentImporterTests {
             return
         }
         #expect(label == "Pic")
-        #expect(bytes == Self.pngBytes)
+        #expect(bytes == pngBytes)
         #expect(format == .png)
         #expect(width == 800)
         #expect(height == 600)
@@ -194,7 +194,7 @@ struct DocumentImporterTests {
     @Test func webpSniffsButIsRejectedBeforeAnyDecode() async throws {
         let seams = Seams()
         let result = try await makeImporter(seams).import(
-            source: .data(Self.webpBytes), displayLabel: "W",
+            source: .data(webpBytes), displayLabel: "W",
             confirmBarcode: { _, _ in true }, persist: persistRecorder(seams))
         guard case .imageRejected(let kind) = result else {
             Issue.record("expected imageRejected, got \(result)")
@@ -213,7 +213,7 @@ struct DocumentImporterTests {
         let seams = Seams()
         seams.imageOutcome = .rejected(.dimensionsTooLarge)
         let result = try await makeImporter(seams).import(
-            source: .data(Self.pngBytes), displayLabel: "P", persist: persistRecorder(seams))
+            source: .data(pngBytes), displayLabel: "P", persist: persistRecorder(seams))
         guard case .imageRejected(let kind) = result else {
             Issue.record("expected imageRejected, got \(result)")
             return
@@ -228,7 +228,7 @@ struct DocumentImporterTests {
         let seams = Seams()
         seams.persistError = Boom()
         let result = try await makeImporter(seams).import(
-            source: .data(Self.pngBytes), displayLabel: "P", persist: persistRecorder(seams))
+            source: .data(pngBytes), displayLabel: "P", persist: persistRecorder(seams))
         guard case .storageHandoffFailed = result else {
             Issue.record("expected storageHandoffFailed, got \(result)")
             return
@@ -242,7 +242,7 @@ struct DocumentImporterTests {
         let seams = Seams()
         seams.extractResult = .decodedBarcode(payload: "LOYAL-42", format: .qr)
         let result = try await makeImporter(seams).import(
-            source: .data(Self.pngBytes), displayLabel: "Card",
+            source: .data(pngBytes), displayLabel: "Card",
             confirmBarcode: { _, _ in true }, persist: persistRecorder(seams))
 
         guard case .importedBarcodedImage(let doc) = result else {
@@ -252,10 +252,10 @@ struct DocumentImporterTests {
         #expect(doc.barcodePayload == "LOYAL-42")
         #expect(doc.barcodeFormat == .qr)
         #expect(doc.widthPx == 800)
-        #expect(doc.byteCount == Int64(Self.pngBytes.count))
+        #expect(doc.byteCount == Int64(pngBytes.count))
         // The barcode seam saw the SAME once-read bytes the image seam did.
-        #expect(seams.extractCalls.first == Self.pngBytes)
-        #expect(seams.imageCalls.first?.bytes == Self.pngBytes)
+        #expect(seams.extractCalls.first == pngBytes)
+        #expect(seams.imageCalls.first?.bytes == pngBytes)
         guard
             case .barcodedImage(_, let bytes, _, let format, _, _, let payload, let symbology) =
                 seams.persisted.first
@@ -263,7 +263,7 @@ struct DocumentImporterTests {
             Issue.record("expected barcodedImage persist, got \(seams.persisted)")
             return
         }
-        #expect(bytes == Self.pngBytes)
+        #expect(bytes == pngBytes)
         #expect(format == .png)
         #expect(payload == "LOYAL-42")
         #expect(symbology == .qr)
@@ -273,7 +273,7 @@ struct DocumentImporterTests {
         let seams = Seams()
         seams.extractResult = .noBarcodeFound
         let result = try await makeImporter(seams).import(
-            source: .data(Self.pngBytes), displayLabel: "P",
+            source: .data(pngBytes), displayLabel: "P",
             confirmBarcode: { _, _ in true }, persist: persistRecorder(seams))
         guard case .importedImage = result else {
             Issue.record("expected plain image, got \(result)")
@@ -286,7 +286,7 @@ struct DocumentImporterTests {
         let seams = Seams()
         seams.extractResult = .decodeFailed(reason: .imageDecodeFailed)
         let result = try await makeImporter(seams).import(
-            source: .data(Self.pngBytes), displayLabel: "P",
+            source: .data(pngBytes), displayLabel: "P",
             confirmBarcode: { _, _ in true }, persist: persistRecorder(seams))
         guard case .importedImage = result else {
             Issue.record("expected plain image, got \(result)")
@@ -315,9 +315,9 @@ struct DocumentImporterTests {
 
     @Test func aDeclinedReadDegradesToAPlainImageNamingItselfAndCarryingNoPayload() async throws {
         let seams = Seams()
-        seams.extractResult = .decodedBarcode(payload: Self.secretPayload, format: .pdf417)
+        seams.extractResult = .decodedBarcode(payload: secretPayload, format: .pdf417)
         let result = try await makeImporter(seams).import(
-            source: .data(Self.pngBytes), displayLabel: "P",
+            source: .data(pngBytes), displayLabel: "P",
             confirmBarcode: { _, _ in false }, persist: persistRecorder(seams))
         guard case .importedImage = result else {
             Issue.record("expected plain image, got \(result)")
@@ -327,7 +327,7 @@ struct DocumentImporterTests {
         #expect(persisted.imageExtraction == .declined)
         // Structural PII lock: the degrade seam never carries the payload (a BCBP
         // payload holds passenger name + PNR).
-        #expect(!String(describing: persisted).contains(Self.secretPayload))
+        #expect(!String(describing: persisted).contains(secretPayload))
     }
 
     // MARK: - Hook contract
@@ -336,7 +336,7 @@ struct DocumentImporterTests {
         let seams = Seams()
         seams.extractResult = .decodedBarcode(payload: "WOULD-BE-FOUND", format: .qr)
         let result = try await makeImporter(seams).import(
-            source: .data(Self.pngBytes), displayLabel: "P", persist: persistRecorder(seams))
+            source: .data(pngBytes), displayLabel: "P", persist: persistRecorder(seams))
         guard case .importedImage = result else {
             Issue.record("expected plain image, got \(result)")
             return
@@ -350,7 +350,7 @@ struct DocumentImporterTests {
         let seams = Seams()
         seams.extractResult = .decodedBarcode(payload: "X", format: .qr)
         let result = try await makeImporter(seams).import(
-            source: .data(Self.pngBytes), displayLabel: "P",
+            source: .data(pngBytes), displayLabel: "P",
             confirmBarcode: { _, _ in throw ConfirmUiCrashed() },
             persist: persistRecorder(seams))
         guard case .importedImage = result else {
@@ -365,7 +365,7 @@ struct DocumentImporterTests {
         seams.extractResult = .decodedBarcode(payload: "X", format: .qr)
         do {
             _ = try await makeImporter(seams).import(
-                source: .data(Self.pngBytes), displayLabel: "P",
+                source: .data(pngBytes), displayLabel: "P",
                 confirmBarcode: { _, _ in throw CancellationError() },
                 persist: persistRecorder(seams))
             Issue.record("cancellation must propagate")
@@ -382,7 +382,7 @@ struct DocumentImporterTests {
         nonisolated(unsafe) var seen: (String, ScannableFormat)?
         nonisolated(unsafe) var persistedBeforeHook = false
         _ = try await makeImporter(seams).import(
-            source: .data(Self.pngBytes), displayLabel: "P",
+            source: .data(pngBytes), displayLabel: "P",
             confirmBarcode: { payload, format in
                 seen = (payload, format)
                 persistedBeforeHook = !seams.persisted.isEmpty
@@ -398,39 +398,9 @@ struct DocumentImporterTests {
         let seams = Seams()
         seams.pdfResult = .rejected(kind: .rendererFailed)
         _ = try await makeImporter(seams).import(
-            source: .data(Self.pdfBytes), displayLabel: "D",
+            source: .data(pdfBytes), displayLabel: "D",
             confirmBarcode: { _, _ in true }, persist: persistRecorder(seams))
         #expect(seams.extractCalls.isEmpty)
-    }
-
-    // MARK: - Bounded read (.fileURL)
-
-    /// The file read is bounded to maxBytes + 1, so the backend can observe an
-    /// over-cap file without the importer buffering the whole bomb.
-    @Test func fileSourceIsReadBoundedToOneByteOverTheCap() async throws {
-        let seams = Seams()
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("walt_import_\(UUID().uuidString).png")
-        var contents = Self.pngBytes
-        contents.append(Data(repeating: 0x55, count: 200))
-        try contents.write(to: url)
-        defer { try? FileManager.default.removeItem(at: url) }
-
-        let cap = 64
-        _ = try await makeImporter(seams, maxBytes: cap).import(
-            source: .fileURL(url), displayLabel: "F", persist: persistRecorder(seams))
-        #expect(seams.imageCalls.first?.bytes.count == cap + 1)
-    }
-
-    @Test func unreadableFileSourceIsUnrecognized() async throws {
-        let seams = Seams()
-        let missing = URL(fileURLWithPath: "/nonexistent/\(UUID().uuidString).bin")
-        let result = try await makeImporter(seams).import(
-            source: .fileURL(missing), displayLabel: "F", persist: persistRecorder(seams))
-        guard case .unrecognized = result else {
-            Issue.record("expected unrecognized, got \(result)")
-            return
-        }
     }
 
     // MARK: - Helpers
@@ -441,7 +411,7 @@ struct DocumentImporterTests {
         let seams = Seams()
         seams.extractResult = .decodeFailed(reason: reason)
         _ = try? await makeImporter(seams).import(
-            source: .data(Self.pngBytes), displayLabel: "P",
+            source: .data(pngBytes), displayLabel: "P",
             confirmBarcode: { _, _ in true }, persist: persistRecorder(seams))
         return seams.persisted.first?.imageExtraction
     }

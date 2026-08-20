@@ -47,49 +47,105 @@ struct PassesDocumentGuardTests {
 
     /// The telemetry events carry only enums, counts and durations — no String,
     /// no Data, no dictionary (the load-bearing PII control, mirror of the
-    /// DocumentTelemetryGuard discipline). Checked structurally via Mirror.
+    /// DocumentTelemetryGuard discipline). Checked structurally via a RECURSIVE
+    /// mirror walk, so a nested struct or an associated `String` on a failure
+    /// arm is caught, not just a top-level field.
     @Test func telemetryEventShapesCarryNoStringsOrBytes() {
         let events: [Any] = [
             ImageImportSucceededEvent(
                 byteCount: 1, format: .png, widthPx: 2, heightPx: 3, durationMillis: 4),
             ImageImportFailedEvent(outcome: .decode, durationMillis: 1),
+            ImageImportFailedEvent(outcome: .storageHandoff, durationMillis: 1),
         ]
         for event in events {
-            for child in Mirror(reflecting: event).children {
-                let value = child.value
+            expectNoFreeFormCarrier(in: event, path: "\(type(of: event))")
+        }
+    }
+
+    private func expectNoFreeFormCarrier(in value: Any, path: String, depth: Int = 0) {
+        #expect(depth < 8, "\(path): shape too deep to be an event")
+        #expect(
+            !(value is String) && !(value is Data) && !(value is [String: Any]),
+            "\(path) is a free-form carrier")
+        for child in Mirror(reflecting: value).children {
+            expectNoFreeFormCarrier(
+                in: child.value, path: "\(path).\(child.label ?? "?")", depth: depth + 1)
+        }
+    }
+
+    /// The mirror walk types the VALUES; this scans the DECLARATIONS, so an
+    /// event gaining a `String`/`Data`/dictionary parameter — including on the
+    /// protocol methods themselves — fails even before an instance exists.
+    @Test func telemetryGuardDeclarationsCarryNoFreeFormTypes() throws {
+        let file = Self.packageSources.appendingPathComponent("ImageImportTelemetryGuard.swift")
+        let text = try String(contentsOf: file, encoding: .utf8)
+        for (index, rawLine) in text.components(separatedBy: .newlines).enumerated() {
+            let code = rawLine.components(separatedBy: "//").first ?? rawLine
+            for token in [": String", ": Data", "[String:"] {
                 #expect(
-                    !(value is String) && !(value is Data) && !(value is [String: Any]),
-                    "\(type(of: event)).\(child.label ?? "?") is a free-form carrier"
-                )
+                    !code.contains(token),
+                    """
+                    ImageImportTelemetryGuard.swift:\(index + 1) declares \
+                    '\(token)', a free-form carrier — a security-policy change
+                    """)
             }
         }
     }
 
-    /// The §7 allowlist is one keystroke from being widened at a call site that
-    /// passes a custom config; production must construct the image decoder with
-    /// NO arguments (binding note on ios-dts.3).
-    @Test func productionConstructsTheImageDecoderWithNoConfigArgument() throws {
-        let sources = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()  // PassesDocumentTests
-            .deletingLastPathComponent()  // Tests
-            .deletingLastPathComponent()  // repo root
-            .appendingPathComponent("Sources/PassesDocument")
-        let files = try FileManager.default.contentsOfDirectory(
-            at: sources, includingPropertiesForKeys: nil
-        ).filter { $0.pathExtension == "swift" }
+    /// The §7 allowlists and caps are one keystroke from being widened at a call
+    /// site that passes a custom config; production must construct BOTH bounded
+    /// decoders with NO arguments (binding note on ios-dts.3 — the barcode lane's
+    /// config carries the wider five-container roster, the byte cap and the wait
+    /// budget). The scan RECURSES so a call site cannot escape into a subfolder.
+    @Test func productionConstructsBothDecodersWithNoConfigArgument() throws {
+        let files = try Self.allPackageSourceFiles()
         try #require(!files.isEmpty)
         var callSites = 0
         for file in files {
             let text = try String(contentsOf: file, encoding: .utf8)
-            for line in text.components(separatedBy: .newlines)
-            where line.contains("makeBoundedImageDecoder") {
-                callSites += 1
-                #expect(
-                    line.contains("makeBoundedImageDecoder()"),
-                    "decoder constructed with arguments: \(line.trimmingCharacters(in: .whitespaces))"
-                )
+            for pin in ["makeBoundedImageDecoder", "VisionBarcodeImageDecoder"] {
+                for line in text.components(separatedBy: .newlines) where line.contains(pin) {
+                    callSites += 1
+                    #expect(
+                        line.contains("\(pin)()"),
+                        "decoder constructed with arguments: \(line.trimmingCharacters(in: .whitespaces))"
+                    )
+                }
             }
         }
-        try #require(callSites > 0, "the production decoder call site must exist")
+        try #require(callSites >= 2, "both production decoder call sites must exist")
+    }
+
+    /// Flipping a default is a deliberate, test-breaking change (the
+    /// PublicApiSurfaceTests convention): the read ceiling matches the backends'
+    /// caps, the decode bound sits at the decoder's own output ceiling, and the
+    /// no-op guard is the silent default.
+    @Test func documentImportConfigDefaultsAreLocked() {
+        let config = DocumentImportConfig()
+        #expect(config.maxBytes == 25 * 1024 * 1024)
+        #expect(Int64(config.maxBytes) == config.pdfConfig.maxBytes)
+        #expect(config.maxImageDecodePx == 2048)
+        #expect(config.sourceReadTimeout == .seconds(10))
+        // The default guard is the no-op; exercising it pins that it stays inert.
+        config.imageTelemetryGuard.onImportStarted()
+        config.imageTelemetryGuard.onImportSucceeded(
+            event: ImageImportSucceededEvent(
+                byteCount: 1, format: .png, widthPx: 1, heightPx: 1, durationMillis: 1))
+        config.imageTelemetryGuard.onImportFailed(
+            event: ImageImportFailedEvent(outcome: .decode, durationMillis: 1))
+    }
+
+    static let packageSources = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()  // PassesDocumentTests
+        .deletingLastPathComponent()  // Tests
+        .deletingLastPathComponent()  // repo root
+        .appendingPathComponent("Sources/PassesDocument")
+
+    static func allPackageSourceFiles() throws -> [URL] {
+        guard
+            let walker = FileManager.default.enumerator(
+                at: packageSources, includingPropertiesForKeys: nil)
+        else { return [] }
+        return walker.compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
     }
 }

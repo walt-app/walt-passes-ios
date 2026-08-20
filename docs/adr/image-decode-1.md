@@ -150,6 +150,16 @@ decoded payload crosses to the app pre-persist only through that hook (and,
 post-confirm, `DocumentPersist.barcodedImage`). `webp` is enforced-unreachable
 at the importer sniff: recognized, then rejected before any codec contact.
 
+Two iOS-ahead hardenings on the read (deviations from Android's shape, both
+tightenings): an over-cap source is rejected AT the importer from the truncated
+prefix's sniff — Android delegates oversize to its sandbox caps, which silently
+persists truncated bytes as the original if a backend cap is ever raised above
+the read ceiling — and the `.fileURL` read runs off the cooperative pool under
+a bounded wait (`withSourceReadDeadline`; Android gets this placement free from
+`Dispatchers.IO`). The `.fileURL` arm is also where Android's `content://`
+scheme allowlist maps: iOS refuses non-`file` schemes at the arm, and acquiring
+security-scoped access to a picker URL is the caller's job.
+
 ## Structure mapping (Android module ↔ iOS target)
 
 - `passes-image-decode` ↔ `PassesImageDecode`: the mechanism-only header-gated
@@ -162,6 +172,9 @@ at the importer sniff: recognized, then rejected before any codec contact.
 - `passes-image` ↔ `PassesImage`: policy (config, allowlist, taxonomy, facade).
   The binder/service/client/wire plumbing has no iOS analogue and is not mirrored;
   the watchdog maps to the bounded wait above, per-consumer as on Android.
+- `passes-document` ↔ `PassesDocument`: the sniff-and-branch import orchestration
+  and the composite confirm seam (the addendum above). The single meeting point of
+  the PDF, image and barcode peers — they gain no edge to each other.
 - `ImageSource`'s no-byte-array rule is NOT mirrored: Android forbids a `ByteArray`
   arm because bytes in the caller's heap would defeat its process sandbox; there is
   no sandbox to defeat in-process, and the importer reads its source once into
@@ -174,5 +187,6 @@ at the importer sniff: recognized, then rejected before any codec contact.
 `documentArms` + `DocumentSealedSetTests` (Swift has no sealed protocols).
 `ImageDocument` carries `widthPx`/`heightPx` — the bounded raster's dimensions,
 never a re-decoded canvas — and deliberately no container format (persistence
-detail; display renders a Walt-produced raster). The composite arm rides the
-importer step (walt-ios ios-dts.3), as it did on Android (wpass-8lu).
+detail; display renders a Walt-produced raster). The composite arm
+(`BarcodedImageDocument`) landed with the importer (walt-ios ios-dts.3), as it
+did on Android (wpass-8lu).

@@ -167,3 +167,19 @@ public struct BarcodedImageDocument: Sendable, Equatable, Document {
         self.provenance = provenance
     }
 }
+
+/// Default reflection would print `barcodePayload` verbatim (a BCBP payload
+/// carries passenger name + PNR); redacted so a stray log of the model can
+/// never leak it. Android's data-class `toString` does print the payload —
+/// a deliberate iOS-ahead tightening of the no-PII-in-logs invariant.
+extension BarcodedImageDocument: CustomStringConvertible, CustomDebugStringConvertible {
+    public var description: String {
+        "BarcodedImageDocument(id: \(id.value), displayLabel: \(displayLabel), "
+            + "byteCount: \(byteCount), \(widthPx)x\(heightPx), "
+            + "barcodePayload: <redacted \(barcodePayload.count) chars>, "
+            + "barcodeFormat: \(barcodeFormat), importedAtEpochMs: \(importedAtEpochMs), "
+            + "provenance: \(provenance))"
+    }
+
+    public var debugDescription: String { description }
+}

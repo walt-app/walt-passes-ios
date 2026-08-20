@@ -43,9 +43,11 @@ extension DocumentImporter {
 }
 
 /// Closed source shape (Android's two-arm discipline; iOS arms match the sibling
-/// importers). The caller owns the source; over-cap `.fileURL` files are read
-/// bounded (`maxBytes + 1`) so the chosen backend can observe and reject the
-/// oversize without the importer buffering the whole file.
+/// importers). The caller owns the source — including any security-scoped access
+/// a picker URL needs; an unreadable source folds to `unrecognized`. Over-cap
+/// sources are read bounded (`maxBytes + 1`) and rejected AT the importer as the
+/// sniffed kind's oversize arm — truncated bytes never reach a backend or
+/// `persist`.
 public enum DocumentImportSource: Sendable {
     case fileURL(URL)
     case data(Data)
@@ -60,20 +62,28 @@ public struct DocumentImportConfig: Sendable {
     /// raster/thumbnail: aspect-preserving, never upscaled, and 2048 x 2048 sits
     /// exactly at the decoder's own 4 MP output ceiling.
     public var maxImageDecodePx: Int
+    /// Ceiling on how long the caller WAITS for the `.fileURL` source read (the
+    /// read itself runs off the cooperative pool — see `withSourceReadDeadline`).
+    /// A missed deadline folds to `unrecognized`. Generous next to the 5 s decode
+    /// budgets because a cold file-provider read is I/O, not codec work.
+    public var sourceReadTimeout: Duration
 
     public init(
         maxBytes: Int = Int(PDFImportConfig.defaultMaxBytes),
         pdfConfig: PDFImportConfig = PDFImportConfig(),
         imageTelemetryGuard: any ImageImportTelemetryGuard = ImageImportTelemetryGuardNoOp.shared,
-        maxImageDecodePx: Int = Self.defaultMaxImageDecodePx
+        maxImageDecodePx: Int = Self.defaultMaxImageDecodePx,
+        sourceReadTimeout: Duration = Self.defaultSourceReadTimeout
     ) {
         self.maxBytes = maxBytes
         self.pdfConfig = pdfConfig
         self.imageTelemetryGuard = imageTelemetryGuard
         self.maxImageDecodePx = maxImageDecodePx
+        self.sourceReadTimeout = sourceReadTimeout
     }
 
     public static let defaultMaxImageDecodePx = 2048
+    public static let defaultSourceReadTimeout: Duration = .seconds(10)
 }
 
 /// The unified import outcome. The two reject arms REUSE each backend's own
@@ -144,6 +154,31 @@ public enum DocumentPersist: Sendable, Equatable {
             return thumbnailBytes
         }
     }
+}
+
+/// Default reflection would print `barcodePayload` verbatim (a BCBP payload
+/// carries passenger name + PNR), so the ONE payload-bearing arm redacts it —
+/// a stray interpolation or log of a persist value can never leak it.
+extension DocumentPersist: CustomStringConvertible, CustomDebugStringConvertible {
+    public var description: String {
+        switch self {
+        case .pdf(let label, let bytes, _, let pageCount, let pageRasters):
+            return "DocumentPersist.pdf(label: \(label), bytes: \(bytes.count), "
+                + "pageCount: \(pageCount), pageRasters: \(pageRasters.count))"
+        case .image(let label, let bytes, _, let format, let widthPx, let heightPx, let extraction):
+            return "DocumentPersist.image(label: \(label), bytes: \(bytes.count), "
+                + "format: \(format), \(widthPx)x\(heightPx), barcodeExtraction: \(extraction))"
+        case .barcodedImage(
+            let label, let bytes, _, let format, let widthPx, let heightPx, let payload,
+            let barcodeFormat):
+            return "DocumentPersist.barcodedImage(label: \(label), bytes: \(bytes.count), "
+                + "format: \(format), \(widthPx)x\(heightPx), "
+                + "barcodePayload: <redacted \(payload.count) chars>, "
+                + "barcodeFormat: \(barcodeFormat))"
+        }
+    }
+
+    public var debugDescription: String { description }
 }
 
 /// Why an image import stayed non-composite, named at the persist seam (mirror

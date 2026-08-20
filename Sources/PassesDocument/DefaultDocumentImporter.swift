@@ -19,7 +19,6 @@ public func makeDocumentImporter(
     // widening them (pinned by PassesDocumentGuardTests).
     let imageDecoder = makeBoundedImageDecoder()
     let barcodeDecoder = VisionBarcodeImageDecoder()
-    let maxPx = config.maxImageDecodePx
     return DefaultDocumentImporter(
         config: config,
         pdfImport: { bytes, label, persist in
@@ -29,7 +28,7 @@ public func makeDocumentImporter(
                     try await persist(label, pdfBytes, pageCount, thumbnailBytes, pageRasters)
                 })
         },
-        imageDecode: { bytes, _ in
+        imageDecode: { bytes, maxPx in
             // The raster is Walt-produced (already decoded and bounded), so the
             // in-process PNG encode never runs a codec over hostile bytes.
             let result = await imageDecoder.decode(
@@ -100,7 +99,15 @@ struct DefaultDocumentImporter: DocumentImporter {
         // One bounded read closes the offset-corruption hazard a peek-then-reopen
         // would open: whatever a backend receives is materialized from this exact
         // buffer, not a second read of the source.
-        guard let bytes = readBounded(source) else { return .unrecognized }
+        let bytes: Data
+        switch await readBounded(source) {
+        case .unavailable:
+            return .unrecognized
+        case .oversized(let prefix):
+            return rejectOversized(prefix: prefix)
+        case .bytes(let read):
+            bytes = read
+        }
         if isPDFHeader(bytes) {
             return try await importPdf(bytes: bytes, displayLabel: displayLabel, persist: persist)
         }
@@ -108,6 +115,24 @@ struct DefaultDocumentImporter: DocumentImporter {
             return try await importImage(
                 bytes: bytes, format: format, displayLabel: displayLabel,
                 confirmBarcode: confirmBarcode, persist: persist)
+        }
+        return .unrecognized
+    }
+
+    /// An over-cap source is named HERE, from the truncated prefix's sniff, and
+    /// never reaches a backend, a codec, or `persist`. Delegating oversize to
+    /// the backends (Android's shape) silently persists TRUNCATED bytes as the
+    /// original whenever a backend cap is raised above `maxBytes` — the buffer
+    /// clears the widened gate at `maxBytes + 1` and imports corrupt.
+    private func rejectOversized(prefix: Data) -> DocumentImportResult {
+        if isPDFHeader(prefix) { return .pdfRejected(.oversizedAtImport) }
+        if sniffImageFormat(prefix) != nil {
+            // Same guard events the image lane emits for its own oversize arm.
+            let guardHook = config.imageTelemetryGuard
+            guardHook.onImportStarted()
+            guardHook.onImportFailed(
+                event: ImageImportFailedEvent(outcome: .decode, durationMillis: 0))
+            return .imageRejected(.oversizedAtImport)
         }
         return .unrecognized
     }
@@ -188,7 +213,7 @@ struct DefaultDocumentImporter: DocumentImporter {
             event: ImageImportSucceededEvent(
                 byteCount: byteCount, format: format, widthPx: decoded.widthPx,
                 heightPx: decoded.heightPx, durationMillis: now() - startedAt))
-        return builtImportedResult(
+        return buildImportedResult(
             extraction: extraction, displayLabel: displayLabel, byteCount: byteCount,
             decoded: decoded)
     }
@@ -245,7 +270,7 @@ struct DefaultDocumentImporter: DocumentImporter {
 
     /// Id and importedAt are stamped POST-persist; the consumer's storage layer
     /// assigns its own row identity — this id names the returned model only.
-    private func builtImportedResult(
+    private func buildImportedResult(
         extraction: BarcodeExtraction, displayLabel: String, byteCount: Int64,
         decoded: (thumbnailBytes: Data, widthPx: Int, heightPx: Int)
     ) -> DocumentImportResult {
@@ -269,31 +294,45 @@ struct DefaultDocumentImporter: DocumentImporter {
     // MARK: - Bounded read
 
     /// Read the source once, at most `maxBytes + 1` bytes — one past the cap so
-    /// the chosen backend can observe an over-cap file and reject it, without
-    /// this importer buffering the whole oversized file. `nil` (→ unrecognized)
-    /// only when the source cannot be read at all. The `.data` arm's bound is
-    /// the caller's; it is truncated to the ceiling for the same reason.
-    private func readBounded(_ source: DocumentImportSource) -> Data? {
-        let ceiling = config.maxBytes + 1
+    /// an over-cap source is OBSERVED (and rejected by `rejectOversized`)
+    /// without this importer ever buffering the whole oversized file.
+    /// `unavailable` (→ unrecognized) only when the source cannot be read at
+    /// all. The `.fileURL` read runs off the cooperative pool under
+    /// `config.sourceReadTimeout` — see `withSourceReadDeadline`.
+    private func readBounded(_ source: DocumentImportSource) async -> BoundedSourceRead {
+        let maxBytes = config.maxBytes
         switch source {
         case .data(let data):
-            return data.count > ceiling ? data.prefix(ceiling) : data
+            return data.count > maxBytes
+                ? .oversized(prefix: data.prefix(maxBytes + 1)) : .bytes(data)
         case .fileURL(let url):
-            guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
-            defer { try? handle.close() }
-            var bytes = Data()
-            do {
-                while bytes.count < ceiling {
-                    guard let chunk = try handle.read(upToCount: min(64 * 1024, ceiling - bytes.count)),
-                        !chunk.isEmpty
-                    else { break }
-                    bytes.append(chunk)
-                }
-            } catch {
-                return nil
+            // The arm's name is a claim `URL` cannot enforce (the sibling
+            // importers' guard); a non-file scheme is refused before any open.
+            guard url.isFileURL else { return .unavailable }
+            return await withSourceReadDeadline(
+                config.sourceReadTimeout, timeoutValue: .unavailable
+            ) {
+                Self.blockingFileRead(url: url, maxBytes: maxBytes)
             }
-            return bytes
         }
+    }
+
+    private static func blockingFileRead(url: URL, maxBytes: Int) -> BoundedSourceRead {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return .unavailable }
+        defer { try? handle.close() }
+        let ceiling = maxBytes + 1
+        var bytes = Data()
+        do {
+            while bytes.count < ceiling {
+                guard let chunk = try handle.read(upToCount: min(64 * 1024, ceiling - bytes.count)),
+                    !chunk.isEmpty
+                else { break }
+                bytes.append(chunk)
+            }
+        } catch {
+            return .unavailable
+        }
+        return bytes.count > maxBytes ? .oversized(prefix: bytes) : .bytes(bytes)
     }
 }
 
