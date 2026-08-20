@@ -114,6 +114,26 @@ struct ViewConstructionSmokeTests {
         #expect(type(of: v.body) != Never.self)
     }
 
+    @Test func fullScreenDocumentViewConstructsTheImageArm() {
+        let v = FullScreenDocumentView(
+            doc: Self.imageDoc,
+            imageSource: .data(Data([0x89])),
+            imageDecoder: RejectingDecoder(),
+            onClose: {}
+        )
+        #expect(type(of: v.body) != Never.self)
+    }
+
+    @Test func fullScreenDocumentViewConstructsTheCompositeArmOverTheSameImagePair() {
+        let v = FullScreenDocumentView(
+            doc: Self.compositeDoc,
+            imageSource: .data(Data([0x89])),
+            imageDecoder: RejectingDecoder(),
+            onClose: {}
+        )
+        #expect(type(of: v.body) != Never.self)
+    }
+
     @Test func fullScreenDocumentViewConstructs() {
         let v = FullScreenDocumentView(
             doc: Self.doc,

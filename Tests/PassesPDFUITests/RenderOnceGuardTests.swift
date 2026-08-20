@@ -84,7 +84,10 @@ struct RenderOnceGuardTests {
         // Module-wide: the kernel never constructs a bounded decoder.
         let constructionNeedles = ["makeBoundedImageDecoder", "DefaultBoundedImageDecoder"]
         // Image-lane files: no ImageIO, no raw decode, no stored-raster inflate.
-        let imageLaneFiles = ["DocumentView.swift", "DocumentImage.swift", "ImageRendering.swift"]
+        let imageLaneFiles = [
+            "DocumentView.swift", "DocumentImage.swift", "ImageRendering.swift",
+            "FullScreenDocumentView.swift",
+        ]
         let imageLaneNeedles = [
             "CGImageSource", "UIImage(", "CIImage(", "import ImageIO",
             "decodeStoredRaster(", "StoredPageRaster(",

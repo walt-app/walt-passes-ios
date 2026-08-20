@@ -92,21 +92,21 @@ struct DocumentSurfaceLockTests {
         )
     }
 
-    @Test func fullScreenDocumentViewExposesExactlyFivePublicInitialiserParameters() {
-        // (doc, pages, onClose, telemetry, closeButton). Required onClose
+    @Test func fullScreenDocumentViewExposesExactlySevenPublicInitialiserParameters() {
+        // (doc, pages, imageSource, imageDecoder, onClose, telemetry,
+        // closeButton) — the sealed-arm dispatcher (ios-dts.12, wpass-pl7.4
+        // mirror), backend pairs matching DocumentView's. Required onClose
         // forces the host to provide a back path — there is no "stuck in
-        // full-screen" state. `closeButton` (wlt-d3d slot) swaps the close
-        // CHROME only: it receives the handler and must wire it; it cannot
-        // suppress the trust caption or the close path. `pages` replaces the
-        // former pdfData+renderer pair (ios-dts.16). The exact-arity function
-        // reference fails to compile if any parameter is added, removed,
-        // renamed, or retyped — even a defaulted addition.
+        // full-screen" state; `closeButton` (wlt-d3d slot) swaps the close
+        // CHROME only. The exact-arity function reference fails to compile if
+        // any parameter is added, removed, renamed, or retyped.
         typealias LockedInit = (
-            PDFDocument, any DocumentPageSource, @escaping () -> Void,
+            any Document, (any DocumentPageSource)?, ImageDecodeSource?,
+            (any BoundedImageDecoder)?, @escaping () -> Void,
             DocumentTelemetryGuard, ((@escaping () -> Void) -> AnyView)?
         ) -> FullScreenDocumentView
         let lockedInit: LockedInit = FullScreenDocumentView
-            .init(doc:pages:onClose:telemetry:closeButton:)
+            .init(doc:pages:imageSource:imageDecoder:onClose:telemetry:closeButton:)
         _ = lockedInit
     }
 
