@@ -58,11 +58,14 @@ public struct FullScreenDocumentView: View {
     }
 
     /// Longer-side cap for full-screen decodes, shared by the pager's stored-
-    /// raster inflate and the image arm's bounded decode. 2048² sits exactly
-    /// at the decoder's 4 MP output ceiling, so Android's slot × maxScale
-    /// request collapses to this ceiling on every supported display — the
-    /// pinch stays as sharp as the budget allows without a sub-rect path
-    /// (the bounded decoder has none, deliberately).
+    /// raster inflate and the image arm's bounded decode. A 2048-square
+    /// request box: the decoder aspect-fits inside it and never upscales, so
+    /// output lands at or under the 4 MP ceiling — Android's aspect-shaped
+    /// slot × maxScale clamp is a NEAR, not exact, equivalent, and there is
+    /// no sub-rect path (the bounded decoder has none, deliberately). It is
+    /// also the decode's own ceiling: stored raster dimensions are
+    /// caller-declared integers the storage layer never verifies against the
+    /// blob (the uniform-budget rule).
     static let fullScreenMaxPixelSize: Int = 2048
 
     @Environment(\.documentSemantics) private var semantics
@@ -73,7 +76,7 @@ public struct FullScreenDocumentView: View {
             VStack(spacing: 0) {
                 arm(style: style)
                 // Sibling of the arm dispatch (Z.8): outside every zoom
-                // transform, and the arm's clip cannot be outdrawn onto it.
+                // transform (the clip rule lives on ZoomableContent).
                 DocumentTrustCaption()
             }
             if let closeButton {
@@ -95,18 +98,19 @@ public struct FullScreenDocumentView: View {
         case let pdf as PDFDocument:
             FullScreenPdfView(
                 doc: pdf,
-                pages: required(pages, "FullScreenDocumentView(PDFDocument) requires pages"),
+                pages: requiredBackend(
+                    pages, "FullScreenDocumentView(PDFDocument) requires a non-nil pages"),
                 telemetry: telemetry
             )
         case is ImageDocument, is BarcodedImageDocument:
             FullScreenImageView(
                 documentId: doc.documentId,
-                source: required(
+                source: requiredBackend(
                     imageSource,
-                    "FullScreenDocumentView(\(type(of: doc))) requires imageSource"),
-                decoder: required(
+                    "FullScreenDocumentView(\(type(of: doc))) requires a non-nil imageSource"),
+                decoder: requiredBackend(
                     imageDecoder,
-                    "FullScreenDocumentView(\(type(of: doc))) requires imageDecoder"),
+                    "FullScreenDocumentView(\(type(of: doc))) requires a non-nil imageDecoder"),
                 telemetry: telemetry
             )
         default:
@@ -117,10 +121,6 @@ public struct FullScreenDocumentView: View {
         }
     }
 
-    private func required<T>(_ value: T?, _ message: @autoclosure () -> String) -> T {
-        guard let value else { fatalError(message()) }
-        return value
-    }
 }
 
 /// The PDF arm: swipeable pager of zoomable stored-raster pages (render-once).

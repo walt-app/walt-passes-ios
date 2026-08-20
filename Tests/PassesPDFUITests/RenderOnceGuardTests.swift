@@ -93,6 +93,7 @@ struct RenderOnceGuardTests {
             "decodeStoredRaster(", "StoredPageRaster(",
         ]
         var scanned = 0
+        var rosterHits = 0
         for case let url as URL in files where url.pathExtension == "swift" {
             let text = try String(contentsOf: url, encoding: .utf8)
             scanned += 1
@@ -103,6 +104,7 @@ struct RenderOnceGuardTests {
                 )
             }
             if imageLaneFiles.contains(url.lastPathComponent) {
+                rosterHits += 1
                 for needle in imageLaneNeedles {
                     #expect(
                         !text.contains(needle),
@@ -112,6 +114,9 @@ struct RenderOnceGuardTests {
             }
         }
         #expect(scanned > 5, "source scan found too few files — wrong directory?")
+        // Name-keyed roster: a rename silently drops a file from the guard
+        // unless every entry is required to exist.
+        #expect(rosterHits == imageLaneFiles.count, "an image-lane roster entry went stale")
     }
 }
 

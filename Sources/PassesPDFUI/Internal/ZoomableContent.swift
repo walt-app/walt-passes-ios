@@ -5,14 +5,17 @@ import SwiftUI
 /// view-side: a `scaleEffect` over already-decoded pixels; nothing re-decodes
 /// on gesture.
 ///
-/// THE CLIP LESSON (wpass-pl7.4 review, ported deliberately): the scaled layer
-/// draws outside its layout bounds, so the clip MUST sit on the UNSCALED
-/// ancestor — `.clipped()` on the outer container below — never on the scaled
-/// layer, where the clip shape would scale with the content. On Android only
-/// the pager's incidental clipping protected the PDF arm, and the pagerless
-/// image arm overdrew the trust-caption dock. `ZoomableContentClipTests` pins
-/// this structurally: every `scaleEffect` in this module lives in this file,
-/// under this clip.
+/// THE CLIP LESSON (wpass-pl7.4 review), translated to SwiftUI semantics:
+/// the scaled layer draws outside its layout bounds, so the ONE clip below is
+/// framed to the SLOT (`proxy.size`) — the clip rect is the unscaled slot and
+/// can never follow the content. Compose's exact mistake
+/// (`graphicsLayer(clip=true)` scaling the clip shape) has no direct SwiftUI
+/// form — `.clipped()` clips to layout bounds, which `.scaleEffect` does not
+/// change — but a clip on a content-sized layer instead of the slot-framed
+/// container recreates the Android overdraw of the trust-caption dock the
+/// moment content stops filling the slot. `ZoomableContentTests` pins the
+/// inventory (every `scaleEffect` in this module lives here, one clip,
+/// slot-framed).
 ///
 /// Pan is clamped to ±((scale-1) × slot/2) per axis — the content edge never
 /// pans past the slot edge — and resets with the double-tap zoom-out.
@@ -69,12 +72,14 @@ struct ZoomableContent<Content: View>: View {
                     if scale > Self.minScale {
                         scale = Self.minScale
                         lastScale = Self.minScale
-                        offset = .zero
-                        lastOffset = .zero
                     } else {
                         scale = Self.doubleTapScale
                         lastScale = Self.doubleTapScale
                     }
+                    // Both directions re-center (Android parity) — keeps the
+                    // offset invariant local instead of provable-at-a-distance.
+                    offset = .zero
+                    lastOffset = .zero
                 }
             }
         }

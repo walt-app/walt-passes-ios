@@ -41,8 +41,10 @@ public struct DocumentImageHandle: Sendable {
 /// of a `BarcodedImageDocument` (wpass-8lu) — `documentId` is the `DocumentId`
 /// supertype and is the RESTART KEY (Android keys on id + decoder + file +
 /// size; iOS narrows to the id alone — the source and decoder derive from the
-/// document and the size is the `inlineMaxPixelSize` constant): an unchanged
-/// key never restarts a live or settled decode, a changed key supersedes it. The barcode half is rendered by the consumer with
+/// document, and the size is a per-surface constant where each surface owns
+/// its own view model; a SHARED instance across two budgets would silently
+/// keep the first decode): an unchanged key never restarts a live or settled
+/// decode, a changed key supersedes it. The barcode half is rendered by the consumer with
 /// `PassesUI`, never here.
 ///
 /// Lifecycle the facade owns so consumers do not reimplement it: a

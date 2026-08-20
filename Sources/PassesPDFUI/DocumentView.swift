@@ -76,7 +76,7 @@ public struct DocumentView: View {
         case let pdf as PDFDocument:
             PdfDocumentView(
                 doc: pdf,
-                pages: required(pages, "DocumentView(PDFDocument) requires a non-nil pages"),
+                pages: requiredBackend(pages, "DocumentView(PDFDocument) requires a non-nil pages"),
                 telemetry: telemetry,
                 onOpenFullScreen: onOpenFullScreen,
                 faceTint: faceTint
@@ -88,9 +88,9 @@ public struct DocumentView: View {
         case is ImageDocument, is BarcodedImageDocument:
             ImageDocumentView(
                 documentId: doc.documentId,
-                source: required(
+                source: requiredBackend(
                     imageSource, "DocumentView(\(type(of: doc))) requires a non-nil imageSource"),
-                decoder: required(
+                decoder: requiredBackend(
                     imageDecoder, "DocumentView(\(type(of: doc))) requires a non-nil imageDecoder"),
                 telemetry: telemetry,
                 onOpenFullScreen: onOpenFullScreen,
@@ -102,11 +102,6 @@ public struct DocumentView: View {
             // not compile-time (Swift has no sealed protocols).
             fatalError("DocumentView: unknown Document arm \(type(of: doc))")
         }
-    }
-
-    private func required<T>(_ value: T?, _ message: @autoclosure () -> String) -> T {
-        guard let value else { fatalError(message()) }
-        return value
     }
 
     /// Pure face decision routed through the shared `faceIsTinted` gate so the
