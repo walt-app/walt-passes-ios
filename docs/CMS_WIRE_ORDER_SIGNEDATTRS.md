@@ -1,7 +1,7 @@
 # Wire-order `signedAttrs` and the CMS algorithm pre-pass
 
 Background for `SignatureVerifier.swift`, `WireOrderSignedAttrs.swift` and
-`CMSSignatureAlgorithmNormalizer.swift`. Beads: `ipass-10g`, `ipass-c8p`.
+`CMSSignatureAlgorithmNormalizer.swift`. Beads: `ipass-10g`, `ipass-c8p`, `ipass-vjt`.
 Android counterparts: `wpass-x70` (824abc5), GH `walt-app/walt-passes-android#176`.
 
 ## The bug
@@ -80,36 +80,42 @@ both targeted structurally at the sole SignerInfo so certificates are never touc
 
 1. **Bare `rsaEncryption` `signatureAlgorithm`** -> the implied
    `shaNNNWithRSAEncryption`. Apple PassKit ships the bare OID.
-2. **SHA-1 `digestAlgorithm` with absent parameters** -> explicit NULL.
-   `AlgorithmIdentifier(digestAlgorithmFor:)` maps `.sha1WithRSAEncryption` to `.sha1`,
-   which carries NULL, while every other digest maps to a `…UsingNil` (absent-parameters)
-   variant. The comparison is `==` on a synthesized `Hashable`, so parameters must match
-   exactly.
+2. **`digestAlgorithm` parameters in the encoding the library does not derive** -> the
+   one it does. `AlgorithmIdentifier(digestAlgorithmFor:)` maps `.sha1WithRSAEncryption`
+   to `.sha1`, which carries NULL, and every SHA-2 signature algorithm to a `…UsingNil`
+   (absent-parameters) variant. The comparison is `==` on a synthesized `Hashable`, so
+   parameters must match exactly: an absent-parameters SHA-1 identifier fails, and so does
+   a NULL-carrying SHA-2 one. RFC 5754 s2 says generators MUST omit the parameters for
+   SHA-2 but receivers MUST accept both encodings, so both shapes are legal on the wire.
 
-On (2): both real SHA-1 pkpasses inspected encode `SEQUENCE { sha1, NULL }` at both the
-SignedData and SignerInfo levels, which is the shape the library already accepts, so this
-is a legal-encoding gap rather than an observed failure. Apple encodes SHA-256 with
-parameters absent, which is why the asymmetry only bites SHA-1.
+On (2), the two arms have different provenance. Both real SHA-1 pkpasses inspected encode
+`SEQUENCE { sha1, NULL }` at both levels, the shape the library accepts, so the SHA-1 arm
+closes a legal-encoding gap rather than an observed failure. The SHA-2 arm is an observed
+failure (`ipass-vjt`): Apple PassKit and Tixly encode SHA-256 with parameters absent, but
+Tickster (`pass.com.tickster.common`) encodes `SEQUENCE { sha256, NULL }` at both levels,
+and every Tickster pass read `Tampered` on iOS from the first release. The
+`apple-signed-sha256-null/` test fixture is a real Tickster signature.
 
-Android is no guide to whether the gap matters, because it cannot exhibit it. BouncyCastle's
-`DefaultCMSSignatureAlgorithmNameGenerator.getSignatureName` resolves the algorithm from the
-two OIDs alone and never reads `getParameters()` (verified by `javap` against bcpkix-jdk18on
-1.84), so both encodings work there. An absent-parameters SHA-1 pass would therefore have
-verified on Android and read `Tampered` on iOS - a parity divergence, not merely a
-theoretical one, which is why the rewrite is worth carrying despite no observed pass needing
-it.
+Android is no guide to whether either gap matters, because it cannot exhibit them.
+BouncyCastle's `DefaultCMSSignatureAlgorithmNameGenerator.getSignatureName` resolves the
+algorithm from the two OIDs alone and never reads `getParameters()` (verified by `javap`
+against bcpkix-jdk18on 1.84), so both encodings work there. The Tickster pass verified on
+Android and read `Tampered` on iOS: a parity divergence, which is why both arms are
+carried.
 
 Two levels carry a `digestAlgorithm`: the SignerInfo, and the SignedData-level
 `digestAlgorithms` SET. The library checks them separately - `expectedDigestAlgorithm ==
 signer.digestAlgorithm` for the first, `digestAlgorithms.contains(signer.digestAlgorithm)`
-for the second - so both must end up carrying NULL. Nothing requires an issuer to use the
-same encoding at both levels, and all four combinations are legal, so the two are evaluated
-independently and whichever side omits the parameters is rewritten. Fixing one level alone
-just trades one false `Tampered` for another.
+for the second - so both must end up in the derived encoding. Nothing requires an issuer
+to use the same encoding at both levels, and all four combinations are legal, so the two
+are evaluated independently and whichever side differs is rewritten. Fixing one level
+alone just trades one false `Tampered` for another.
 
-No rewrite is attempted unless the SET is a single SHA-1 identifier that can be kept in
-step: the library parses it with `DER.set`, which requires lexicographic order, so
-re-encoding one member of a larger set risks breaking the ordering, and a larger set cannot
-be guaranteed to hold the rewritten identifier the `contains` check looks for.
+No rewrite is attempted unless the SET is a single identifier for the same digest that
+can be kept in step: the library parses it with `DER.set`, which requires lexicographic
+order, so re-encoding one member of a larger set risks breaking the ordering, and a larger
+set cannot be guaranteed to hold the rewritten identifier the `contains` check looks for.
+Only `SEQUENCE { oid }` and `SEQUENCE { oid, NULL }` are rewritten; any other parameters
+are left alone.
 
 Neither field is covered by the signature, so no rewrite can make a tampered pass verify.
