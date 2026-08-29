@@ -1,22 +1,21 @@
 #if canImport(PDFKit)
 import CoreGraphics
 import Foundation
+import PDFKit
 import Testing
 
 @testable import PassesPDF
 
-/// Regression for ipass-auy: every page rasterised upside down because
-/// `rasterise` y-flipped a `CGContext(data:)` bitmap that is already y-up.
-/// A page whose only ink is a bar along its TOP edge must land at row 0 of
-/// the returned buffer on every render path, including a `.subRect` whose
-/// `top` is measured from the page top.
+/// A page whose only ink is a bar along its top edge must land at row 0 on every
+/// render path, including a `.subRect` whose `top` is measured from the page top.
 struct PDFKitRendererOrientationTests {
     private static let pageWidth: CGFloat = 200
     private static let pageHeight: CGFloat = 300
     private static let barHeight: CGFloat = 20
 
     /// One page, white implicit background, black bar across the top `barHeight` points.
-    private func topBarPDF() -> Data {
+    /// `rotation` sets the page's /Rotate entry.
+    private func topBarPDF(rotation: Int = 0) -> Data {
         let data = NSMutableData()
         guard let consumer = CGDataConsumer(data: data as CFMutableData) else { return Data() }
         var mediaBox = CGRect(x: 0, y: 0, width: Self.pageWidth, height: Self.pageHeight)
@@ -31,7 +30,12 @@ struct PDFKitRendererOrientationTests {
         )
         ctx.endPDFPage()
         ctx.closePDF()
-        return data as Data
+        guard rotation != 0 else { return data as Data }
+        guard let doc = PDFKit.PDFDocument(data: data as Data), let page = doc.page(at: 0) else {
+            return Data()
+        }
+        page.rotation = rotation
+        return doc.dataRepresentation() ?? Data()
     }
 
     private struct Raster {
@@ -45,8 +49,8 @@ struct PDFKitRendererOrientationTests {
             return Array(bytes[start..<start + 4])
         }
 
-        var firstRow: [UInt8] { centrePixel(row: 0) }
-        var lastRow: [UInt8] { centrePixel(row: heightPx - 1) }
+        var topCentre: [UInt8] { centrePixel(row: 0) }
+        var bottomCentre: [UInt8] { centrePixel(row: heightPx - 1) }
     }
 
     private func raster(_ result: RenderResult) -> Raster? {
@@ -65,8 +69,8 @@ struct PDFKitRendererOrientationTests {
             pdf: topBarPDF(), page: 0, widthPx: 100, heightPx: 150, sourceRect: .fullPage
         )
         guard let raster = raster(result) else { return }
-        #expect(raster.firstRow == black)
-        #expect(raster.lastRow == white)
+        #expect(raster.topCentre == black)
+        #expect(raster.bottomCentre == white)
     }
 
     @Test func renderFittedKeepsTopOfPageAtRowZero() async {
@@ -74,8 +78,8 @@ struct PDFKitRendererOrientationTests {
             pdf: topBarPDF(), page: 0, maxPixels: 100 * 150
         )
         guard let raster = raster(result) else { return }
-        #expect(raster.firstRow == black)
-        #expect(raster.lastRow == white)
+        #expect(raster.topCentre == black)
+        #expect(raster.bottomCentre == white)
     }
 
     @Test func subRectTopHalfKeepsTopOfPageAtRowZero() async {
@@ -84,8 +88,18 @@ struct PDFKitRendererOrientationTests {
             sourceRect: .subRect(left: 0, top: 0, right: 1, bottom: 0.5)
         )
         guard let raster = raster(result) else { return }
-        #expect(raster.firstRow == black)
-        #expect(raster.lastRow == white)
+        #expect(raster.topCentre == black)
+        #expect(raster.bottomCentre == white)
+    }
+
+    @Test func rotate180PagePutsItsBarAtTheBottom() async {
+        // /Rotate 180 displays the page's top edge at the bottom; the raster must follow.
+        let result = await PDFKitRenderer().render(
+            pdf: topBarPDF(rotation: 180), page: 0, widthPx: 100, heightPx: 150, sourceRect: .fullPage
+        )
+        guard let raster = raster(result) else { return }
+        #expect(raster.topCentre == white)
+        #expect(raster.bottomCentre == black)
     }
 
     @Test func subRectBottomHalfContainsNoTopBar() async {
@@ -94,8 +108,8 @@ struct PDFKitRendererOrientationTests {
             sourceRect: .subRect(left: 0, top: 0.5, right: 1, bottom: 1)
         )
         guard let raster = raster(result) else { return }
-        #expect(raster.firstRow == white)
-        #expect(raster.lastRow == white)
+        #expect(raster.topCentre == white)
+        #expect(raster.bottomCentre == white)
     }
 }
 #endif

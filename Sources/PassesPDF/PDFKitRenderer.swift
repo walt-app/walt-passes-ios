@@ -232,8 +232,8 @@ package struct PDFKitRenderer: PDFRendererBinder {
             // fill white first so implicit-white pages don't show through dark UI (GH#92).
             ctx.setFillColor(red: 1, green: 1, blue: 1, alpha: 1)
             ctx.fill(CGRect(x: 0, y: 0, width: widthPx, height: heightPx))
-            // No y-flip: a raw CGContext(data:) is already y-up with row 0 at the
-            // top, and PDFPage.draw draws in that same space (ipass-auy).
+            // CGContext(data:) is y-up with row 0 at the top and PDFPage.draw targets
+            // that space, so no UIKit-style flip.
             switch sourceRect {
             case .fullPage:
                 ctx.scaleBy(
