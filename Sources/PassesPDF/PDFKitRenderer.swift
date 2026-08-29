@@ -9,10 +9,10 @@ import PassesPDFCore
 /// `android.graphics.pdf.PdfRenderer`; CoreGraphics replaces the
 /// `Bitmap` -> `SharedMemory` pixel pipeline.
 ///
-/// This implementation is intentionally not exercised by the unit suite: the
-/// trust-claim-bearing orchestration lives in ``DefaultPDFImporter``, which
-/// fakes ``PDFRendererBinder`` in tests so the test surface stays free of
-/// PDFKit's IO surface. The behaviour pinned here mirrors the Android side:
+/// The trust-claim-bearing orchestration lives in ``DefaultPDFImporter``, which
+/// fakes ``PDFRendererBinder`` in tests so that surface stays free of PDFKit's
+/// IO. Only pixel-level facts are pinned against the real renderer here (white
+/// background, orientation). The behaviour mirrors the Android side:
 ///
 ///  - Page-count probe enforces `maxPages` and folds open failures onto a
 ///    rejection kind.
@@ -232,11 +232,8 @@ package struct PDFKitRenderer: PDFRendererBinder {
             // fill white first so implicit-white pages don't show through dark UI (GH#92).
             ctx.setFillColor(red: 1, green: 1, blue: 1, alpha: 1)
             ctx.fill(CGRect(x: 0, y: 0, width: widthPx, height: heightPx))
-            // PDFKit draws in PDF coordinate space (origin bottom-left).
-            // The bitmap is top-left, so flip y to match the Android
-            // Bitmap layout consumers expect.
-            ctx.translateBy(x: 0, y: CGFloat(heightPx))
-            ctx.scaleBy(x: 1, y: -1)
+            // No y-flip: a raw CGContext(data:) is already y-up with row 0 at the
+            // top, and PDFPage.draw draws in that same space (ipass-auy).
             switch sourceRect {
             case .fullPage:
                 ctx.scaleBy(
@@ -252,7 +249,8 @@ package struct PDFKitRenderer: PDFRendererBinder {
                     x: CGFloat(widthPx) / srcW,
                     y: CGFloat(heightPx) / srcH
                 )
-                ctx.translateBy(x: -srcLeft, y: -srcTop)
+                // `top` is measured from the page top; convert to the y-up bottom edge.
+                ctx.translateBy(x: -srcLeft, y: -(pageBounds.height - srcTop - srcH))
             }
             page.draw(with: .mediaBox, to: ctx)
             return true
