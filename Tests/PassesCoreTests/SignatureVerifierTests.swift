@@ -1,4 +1,5 @@
 import Foundation
+import SwiftASN1
 import Testing
 @_spi(CMS) import X509
 
@@ -133,154 +134,45 @@ struct SignatureVerifierTests {
         #expect(result == .failed(.manifestSignatureMismatch))
     }
 
-    @Test func normalizerLeavesNonBareRSABlobsByteIdentical() throws {
-        // The blast-radius guarantee: the normalizer only rewrites bare-rsaEncryption SignerInfos
-        // and returns everything else verbatim. Non-DER garbage and a valid ECDSA (combined-OID)
-        // CMS blob must both round-trip unchanged.
-        let garbage: [UInt8] = [0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x01, 0x02]
-        #expect(normalizeCMSSignatureAlgorithm(garbage) == garbage)
-
-        let root = try SignatureTestSupport.makeRoot(commonName: "Root")
-        let leaf = try SignatureTestSupport.makeLeaf(commonName: "Leaf", issuer: root)
-        let ecdsaBlob = try SignatureTestSupport.sign(manifestBytes: manifest, signer: leaf)
-        #expect(normalizeCMSSignatureAlgorithm(ecdsaBlob) == ecdsaBlob)
-
-        // Sanity: the bare-RSA fixture IS rewritten, so the round-trip checks above are meaningful.
-        let fixture = try AppleSignedFixture.load()
-        #expect(normalizeCMSSignatureAlgorithm(fixture.signature) != fixture.signature)
-    }
-
-    @Test func sha1BareRSASignerIsAppleVerified() throws {
-        // SHA-1 digest with the bare `rsaEncryption` signatureAlgorithm: without the SHA-1 arm,
-        // `AlgorithmIdentifier(digestAlgorithmFor:)` throws and a sound pass reads Tampered.
-        let root = try SignatureTestSupport.makeRSARoot(commonName: "RSA Root")
-        let leaf = try SignatureTestSupport.makeRSALeaf(commonName: "RSA Leaf", issuer: root)
-        let signature = try SignatureTestSupport.signSHA1BareRSA(manifestBytes: manifest, signer: leaf)
-        let result = SignatureTestSupport.verify(
-            signatureBytes: signature,
-            manifestBytes: manifest,
-            config: ParserConfig(),
-            trustAnchors: [root.certificate],
-            knownIntermediates: []
+    @Test func realTicksterSignedPkpassIsAppleVerified() throws {
+        // Regression guard for ipass-vjt. Same bare-`rsaEncryption` shape as the Tixly fixture, but
+        // Tickster encodes the SHA-256 digest identifier as `SEQUENCE { sha256, NULL }` at both the
+        // SignedData and SignerInfo levels, where Apple and Tixly leave the parameters absent.
+        // Production verifier path, bundled anchors. Red before the SHA-2 arm of the digest
+        // parameter rewrite, green after. See `Fixtures/apple-signed-sha256-null/README.md`.
+        let fixture = try AppleSignedFixture.load(.tickster)
+        let result = verifySignature(
+            signatureBytes: fixture.signature,
+            manifestBytes: fixture.manifest,
+            config: ParserConfig()
         )
         #expect(result == .ok(.appleVerified))
     }
 
-    @Test func sha1BareRSAWithTamperedManifestStillFails() throws {
-        // Rewriting the algorithm OID must not let a mutated manifest verify.
-        let root = try SignatureTestSupport.makeRSARoot(commonName: "RSA Root")
-        let leaf = try SignatureTestSupport.makeRSALeaf(commonName: "RSA Leaf", issuer: root)
-        let signature = try SignatureTestSupport.signSHA1BareRSA(manifestBytes: manifest, signer: leaf)
-        let result = SignatureTestSupport.verify(
-            signatureBytes: signature,
-            manifestBytes: [UInt8]("{\"pass.json\":\"DIFFERENT\"}".utf8),
-            config: ParserConfig(),
-            trustAnchors: [root.certificate],
-            knownIntermediates: []
+    @Test func realTicksterSignedPkpassWithTamperedManifestStillFails() throws {
+        let fixture = try AppleSignedFixture.load(.tickster)
+        var tampered = fixture.manifest
+        tampered[tampered.count / 2] ^= 0x01
+        let result = verifySignature(
+            signatureBytes: fixture.signature,
+            manifestBytes: tampered,
+            config: ParserConfig()
         )
         #expect(result == .failed(.manifestSignatureMismatch))
     }
 
-    @Test func sha1WithAbsentDigestParametersIsAppleVerified() throws {
-        // The other legal SHA-1 digestAlgorithm encoding, parameters absent. Only SHA-1 maps to a
-        // NULL-carrying expectation, so this shape failed a comparison other digests pass.
-        let root = try SignatureTestSupport.makeRSARoot(commonName: "RSA Root")
-        let leaf = try SignatureTestSupport.makeRSALeaf(commonName: "RSA Leaf", issuer: root)
-        let signature = try SignatureTestSupport.signSHA1BareRSA(
-            manifestBytes: manifest,
-            signer: leaf,
-            digestParameters: .absent
-        )
-        let result = SignatureTestSupport.verify(
-            signatureBytes: signature,
-            manifestBytes: manifest,
-            config: ParserConfig(),
-            trustAnchors: [root.certificate],
-            knownIntermediates: []
-        )
-        #expect(result == .ok(.appleVerified))
-    }
-
-    @Test func sha1WithAbsentDigestParametersAndTamperedManifestFails() throws {
-        let root = try SignatureTestSupport.makeRSARoot(commonName: "RSA Root")
-        let leaf = try SignatureTestSupport.makeRSALeaf(commonName: "RSA Leaf", issuer: root)
-        let signature = try SignatureTestSupport.signSHA1BareRSA(
-            manifestBytes: manifest,
-            signer: leaf,
-            digestParameters: .absent
-        )
-        let result = SignatureTestSupport.verify(
-            signatureBytes: signature,
-            manifestBytes: [UInt8]("{\"pass.json\":\"DIFFERENT\"}".utf8),
-            config: ParserConfig(),
-            trustAnchors: [root.certificate],
-            knownIntermediates: []
-        )
-        #expect(result == .failed(.manifestSignatureMismatch))
-    }
-
-    @Test(arguments: [
-        SignatureTestSupport.DigestParameters.absentInSignerInfoOnly,
-        SignatureTestSupport.DigestParameters.absentInDeclaredOnly,
-    ])
-    func sha1WithMixedDigestParametersIsAppleVerified(
-        shape: SignatureTestSupport.DigestParameters
-    ) throws {
-        // The SignerInfo and the SignedData digestAlgorithms SET each carry their own parameter
-        // encoding, and nothing requires an issuer to use the same one at both levels. The library
-        // checks them separately, so a rewrite has to fix whichever side is absent rather than only
-        // the case where both are.
-        let root = try SignatureTestSupport.makeRSARoot(commonName: "RSA Root")
-        let leaf = try SignatureTestSupport.makeRSALeaf(commonName: "RSA Leaf", issuer: root)
-        let signature = try SignatureTestSupport.signSHA1BareRSA(
-            manifestBytes: manifest,
-            signer: leaf,
-            digestParameters: shape
-        )
-        let result = SignatureTestSupport.verify(
-            signatureBytes: signature,
-            manifestBytes: manifest,
-            config: ParserConfig(),
-            trustAnchors: [root.certificate],
-            knownIntermediates: []
-        )
-        #expect(result == .ok(.appleVerified))
-    }
-
-    @Test func sha1WithMixedDigestParametersAndTamperedManifestFails() throws {
-        let root = try SignatureTestSupport.makeRSARoot(commonName: "RSA Root")
-        let leaf = try SignatureTestSupport.makeRSALeaf(commonName: "RSA Leaf", issuer: root)
-        let signature = try SignatureTestSupport.signSHA1BareRSA(
-            manifestBytes: manifest,
-            signer: leaf,
-            digestParameters: .absentInSignerInfoOnly
-        )
-        let result = SignatureTestSupport.verify(
-            signatureBytes: signature,
-            manifestBytes: [UInt8]("{\"pass.json\":\"DIFFERENT\"}".utf8),
-            config: ParserConfig(),
-            trustAnchors: [root.certificate],
-            knownIntermediates: []
-        )
-        #expect(result == .failed(.manifestSignatureMismatch))
-    }
-
-    @Test func sha1FixtureShapesDifferOnTheWire() throws {
-        // Anti-vacuity: all four parameter encodings must be distinct on the wire, otherwise the
-        // absent and mixed tests could be re-running the NULL case.
-        let root = try SignatureTestSupport.makeRSARoot(commonName: "RSA Root")
-        let leaf = try SignatureTestSupport.makeRSALeaf(commonName: "RSA Leaf", issuer: root)
-        let shapes: [SignatureTestSupport.DigestParameters] = [
-            .explicitNull, .absent, .absentInSignerInfoOnly, .absentInDeclaredOnly,
-        ]
-        let encodings = try shapes.map { shape in
-            try SignatureTestSupport.signSHA1BareRSA(
-                manifestBytes: manifest,
-                signer: leaf,
-                digestParameters: shape
-            )
+    @Test func ticksterFixtureCarriesNullSHA256ParametersAtBothLevels() throws {
+        // Anti-vacuity for the fixture itself: a renewal that swapped in an absent-parameters pass
+        // would leave the verify test green without exercising the rewrite.
+        let fixture = try AppleSignedFixture.load(.tickster)
+        let cms = try #require(CMSStructure(signatureBytes: fixture.signature))
+        let declared = try #require(cms.declaredDigestAlgorithms)
+        #expect(declared.count == 1)
+        for identifier in [cms.digestAlgorithm] + declared {
+            let fields = try #require(constructedChildren(of: identifier))
+            #expect(leadingOID(of: identifier) == CMSOID.sha256)
+            #expect(fields.count == 2 && fields[1].identifier == .null)
         }
-        #expect(Set(encodings).count == shapes.count)
     }
 
     @Test func fallbackDeclinesBlobWithoutSignedAttrs() throws {
@@ -293,14 +185,6 @@ struct SignatureVerifierTests {
         #expect(
             prepareWireOrderFallback(signatureBytes: signature, manifestBytes: manifest) == nil
         )
-    }
-
-    @Test func normalizerRewritesSHA1BareRSAToCombinedOID() throws {
-        // Anti-vacuity: the blob really is the bare-RSA shape the normalizer must rewrite.
-        let root = try SignatureTestSupport.makeRSARoot(commonName: "RSA Root")
-        let leaf = try SignatureTestSupport.makeRSALeaf(commonName: "RSA Leaf", issuer: root)
-        let signature = try SignatureTestSupport.signSHA1BareRSA(manifestBytes: manifest, signer: leaf)
-        #expect(normalizeCMSSignatureAlgorithm(signature) != signature)
     }
 
     @Test func wireOrderSignedAttrsVerify() throws {
@@ -471,32 +355,4 @@ struct SignatureVerifierTests {
         if case .failed = result { return }
         Issue.record("expected a failed result, got \(result)")
     }
-}
-
-/// Real Apple-signed pkpass manifest + detached CMS, loaded from bundled test resources.
-private struct AppleSignedFixture {
-    let manifest: [UInt8]
-    let signature: [UInt8]
-
-    static func load() throws -> AppleSignedFixture {
-        AppleSignedFixture(
-            manifest: try bytes(resource: "manifest", ext: "json"),
-            signature: try bytes(resource: "signature", ext: nil)
-        )
-    }
-
-    private static func bytes(resource: String, ext: String?) throws -> [UInt8] {
-        guard
-            let url = Bundle.module.url(
-                forResource: resource,
-                withExtension: ext,
-                subdirectory: "Fixtures/apple-signed"
-            )
-        else {
-            throw FixtureError.missing("\(resource).\(ext ?? "")")
-        }
-        return [UInt8](try Data(contentsOf: url))
-    }
-
-    enum FixtureError: Error { case missing(String) }
 }

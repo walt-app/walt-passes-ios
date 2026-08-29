@@ -30,15 +30,15 @@ internal enum SignatureTestSupport {
     }
 
     /// Generates a self-signed RSA CA root. RSA (not P256) because only an RSA signer can carry the
-    /// bare-`rsaEncryption` / SHA-1 `SignerInfo` shape the normalizer exists to rewrite.
+    /// bare-`rsaEncryption` `SignerInfo` shapes the normalizer exists to rewrite.
     static func makeRSARoot(commonName: String) throws -> Issued {
         let key = Certificate.PrivateKey(try _RSA.Signing.PrivateKey(keySize: .bits2048))
         let name = try DistinguishedName { CommonName(commonName) }
         return try makeSelfSigned(key: key, name: name, signatureAlgorithm: .sha256WithRSAEncryption)
     }
 
-    /// Generates an RSA leaf issued by `issuer`. The certificate chain stays on SHA-256; only the
-    /// CMS `SignerInfo` under test uses SHA-1, so the fixture isolates the behaviour being pinned.
+    /// Generates an RSA leaf issued by `issuer`. The certificate chain stays on SHA-256 with absent
+    /// parameters, so only the CMS `SignerInfo` under test carries the shape being pinned.
     static func makeRSALeaf(commonName: String, issuer: Issued) throws -> Issued {
         let key = Certificate.PrivateKey(try _RSA.Signing.PrivateKey(keySize: .bits2048))
         let subject = try DistinguishedName { CommonName(commonName) }
@@ -140,14 +140,15 @@ internal enum SignatureTestSupport {
         )
     }
 
-    /// How a SHA-1 fixture encodes `digestAlgorithm` parameters at each of the two levels that carry
-    /// one: the SignerInfo, and the SignedData `digestAlgorithms` SET. `SEQUENCE { sha1, NULL }` and
-    /// `SEQUENCE { sha1 }` are both legal, so all four combinations are legal, and nothing requires an
+    /// How a fixture encodes `digestAlgorithm` parameters at each of the two levels that carry one:
+    /// the SignerInfo, and the SignedData `digestAlgorithms` SET. `SEQUENCE { oid, NULL }` and
+    /// `SEQUENCE { oid }` are both legal, so all four combinations are legal, and nothing requires an
     /// issuer to use the same encoding at both levels.
-    internal enum DigestParameters {
-        /// NULL at both levels - what `CMS.sign` and the real SHA-1 pkpasses emit.
+    internal enum DigestParameters: CaseIterable {
+        /// NULL at both levels - what `CMS.sign` and the real SHA-1 pkpasses emit for SHA-1, and
+        /// what Tickster emits for SHA-256.
         case explicitNull
-        /// Absent at both levels.
+        /// Absent at both levels - what `CMS.sign` and Apple PassKit emit for SHA-256.
         case absent
         /// Absent in the SignerInfo, NULL in the SignedData SET.
         case absentInSignerInfoOnly
@@ -165,50 +166,83 @@ internal enum SignatureTestSupport {
 
     /// CMS-signs `manifestBytes` with an RSA `signer` using SHA-1, then rewrites
     /// `SignerInfo.signatureAlgorithm` from the combined OID back to bare `rsaEncryption` - the wire
-    /// shape Apple PassKit ships. `CMS.sign` emits only the combined OID, so the rewrite is the only
-    /// way to synthesize the shape without a real Apple-signed SHA-1 pass.
-    ///
-    /// `signingTime` is passed so the envelope carries `signedAttrs`; without it `CMS.sign` emits no
-    /// attributes and the signature covers `manifestBytes` directly.
+    /// shape Apple PassKit ships - and re-encodes the digest parameters per `digestParameters`.
+    /// `CMS.sign` emits only the combined OID, so the rewrite is the only way to synthesize the shape
+    /// without a real Apple-signed SHA-1 pass.
     static func signSHA1BareRSA(
         manifestBytes: [UInt8],
         signer: Issued,
         digestParameters: DigestParameters = .explicitNull
     ) throws -> [UInt8] {
+        try signBareRSA(
+            manifestBytes: manifestBytes,
+            signer: signer,
+            signatureAlgorithm: .sha1WithRSAEncryption,
+            digest: CMSOID.sha1,
+            digestParameters: digestParameters
+        )
+    }
+
+    /// The SHA-256 counterpart. `CMS.sign` emits absent parameters here, so `.explicitNull` is the
+    /// Tickster shape that has to be synthesized.
+    static func signSHA256BareRSA(
+        manifestBytes: [UInt8],
+        signer: Issued,
+        digestParameters: DigestParameters = .absent
+    ) throws -> [UInt8] {
+        try signBareRSA(
+            manifestBytes: manifestBytes,
+            signer: signer,
+            signatureAlgorithm: .sha256WithRSAEncryption,
+            digest: CMSOID.sha256,
+            digestParameters: digestParameters
+        )
+    }
+
+    /// `signingTime` is passed so the envelope carries `signedAttrs`; without it `CMS.sign` emits no
+    /// attributes and the signature covers `manifestBytes` directly. Both digest identifiers are
+    /// re-emitted structurally, so a fixture can carry a different encoding at each level.
+    private static func signBareRSA(
+        manifestBytes: [UInt8],
+        signer: Issued,
+        signatureAlgorithm: Certificate.SignatureAlgorithm,
+        digest: ASN1ObjectIdentifier,
+        digestParameters: DigestParameters
+    ) throws -> [UInt8] {
         let combined = try CMS.sign(
             manifestBytes,
-            signatureAlgorithm: .sha1WithRSAEncryption,
+            signatureAlgorithm: signatureAlgorithm,
             certificate: signer.certificate,
             privateKey: signer.privateKey,
             signingTime: Date(timeIntervalSince1970: 1_750_000_000),
             detached: true
         )
-        let bare = try rewriteToBareRSA(combined)
-        guard digestParameters != .explicitNull else { return bare }
-        return try dropSHA1DigestParameters(bare, shape: digestParameters)
-    }
-
-    /// Re-emits the SHA-1 `digestAlgorithm` without its NULL parameters at whichever levels `shape`
-    /// selects. Targeted structurally rather than by a whole-tree walk, so a fixture can carry a
-    /// different encoding at each level.
-    private static func dropSHA1DigestParameters(
-        _ signatureBytes: [UInt8],
-        shape: DigestParameters
-    ) throws -> [UInt8] {
-        let cms = try require(CMSStructure(signatureBytes: signatureBytes))
+        let cms = try require(CMSStructure(signatureBytes: combined))
+        guard let emitted = cms.signatureAlgorithm,
+            leadingOID(of: emitted) == CMSOID.combinedRSA(forDigest: digest)
+        else {
+            throw TestSupportError.noSignerInfoAlgorithmToRewrite
+        }
         return try cms.reserialized(
-            digestAlgorithms: shape.declaredAbsent
-                ? { try serializeAlgorithmIdentifier(CMSOID.sha1, nullParameters: false, into: &$0) }
-                : nil
-        ) { signerInfo in
-            for (index, field) in cms.signerInfoFields.enumerated() {
-                if index == CMSStructure.digestAlgorithmIndex, shape.signerInfoAbsent {
-                    try serializeAlgorithmIdentifier(CMSOID.sha1, nullParameters: false, into: &signerInfo)
-                } else {
-                    signerInfo.serialize(field)
+            digestAlgorithms: { set in
+                try serializeAlgorithmIdentifier(
+                    digest, nullParameters: !digestParameters.declaredAbsent, into: &set)
+            },
+            signerInfo: { signerInfo in
+                for (index, field) in cms.signerInfoFields.enumerated() {
+                    switch index {
+                    case CMSStructure.digestAlgorithmIndex:
+                        try serializeAlgorithmIdentifier(
+                            digest, nullParameters: !digestParameters.signerInfoAbsent,
+                            into: &signerInfo)
+                    case cms.signatureAlgorithmIndex:
+                        try serializeAlgorithmIdentifier(CMSOID.rsaEncryption, into: &signerInfo)
+                    default:
+                        signerInfo.serialize(field)
+                    }
                 }
             }
-        }
+        )
     }
 
     /// How a wire-order fixture's `signedAttrs` SET should deviate from sorted DER order.
@@ -331,47 +365,6 @@ internal enum SignatureTestSupport {
     private static func require<T>(_ value: T?) throws -> T {
         guard let value else { throw TestSupportError.unexpectedShape }
         return value
-    }
-
-    /// Inverse of `normalizeCMSSignatureAlgorithm`: rewrites the `SignerInfo.signatureAlgorithm`
-    /// SEQUENCE - the `AlgorithmIdentifier` immediately followed by the signature OCTET STRING -
-    /// to bare `rsaEncryption`, leaving `digestAlgorithm` and everything else untouched.
-    private static func rewriteToBareRSA(_ signatureBytes: [UInt8]) throws -> [UInt8] {
-        var serializer = DER.Serializer()
-        let changed = try rewriteToBareRSANode(try DER.parse(signatureBytes), into: &serializer)
-        guard changed else { throw TestSupportError.noSignerInfoAlgorithmToRewrite }
-        return serializer.serializedBytes
-    }
-
-    private static func rewriteToBareRSANode(
-        _ node: ASN1Node,
-        into serializer: inout DER.Serializer
-    ) throws -> Bool {
-        guard case .constructed(let collection) = node.content else {
-            serializer.serialize(node)
-            return false
-        }
-        let children = Array(collection)
-        let rewriteIndex = children.indices.first { index in
-            index + 1 < children.count && children[index + 1].identifier == .octetString
-                && leadingOID(of: children[index]) == CMSOID.sha1WithRSA
-        }
-
-        var changed = false
-        try serializer.appendConstructedNode(identifier: node.identifier) { inner in
-            for (index, child) in children.enumerated() {
-                if index == rewriteIndex {
-                    try inner.appendConstructedNode(identifier: .sequence) { algorithmIdentifier in
-                        try algorithmIdentifier.serialize(CMSOID.rsaEncryption)
-                        try algorithmIdentifier.serialize(ASN1Null())
-                    }
-                    changed = true
-                } else if try rewriteToBareRSANode(child, into: &inner) {
-                    changed = true
-                }
-            }
-        }
-        return changed
     }
 
     internal enum TestSupportError: Error {
