@@ -46,7 +46,8 @@ the bundled Apple Root CA.
 
 ## Renewal procedure
 
-Same as `apple-signed/README.md`, with one extra requirement: the replacement pass must
-keep the explicit-NULL SHA-2 encoding at both levels. `openssl asn1parse -inform DER -in
+Steps 1, 2 and 4 of `apple-signed/README.md` (there is no Android copy to keep in step),
+with one extra requirement: the replacement pass must keep the explicit-NULL SHA-2 encoding
+at both levels. `openssl asn1parse -inform DER -in
 signature` must show `sha256` immediately followed by `NULL` inside the `digestAlgorithms`
 SET and again inside the `SignerInfo`; the pinning test fails otherwise.

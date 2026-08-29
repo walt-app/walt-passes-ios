@@ -8,12 +8,9 @@ import SwiftASN1
 /// Two rewrites, both driven by `digestAlgorithm`:
 ///  - `signatureAlgorithm` bare `rsaEncryption` -> the implied `shaNNNWithRSAEncryption`. Apple
 ///    PassKit ships the bare OID, which the library does not know.
-///  - `digestAlgorithm` parameters -> the one encoding the library derives for that digest: explicit
-///    NULL for SHA-1, absent for SHA-2. RFC 5754 s2 lets a sender emit either and requires a
-///    receiver to accept both, but the library derives a single identifier from the signature
-///    algorithm and compares with `==`, so the other encoding fails. Applied at each of the two
-///    levels that carry a digest identifier. Seen in both directions: Tickster signs SHA-256 with
-///    NULL.
+///  - `digestAlgorithm` parameters -> the encoding the library derives for that digest (NULL for
+///    SHA-1, absent for SHA-2), at each of the two levels carrying one. RFC 5754 s2 allows either on
+///    the wire, but the library compares with `==`. Tickster signs SHA-256 with NULL.
 ///
 /// Neither field is covered by the signature - that is over `signedAttrs` - so no rewrite can make a
 /// tampered pass verify. Both target the sole SignerInfo structurally, so certificates, whose own
@@ -65,9 +62,8 @@ private func combinedRSARewrite(
     return CMSOID.combinedRSA(forDigest: digestOID)
 }
 
-/// Which of the two levels carrying a `digestAlgorithm` need their parameters re-encoded, and to
-/// what. The levels are independent: nothing stops an issuer encoding `SEQUENCE { oid }` at one and
-/// `SEQUENCE { oid, NULL }` at the other, and all four combinations are legal DER.
+/// Which of the two levels carrying a `digestAlgorithm` need re-encoding, and to what. The levels
+/// are independent: all four combinations of absent / NULL are legal DER.
 private struct DigestParameterRewrite {
     /// The encoding the library derives for this digest: NULL for SHA-1, absent for SHA-2.
     let nullParameters: Bool
@@ -78,15 +74,9 @@ private struct DigestParameterRewrite {
     var isNeeded: Bool { signerInfo || declared }
 }
 
-/// Both levels must end up in the derived encoding, because the library checks them separately: it
-/// compares the SignerInfo's `digestAlgorithm` against the identifier it derives from the signature
-/// algorithm, and it also requires the SignedData `digestAlgorithms` SET to contain that identifier.
-/// Fixing one level alone just trades one false `.tampered` for another.
-///
-/// So no rewrite is attempted unless the SET is a single identifier for the same digest this can
-/// keep in step. The library parses that SET with `DER.set`, which requires lexicographic order, so
-/// re-encoding one member of a larger set risks breaking the ordering; and a larger set cannot be
-/// guaranteed to hold the rewritten identifier the `contains` check will look for.
+/// The library checks both levels separately, so both must end up in the derived encoding. Only a
+/// single-member SET for the same digest is rewritten, so it can be kept in step without reordering.
+/// See docs/CMS_WIRE_ORDER_SIGNEDATTRS.md, "The algorithm pre-pass".
 private func digestParameterRewrite(
     _ cms: CMSStructure,
     digestOID: ASN1ObjectIdentifier

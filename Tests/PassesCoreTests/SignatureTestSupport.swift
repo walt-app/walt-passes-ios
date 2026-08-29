@@ -140,6 +140,30 @@ internal enum SignatureTestSupport {
         )
     }
 
+    /// The digests an RSA signer can pair with bare `rsaEncryption`, and the combined OID `CMS.sign`
+    /// has to be asked for to produce each.
+    internal enum RSADigest: CaseIterable {
+        case sha1, sha256, sha384, sha512
+
+        var oid: ASN1ObjectIdentifier {
+            switch self {
+            case .sha1: CMSOID.sha1
+            case .sha256: CMSOID.sha256
+            case .sha384: CMSOID.sha384
+            case .sha512: CMSOID.sha512
+            }
+        }
+
+        var signatureAlgorithm: Certificate.SignatureAlgorithm {
+            switch self {
+            case .sha1: .sha1WithRSAEncryption
+            case .sha256: .sha256WithRSAEncryption
+            case .sha384: .sha384WithRSAEncryption
+            case .sha512: .sha512WithRSAEncryption
+            }
+        }
+    }
+
     /// How a fixture encodes `digestAlgorithm` parameters at each of the two levels that carry one:
     /// the SignerInfo, and the SignedData `digestAlgorithms` SET. `SEQUENCE { oid, NULL }` and
     /// `SEQUENCE { oid }` are both legal, so all four combinations are legal, and nothing requires an
@@ -164,52 +188,50 @@ internal enum SignatureTestSupport {
         }
     }
 
-    /// CMS-signs `manifestBytes` with an RSA `signer` using SHA-1, then rewrites
-    /// `SignerInfo.signatureAlgorithm` from the combined OID back to bare `rsaEncryption` - the wire
-    /// shape Apple PassKit ships - and re-encodes the digest parameters per `digestParameters`.
-    /// `CMS.sign` emits only the combined OID, so the rewrite is the only way to synthesize the shape
-    /// without a real Apple-signed SHA-1 pass.
-    static func signSHA1BareRSA(
+    /// CMS-signs `manifestBytes` with an RSA `signer`, then rewrites `SignerInfo.signatureAlgorithm`
+    /// from the combined OID back to bare `rsaEncryption` - the wire shape Apple PassKit ships - and
+    /// re-encodes both digest identifiers per `digestParameters`. `CMS.sign` emits only the combined
+    /// OID, so the rewrite is the only way to synthesize the shape without a real Apple-signed pass.
+    static func signBareRSA(
         manifestBytes: [UInt8],
         signer: Issued,
-        digestParameters: DigestParameters = .explicitNull
-    ) throws -> [UInt8] {
-        try signBareRSA(
-            manifestBytes: manifestBytes,
-            signer: signer,
-            signatureAlgorithm: .sha1WithRSAEncryption,
-            digest: CMSOID.sha1,
-            digestParameters: digestParameters
-        )
-    }
-
-    /// The SHA-256 counterpart. `CMS.sign` emits absent parameters here, so `.explicitNull` is the
-    /// Tickster shape that has to be synthesized.
-    static func signSHA256BareRSA(
-        manifestBytes: [UInt8],
-        signer: Issued,
-        digestParameters: DigestParameters = .absent
-    ) throws -> [UInt8] {
-        try signBareRSA(
-            manifestBytes: manifestBytes,
-            signer: signer,
-            signatureAlgorithm: .sha256WithRSAEncryption,
-            digest: CMSOID.sha256,
-            digestParameters: digestParameters
-        )
-    }
-
-    /// `signingTime` is passed so the envelope carries `signedAttrs`; without it `CMS.sign` emits no
-    /// attributes and the signature covers `manifestBytes` directly. Both digest identifiers are
-    /// re-emitted structurally, so a fixture can carry a different encoding at each level.
-    private static func signBareRSA(
-        manifestBytes: [UInt8],
-        signer: Issued,
-        signatureAlgorithm: Certificate.SignatureAlgorithm,
-        digest: ASN1ObjectIdentifier,
+        digest: RSADigest,
         digestParameters: DigestParameters
     ) throws -> [UInt8] {
-        let combined = try CMS.sign(
+        let combined = try signWithAttributes(
+            manifestBytes, signer: signer, signatureAlgorithm: digest.signatureAlgorithm)
+        let cms = try require(CMSStructure(signatureBytes: combined))
+        guard let emitted = cms.signatureAlgorithm,
+            leadingOID(of: emitted) == CMSOID.combinedRSA(forDigest: digest.oid)
+        else {
+            throw TestSupportError.noSignerInfoAlgorithmToRewrite
+        }
+        return try reencodeSignerInfo(
+            cms, digest: digest.oid, digestParameters: digestParameters, bareRSA: true)
+    }
+
+    /// CMS-signs with an ECDSA P-256 `signer` and re-encodes both digest identifiers per
+    /// `digestParameters`. `CMS.sign` emits absent parameters, so NULL is the shape being synthesized.
+    static func signECDSA(
+        manifestBytes: [UInt8],
+        signer: Issued,
+        digestParameters: DigestParameters
+    ) throws -> [UInt8] {
+        let sorted = try signWithAttributes(
+            manifestBytes, signer: signer, signatureAlgorithm: .ecdsaWithSHA256)
+        let cms = try require(CMSStructure(signatureBytes: sorted))
+        return try reencodeSignerInfo(
+            cms, digest: CMSOID.sha256, digestParameters: digestParameters, bareRSA: false)
+    }
+
+    /// `signingTime` makes the envelope carry `signedAttrs`; without it `CMS.sign` emits no attributes
+    /// and the signature covers `manifestBytes` directly.
+    private static func signWithAttributes(
+        _ manifestBytes: [UInt8],
+        signer: Issued,
+        signatureAlgorithm: Certificate.SignatureAlgorithm
+    ) throws -> [UInt8] {
+        try CMS.sign(
             manifestBytes,
             signatureAlgorithm: signatureAlgorithm,
             certificate: signer.certificate,
@@ -217,13 +239,18 @@ internal enum SignatureTestSupport {
             signingTime: Date(timeIntervalSince1970: 1_750_000_000),
             detached: true
         )
-        let cms = try require(CMSStructure(signatureBytes: combined))
-        guard let emitted = cms.signatureAlgorithm,
-            leadingOID(of: emitted) == CMSOID.combinedRSA(forDigest: digest)
-        else {
-            throw TestSupportError.noSignerInfoAlgorithmToRewrite
-        }
-        return try cms.reserialized(
+    }
+
+    /// Re-emits the sole SignerInfo with `digest` encoded per `digestParameters` at both levels and,
+    /// when `bareRSA`, its signature algorithm as bare `rsaEncryption`. Structural, so a fixture can
+    /// carry a different encoding at each level.
+    private static func reencodeSignerInfo(
+        _ cms: CMSStructure,
+        digest: ASN1ObjectIdentifier,
+        digestParameters: DigestParameters,
+        bareRSA: Bool
+    ) throws -> [UInt8] {
+        try cms.reserialized(
             digestAlgorithms: { set in
                 try serializeAlgorithmIdentifier(
                     digest, nullParameters: !digestParameters.declaredAbsent, into: &set)
@@ -235,7 +262,7 @@ internal enum SignatureTestSupport {
                         try serializeAlgorithmIdentifier(
                             digest, nullParameters: !digestParameters.signerInfoAbsent,
                             into: &signerInfo)
-                    case cms.signatureAlgorithmIndex:
+                    case cms.signatureAlgorithmIndex where bareRSA:
                         try serializeAlgorithmIdentifier(CMSOID.rsaEncryption, into: &signerInfo)
                     default:
                         signerInfo.serialize(field)
@@ -267,14 +294,7 @@ internal enum SignatureTestSupport {
         signer: Issued,
         shape: SignedAttrsShape = .reversed
     ) throws -> [UInt8] {
-        let sorted = try CMS.sign(
-            manifestBytes,
-            signatureAlgorithm: .ecdsaWithSHA256,
-            certificate: signer.certificate,
-            privateKey: signer.privateKey,
-            signingTime: Date(timeIntervalSince1970: 1_750_000_000),
-            detached: true
-        )
+        let sorted = try signWithAttributes(manifestBytes, signer: signer, signatureAlgorithm: .ecdsaWithSHA256)
         return try reorderSignedAttrs(sorted, signer: signer, shape: shape)
     }
 

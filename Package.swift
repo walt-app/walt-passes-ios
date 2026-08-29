@@ -137,8 +137,8 @@ let package = Package(
             ],
             path: "Tests/PassesCoreTests",
             resources: [
-                // Real Apple-signed pkpass artifacts (manifest + detached CMS), copied
-                // verbatim from the Android side. Regression guard for walt-passes-ios#31.
+                // Real Apple-signed pkpass artifacts (manifest + detached CMS); provenance and
+                // shelf life in each subdirectory's README.
                 .copy("Fixtures"),
             ]
         ),

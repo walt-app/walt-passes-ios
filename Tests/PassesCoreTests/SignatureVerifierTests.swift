@@ -135,11 +135,9 @@ struct SignatureVerifierTests {
     }
 
     @Test func realTicksterSignedPkpassIsAppleVerified() throws {
-        // Regression guard for ipass-vjt. Same bare-`rsaEncryption` shape as the Tixly fixture, but
-        // Tickster encodes the SHA-256 digest identifier as `SEQUENCE { sha256, NULL }` at both the
-        // SignedData and SignerInfo levels, where Apple and Tixly leave the parameters absent.
-        // Production verifier path, bundled anchors. Red before the SHA-2 arm of the digest
-        // parameter rewrite, green after. See `Fixtures/apple-signed-sha256-null/README.md`.
+        // Same bare-`rsaEncryption` shape as the Tixly fixture, but with `SEQUENCE { sha256, NULL }`
+        // at both digest levels. Production verifier path, bundled anchors; provenance in
+        // `Fixtures/apple-signed-sha256-null/README.md`.
         let fixture = try AppleSignedFixture.load(.tickster)
         let result = verifySignature(
             signatureBytes: fixture.signature,
