@@ -1,0 +1,3 @@
+# Default gitleaks rules; no allowlists needed yet.
+[extend]
+useDefault = true
