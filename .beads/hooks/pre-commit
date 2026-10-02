@@ -22,3 +22,6 @@ if command -v bd >/dev/null 2>&1; then
   if [ $_bd_exit -ne 0 ]; then exit $_bd_exit; fi
 fi
 # --- END BEADS INTEGRATION v1.0.3 ---
+
+# --- gitleaks (user content, outside the beads markers) ---
+if [ -x "$HOME/.local/bin/gitleaks-pre-commit" ]; then "$HOME/.local/bin/gitleaks-pre-commit" || exit 1; fi
