@@ -57,4 +57,4 @@ swift test          # Linux builds only non-Apple-framework targets; full suite 
 
 ## Architecture
 
-Walt Passes kernel: PDF/pkpass parsing, device-only encrypted storage, and secure rendering, consumed by `walt-app/iOS` as an SPM dependency. Mirrors `walt-passes-android`. See `README.md` for the target map and `SECURITY.md` for the trust-claim surface every implementation must uphold.
+Walt Passes kernel: PDF/pkpass parsing, device-only encrypted storage, and secure rendering, consumed by `walt-app/ios` as an SPM dependency. Mirrors `walt-passes-android`. See `README.md` for the target map and `SECURITY.md` for the trust-claim surface every implementation must uphold.
