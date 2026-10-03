@@ -3,8 +3,8 @@
 Walt Passes for iOS — PDF pass parser, encrypted storage, secure rendering.
 
 This is the iOS counterpart of
-[`walt-passes-android`](https://github.com/walt-app/passes-android) and is
-consumed by [`walt-app/iOS`](https://github.com/walt-app/iOS) as a Swift
+[`walt-passes-android`](https://github.com/walt-app/walt-passes-android) and is
+consumed by [`walt-app/ios`](https://github.com/walt-app/ios) as a Swift
 Package dependency.
 
 The two kernels mirror each other's *contracts* — the same result shapes, the
