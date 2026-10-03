@@ -12,8 +12,10 @@ Implementations of the public protocols in this package MUST uphold:
   `PDFImporter` is treated as fully untrusted. No MIME or file-extension
   branching may relax validation.
 - **Bounded work.** PDF decode, image decode, and parser CPU time are
-  bounded; see `docs/PDF_THREAT_MODEL.md` (lands with the Passes feature
-  epic).
+  bounded. The format-level threats are enumerated once for both platforms
+  in the walt-passes-android
+  [PDF threat model](https://github.com/walt-app/walt-passes-android/blob/main/docs/PDF_THREAT_MODEL.md);
+  where the iOS controls differ, the decision is recorded in `docs/adr/`.
 - **No content in logs.** Telemetry uses enum-only signatures; pass content
   and PII are never logged or sent to a network.
 - **Local only.** `PassStorage` writes are encrypted at rest and excluded
