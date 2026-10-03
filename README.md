@@ -51,4 +51,4 @@ iOS-specific code paths build via `xcodebuild` against an iOS simulator.
 
 ## License
 
-MIT, see [`LICENSE`](LICENSE).
+Apache 2.0. See [`LICENSE`](LICENSE).
