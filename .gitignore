@@ -12,3 +12,8 @@ DerivedData/
 .dolt/
 *.db
 .beads-credential-key
+
+# Beads: the issue database stays local and is never committed
+.beads/issues.jsonl
+.beads/interactions.jsonl
+.beads/backup/

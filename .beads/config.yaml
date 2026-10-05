@@ -52,3 +52,6 @@
 # - linear.api-key
 # - github.org
 # - github.repo
+
+# The issue export is never staged: this repo is public
+export.git-add: false
