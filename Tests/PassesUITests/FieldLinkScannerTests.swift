@@ -70,11 +70,11 @@ struct FieldLinkScannerTests {
     }
 
     @Test func rejectsBareEightDigitTicketNumberAsPhone() {
-        #expect(FieldLinkScanner.scan("52311919", source: source).isEmpty)
+        #expect(FieldLinkScanner.scan("10203040", source: source).isEmpty)
     }
 
     @Test func rejectsBareSevenDigitOrderNumberAsPhone() {
-        #expect(FieldLinkScanner.scan("5847559", source: source).isEmpty)
+        #expect(FieldLinkScanner.scan("1020304", source: source).isEmpty)
     }
 
     @Test func rejectsLongBareDigitRunAsPhone() {
@@ -82,7 +82,7 @@ struct FieldLinkScannerTests {
     }
 
     @Test func rejectsBareDigitRunAdjacentToProseAsPhone() {
-        #expect(FieldLinkScanner.scan("Order 52311919 placed.", source: source).isEmpty)
+        #expect(FieldLinkScanner.scan("Order 10203040 placed.", source: source).isEmpty)
     }
 
     @Test func acceptsPhoneWithOnlySpaceHint() {

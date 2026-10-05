@@ -1,7 +1,7 @@
 # `apple-signed-sha256-null/` fixture
 
-Real Apple-signed pkpass artifacts from a Tickster event ticket (`&Me Concert.pkpass` in
-`pass-file-samples`, signed 2026-07-01), reduced to the two files the verifier needs. Used
+Real Apple-signed pkpass artifacts from a Tickster event ticket, reduced to the two files
+the verifier needs. Used
 by `SignatureVerifierTests.realTicksterSignedPkpassIsAppleVerified` to run the full
 production verifier path against a wire shape Apple's WWDR-issued signers actually ship.
 
