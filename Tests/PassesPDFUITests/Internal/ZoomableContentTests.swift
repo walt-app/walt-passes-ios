@@ -10,6 +10,7 @@ import Testing
 /// test (`ZoomableImageClipTest`) cannot run here, so the iOS pin is
 /// structural and claims exactly what it checks: one scale site in the
 /// module, in this file; one clip, framed to the slot before it clips.
+@MainActor
 struct ZoomableContentTests {
 
     private typealias Zoom = ZoomableContent<EmptyView>
