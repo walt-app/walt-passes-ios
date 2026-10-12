@@ -19,8 +19,7 @@ public func makeDocumentImporter(
     // widening them (pinned by PassesDocumentGuardTests).
     let imageDecoder = makeBoundedImageDecoder()
     let barcodeDecoder = VisionBarcodeImageDecoder()
-    return DefaultDocumentImporter(
-        config: config,
+    let deps = DefaultDocumentImporter.Deps(
         pdfImport: { bytes, label, persist in
             try await pdfImporter.import(
                 source: .data(bytes), displayLabel: label,
@@ -49,11 +48,9 @@ public func makeDocumentImporter(
             // the bounded barcode read lane (§7: two bounded decodes per
             // composite import, Android's own two-sandbox parity).
             await barcodeDecoder.decode(source: .data(bytes))
-        },
-        now: { Int64(DispatchTime.now().uptimeNanoseconds / 1_000_000) },
-        wallClock: { Int64(Date().timeIntervalSince1970 * 1000) },
-        idGenerator: { UUID().uuidString }
+        }
     )
+    return DefaultDocumentImporter(config: config, deps: deps)
 }
 
 /// The pdf backend's persist shape, adapted onto `DocumentPersist.pdf`.
@@ -79,16 +76,39 @@ enum BarcodeExtraction {
 }
 
 struct DefaultDocumentImporter: DocumentImporter {
+    /// The backend and clock seams in one record (the `DefaultPDFImporter.Deps`
+    /// shape). The backends have no defaults: they are built from the config.
+    struct Deps: Sendable {
+        let pdfImport: @Sendable (Data, String, @escaping PdfPersistAdapter) async throws -> PDFImportResult
+        let imageDecode: @Sendable (Data, Int) async -> ImageDecodeOutcome
+        let barcodeExtract: @Sendable (Data) async -> BarcodeDecodeResult
+        /// Monotonic millis, for telemetry durations only.
+        let now: @Sendable () -> Int64
+        /// Epoch millis, for `importedAtEpochMs` only.
+        let wallClock: @Sendable () -> Int64
+        let idGenerator: @Sendable () -> String
+
+        init(
+            pdfImport:
+                @escaping @Sendable (Data, String, @escaping PdfPersistAdapter) async throws
+                -> PDFImportResult,
+            imageDecode: @escaping @Sendable (Data, Int) async -> ImageDecodeOutcome,
+            barcodeExtract: @escaping @Sendable (Data) async -> BarcodeDecodeResult,
+            now: @escaping @Sendable () -> Int64 = { Int64(DispatchTime.now().uptimeNanoseconds / 1_000_000) },
+            wallClock: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) },
+            idGenerator: @escaping @Sendable () -> String = { UUID().uuidString }
+        ) {
+            self.pdfImport = pdfImport
+            self.imageDecode = imageDecode
+            self.barcodeExtract = barcodeExtract
+            self.now = now
+            self.wallClock = wallClock
+            self.idGenerator = idGenerator
+        }
+    }
+
     let config: DocumentImportConfig
-    let pdfImport: @Sendable (Data, String, @escaping PdfPersistAdapter) async throws -> PDFImportResult
-    let imageDecode: @Sendable (Data, Int) async -> ImageDecodeOutcome
-    let barcodeExtract: @Sendable (Data) async -> BarcodeDecodeResult
-    /// Monotonic millis — telemetry durations ONLY.
-    let now: @Sendable () -> Int64
-    /// Epoch millis — `importedAtEpochMs` ONLY (the monotonic clock cannot serve
-    /// here; it is not epoch time).
-    let wallClock: @Sendable () -> Int64
-    let idGenerator: @Sendable () -> String
+    let deps: Deps
 
     func `import`(
         source: DocumentImportSource,
@@ -99,13 +119,13 @@ struct DefaultDocumentImporter: DocumentImporter {
         // One bounded read closes the offset-corruption hazard a peek-then-reopen
         // would open: whatever a backend receives is materialized from this exact
         // buffer, not a second read of the source.
-        let startedAt = now()
+        let startedAt = deps.now()
         let bytes: Data
         switch await readBounded(source) {
         case .unavailable:
             return .unrecognized
         case .oversized(let prefix):
-            return rejectOversized(prefix: prefix, durationMillis: now() - startedAt)
+            return rejectOversized(prefix: prefix, durationMillis: deps.now() - startedAt)
         case .bytes(let read):
             bytes = read
         }
@@ -158,7 +178,7 @@ struct DefaultDocumentImporter: DocumentImporter {
                     label: label, bytes: pdfBytes, thumbnailBytes: thumbnailBytes,
                     pageCount: pageCount, pageRasters: pageRasters))
         }
-        let result = try await pdfImport(bytes, displayLabel, adapter)
+        let result = try await deps.pdfImport(bytes, displayLabel, adapter)
         switch result {
         case .imported(let doc):
             return .importedPdf(doc)
@@ -176,7 +196,7 @@ struct DefaultDocumentImporter: DocumentImporter {
         confirmBarcode: (@Sendable (String, ScannableFormat) async throws -> Bool)?,
         persist: @escaping @Sendable (DocumentPersist) async throws -> Void
     ) async throws -> DocumentImportResult {
-        let startedAt = now()
+        let startedAt = deps.now()
         let guardHook = config.imageTelemetryGuard
         guardHook.onImportStarted()
 
@@ -185,15 +205,15 @@ struct DefaultDocumentImporter: DocumentImporter {
         // the value stays in the vocabulary for schema parity).
         if format == .webp {
             guardHook.onImportFailed(
-                event: ImageImportFailedEvent(outcome: .decode, durationMillis: now() - startedAt))
+                event: ImageImportFailedEvent(outcome: .decode, durationMillis: deps.now() - startedAt))
             return .imageRejected(.notAnImage)
         }
 
         let decoded: (thumbnailBytes: Data, widthPx: Int, heightPx: Int)
-        switch await imageDecode(bytes, config.maxImageDecodePx) {
+        switch await deps.imageDecode(bytes, config.maxImageDecodePx) {
         case .rejected(let kind):
             guardHook.onImportFailed(
-                event: ImageImportFailedEvent(outcome: .decode, durationMillis: now() - startedAt))
+                event: ImageImportFailedEvent(outcome: .decode, durationMillis: deps.now() - startedAt))
             return .imageRejected(kind)
         case .decoded(let thumbnailBytes, let widthPx, let heightPx):
             decoded = (thumbnailBytes, widthPx, heightPx)
@@ -217,7 +237,7 @@ struct DefaultDocumentImporter: DocumentImporter {
             throw CancellationError()
         } catch {
             guardHook.onImportFailed(
-                event: ImageImportFailedEvent(outcome: .storageHandoff, durationMillis: now() - startedAt))
+                event: ImageImportFailedEvent(outcome: .storageHandoff, durationMillis: deps.now() - startedAt))
             return .storageHandoffFailed
         }
 
@@ -225,7 +245,7 @@ struct DefaultDocumentImporter: DocumentImporter {
         guardHook.onImportSucceeded(
             event: ImageImportSucceededEvent(
                 byteCount: byteCount, format: format, widthPx: decoded.widthPx,
-                heightPx: decoded.heightPx, durationMillis: now() - startedAt))
+                heightPx: decoded.heightPx, durationMillis: deps.now() - startedAt))
         return buildImportedResult(
             extraction: extraction, displayLabel: displayLabel, byteCount: byteCount,
             decoded: decoded)
@@ -242,7 +262,7 @@ struct DefaultDocumentImporter: DocumentImporter {
         guard let confirmBarcode else { return .degraded(.notAttempted) }
         let payload: String
         let format: ScannableFormat
-        switch await barcodeExtract(bytes) {
+        switch await deps.barcodeExtract(bytes) {
         case .noBarcodeFound:
             return .degraded(.noCodeFound)
         case .decodeFailed(let reason):
@@ -291,16 +311,16 @@ struct DefaultDocumentImporter: DocumentImporter {
         case .confirmed(let payload, let symbology):
             return .importedBarcodedImage(
                 BarcodedImageDocument(
-                    id: BarcodedImageDocumentId(idGenerator()), displayLabel: displayLabel,
+                    id: BarcodedImageDocumentId(deps.idGenerator()), displayLabel: displayLabel,
                     byteCount: byteCount, widthPx: decoded.widthPx, heightPx: decoded.heightPx,
                     barcodePayload: payload, barcodeFormat: symbology,
-                    importedAtEpochMs: wallClock()))
+                    importedAtEpochMs: deps.wallClock()))
         case .degraded:
             return .importedImage(
                 ImageDocument(
-                    id: ImageDocumentId(idGenerator()), displayLabel: displayLabel,
+                    id: ImageDocumentId(deps.idGenerator()), displayLabel: displayLabel,
                     byteCount: byteCount, widthPx: decoded.widthPx, heightPx: decoded.heightPx,
-                    importedAtEpochMs: wallClock()))
+                    importedAtEpochMs: deps.wallClock()))
         }
     }
 
