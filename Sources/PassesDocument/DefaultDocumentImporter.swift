@@ -76,8 +76,8 @@ enum BarcodeExtraction {
 }
 
 struct DefaultDocumentImporter: DocumentImporter {
-    /// The backend and clock seams in one record (the `DefaultPDFImporter.Deps`
-    /// shape). The backends have no defaults: they are built from the config.
+    /// The backend and clock seams in one record, like `DefaultPDFImporter.Deps`.
+    /// The backends have no defaults: they are built from the config.
     struct Deps: Sendable {
         let pdfImport: @Sendable (Data, String, @escaping PdfPersistAdapter) async throws -> PDFImportResult
         let imageDecode: @Sendable (Data, Int) async -> ImageDecodeOutcome

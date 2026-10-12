@@ -36,8 +36,8 @@ struct ZoomableContent<Content: View>: View {
     ) {
         self.label = label
         self.content = content()
-        _scale = State(initialValue: initialScale)
-        _lastScale = State(initialValue: initialScale)
+        _scale = State(initialValue: Self.clampScale(initialScale))
+        _lastScale = State(initialValue: Self.clampScale(initialScale))
         _offset = State(initialValue: initialOffset)
         _lastOffset = State(initialValue: initialOffset)
     }

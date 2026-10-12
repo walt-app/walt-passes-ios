@@ -109,7 +109,7 @@ enum BoundedRasterDecoder {
             srcWidth: srcWidth, srcHeight: srcHeight,
             maxWidthPx: maxWidthPx, maxHeightPx: maxHeightPx)
         let sameSize = dims.widthPx == srcWidth && dims.heightPx == srcHeight
-        // Wider-than-8-bpc sources are redrawn at 8 bpc, so raster size follows from dimensions.
+        // Only 8-bpc sources are kept as-is, so raster size follows from dimensions.
         if orientation == 1, image.bitsPerComponent == 8, sameSize {
             return ImageRaster(
                 image: image, widthPx: srcWidth, heightPx: srcHeight, sourceAspect: aspect)

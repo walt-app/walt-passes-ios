@@ -53,7 +53,7 @@ struct ZoomableContentTests {
             ZoomableContent(
                 label: Text("Zoomed"), initialScale: 5, initialOffset: CGSize(width: 0, height: 30)
             ) {
-                Color.red.padding(10)
+                Color(.sRGB, red: 1, green: 0, blue: 0).padding(10)
             }
             .frame(width: CGFloat(side), height: CGFloat(side))
             Color.clear.frame(width: CGFloat(side), height: CGFloat(band))

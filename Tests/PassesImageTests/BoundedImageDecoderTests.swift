@@ -214,6 +214,20 @@ struct BoundedImageDecoderTests {
         #expect(raster.image.bytesPerRow * raster.image.height <= raster.widthPx * raster.heightPx * 4)
     }
 
+    /// ImageIO widens a 1-bit PNG to 8 bpc, so it stays on the untouched path
+    /// and within the same per-pixel bound.
+    @Test func oneBitSourceComesOutEightBitWithinTheBound() async throws {
+        let png = try ImageFixtures.oneBitPng(width: 64, height: 48)
+        let result = await makeDecoder().decode(
+            source: .data(png), maxWidthPx: 2048, maxHeightPx: 2048)
+        guard case .ok(let raster) = result else {
+            Issue.record("expected ok, got \(result)")
+            return
+        }
+        #expect(raster.image.bitsPerComponent == 8)
+        #expect(raster.image.bytesPerRow * raster.image.height <= raster.widthPx * raster.heightPx * 4)
+    }
+
     // MARK: - EXIF orientation (ImageIO returns stored pixels; the fit applies
     // the header orientation so the persisted dimensions are display dimensions)
 
@@ -374,6 +388,28 @@ enum ImageFixtures {
 
     static func jpeg(width: Int, height: Int) throws -> Data {
         try encoded(width: width, height: height, type: UTType.jpeg.identifier)
+    }
+
+    /// A striped 1-bit grayscale PNG.
+    static func oneBitPng(width: Int, height: Int) throws -> Data {
+        let rowBytes = (width + 7) / 8
+        let bits = Data(repeating: 0b1010_1010, count: rowBytes * height)
+        guard
+            let provider = CGDataProvider(data: bits as CFData),
+            let image = CGImage(
+                width: width, height: height, bitsPerComponent: 1, bitsPerPixel: 1,
+                bytesPerRow: rowBytes, space: CGColorSpaceCreateDeviceGray(),
+                bitmapInfo: CGBitmapInfo(rawValue: 0), provider: provider, decode: nil,
+                shouldInterpolate: false, intent: .defaultIntent)
+        else { throw EncodeUnsupported() }
+        let out = NSMutableData()
+        guard
+            let destination = CGImageDestinationCreateWithData(
+                out, UTType.png.identifier as CFString, 1, nil)
+        else { throw EncodeUnsupported() }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else { throw EncodeUnsupported() }
+        return out as Data
     }
 
     /// A noisy 16-bits-per-component RGBA PNG.
