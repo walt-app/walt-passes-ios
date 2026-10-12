@@ -194,6 +194,26 @@ struct BoundedImageDecoderTests {
         }
     }
 
+    /// A 16-bpc source that needs no resize or rotation is still normalized to
+    /// 8 bpc, so the stored raster's size is predictable from its dimensions.
+    @Test func sixteenBitSourceOnTheUntouchedPathComesOutEightBit() async throws {
+        let png = try ImageFixtures.sixteenBitPng(width: 64, height: 48)
+        let fixture = try #require(
+            CGImageSourceCreateWithData(png as CFData, nil)
+                .flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) })
+        try #require(fixture.bitsPerComponent == 16, "the fixture must really be 16 bpc")
+        let result = await makeDecoder().decode(
+            source: .data(png), maxWidthPx: 2048, maxHeightPx: 2048)
+        guard case .ok(let raster) = result else {
+            Issue.record("expected ok, got \(result)")
+            return
+        }
+        #expect(raster.widthPx == 64)
+        #expect(raster.heightPx == 48)
+        #expect(raster.image.bitsPerComponent == 8)
+        #expect(raster.image.bytesPerRow * raster.image.height <= raster.widthPx * raster.heightPx * 4)
+    }
+
     // MARK: - EXIF orientation (ImageIO returns stored pixels; the fit applies
     // the header orientation so the persisted dimensions are display dimensions)
 
@@ -354,6 +374,34 @@ enum ImageFixtures {
 
     static func jpeg(width: Int, height: Int) throws -> Data {
         try encoded(width: width, height: height, type: UTType.jpeg.identifier)
+    }
+
+    /// A noisy 16-bits-per-component RGBA PNG.
+    static func sixteenBitPng(width: Int, height: Int) throws -> Data {
+        guard
+            let context = CGContext(
+                data: nil, width: width, height: height, bitsPerComponent: 16, bytesPerRow: 0,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                    | CGBitmapInfo.byteOrder16Little.rawValue
+            )
+        else { throw EncodeUnsupported() }
+        for y in 0..<height {
+            for x in 0..<width {
+                let shade = CGFloat((x * 7 + y * 13) % 97) / 96
+                context.setFillColor(CGColor(red: shade, green: 1 - shade, blue: 0.5, alpha: 1))
+                context.fill(CGRect(x: x, y: y, width: 1, height: 1))
+            }
+        }
+        guard let image = context.makeImage() else { throw EncodeUnsupported() }
+        let out = NSMutableData()
+        guard
+            let destination = CGImageDestinationCreateWithData(
+                out, UTType.png.identifier as CFString, 1, nil)
+        else { throw EncodeUnsupported() }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else { throw EncodeUnsupported() }
+        return out as Data
     }
 
     struct EncodeUnsupported: Error {}
