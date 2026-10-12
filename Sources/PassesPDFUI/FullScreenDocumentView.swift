@@ -194,14 +194,12 @@ private struct FullScreenImageView: View {
                 .accessibilityElement()
                 .accessibilityLabel("Image couldn't be displayed")
         case .rendered(let handle, _):
-            ZoomableContent {
+            ZoomableContent(label: Text("Image document")) {
                 handle.image
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .accessibilityElement()
-            .accessibilityLabel("Image document")
         }
     }
 }
@@ -261,14 +259,12 @@ private struct FullScreenPage: View {
                     "Page \(pageIndex + 1) of \(document.pageCount) couldn't be displayed"
                 )
         case .rendered(let image, _):
-            ZoomableContent {
+            ZoomableContent(label: Text("Page \(pageIndex + 1) of \(document.pageCount)")) {
                 image.image
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .accessibilityElement()
-            .accessibilityLabel("Page \(pageIndex + 1) of \(document.pageCount)")
         }
     }
 }

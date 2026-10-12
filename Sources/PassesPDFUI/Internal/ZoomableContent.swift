@@ -19,17 +19,33 @@ import SwiftUI
 ///
 /// Pan is clamped to ±((scale-1) × slot/2) per axis — the content edge never
 /// pans past the slot edge — and resets with the double-tap zoom-out.
+///
+/// The primitive owns its accessibility: one image element with `label`, its
+/// zoom level as the value, and a VoiceOver zoom action driving the same scale.
 struct ZoomableContent<Content: View>: View {
+    let label: Text
     let content: Content
 
-    init(@ViewBuilder content: () -> Content) {
-        self.content = content()
+    init(label: Text, @ViewBuilder content: () -> Content) {
+        self.init(label: label, initialScale: Self.minScale, initialOffset: .zero, content: content)
     }
 
-    @State private var scale: CGFloat = 1
-    @State private var lastScale: CGFloat = 1
-    @State private var offset: CGSize = .zero
-    @State private var lastOffset: CGSize = .zero
+    /// Test seam: start already zoomed and panned.
+    init(
+        label: Text, initialScale: CGFloat, initialOffset: CGSize, @ViewBuilder content: () -> Content
+    ) {
+        self.label = label
+        self.content = content()
+        _scale = State(initialValue: initialScale)
+        _lastScale = State(initialValue: initialScale)
+        _offset = State(initialValue: initialOffset)
+        _lastOffset = State(initialValue: initialOffset)
+    }
+
+    @State private var scale: CGFloat
+    @State private var lastScale: CGFloat
+    @State private var offset: CGSize
+    @State private var lastOffset: CGSize
 
     var body: some View {
         GeometryReader { proxy in
@@ -82,6 +98,17 @@ struct ZoomableContent<Content: View>: View {
                     lastOffset = .zero
                 }
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(label)
+            .accessibilityAddTraits(.isImage)
+            .accessibilityValue(Text(Double(scale), format: .percent.precision(.fractionLength(0))))
+            .accessibilityZoomAction { action in
+                scale = Self.accessibilityZoomed(scale, zoomIn: action.direction == .zoomIn)
+                lastScale = scale
+                // Zooming out shrinks the pan bound; at 1x this re-centers.
+                offset = Self.clampOffset(offset, scale: scale, slot: proxy.size)
+                lastOffset = offset
+            }
         }
     }
 
@@ -90,6 +117,11 @@ struct ZoomableContent<Content: View>: View {
     static var minScale: CGFloat { 1 }
     static var maxScale: CGFloat { 5 }
     static var doubleTapScale: CGFloat { 2 }
+    static var accessibilityZoomStep: CGFloat { 1 }
+
+    static func accessibilityZoomed(_ scale: CGFloat, zoomIn: Bool) -> CGFloat {
+        clampScale(zoomIn ? scale + accessibilityZoomStep : scale - accessibilityZoomStep)
+    }
 
     static func clampScale(_ value: CGFloat) -> CGFloat {
         min(max(value, minScale), maxScale)
