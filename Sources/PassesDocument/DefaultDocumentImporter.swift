@@ -13,12 +13,18 @@ import UniformTypeIdentifiers
 public func makeDocumentImporter(
     config: DocumentImportConfig = DocumentImportConfig()
 ) -> any DocumentImporter {
+    // NO config argument: the §7 allowlists, caps and wait budget stay the
+    // defaults (pinned by PassesDocumentGuardTests).
+    makeDocumentImporter(config: config, barcodeDecoder: VisionBarcodeImageDecoder())
+}
+
+/// Test seam: the same importer over an injected barcode decoder.
+func makeDocumentImporter(
+    config: DocumentImportConfig, barcodeDecoder: any BarcodeImageDecoder
+) -> any DocumentImporter {
     let pdfImporter = makePDFImporter(config: config.pdfConfig)
-    // NO config argument, deliberately: the §7 retained-lane allowlist and caps
-    // are the defaults, and a call-site config would be one keystroke from
-    // widening them (pinned by PassesDocumentGuardTests).
+    // NO config argument, as above.
     let imageDecoder = makeBoundedImageDecoder()
-    let barcodeDecoder = VisionBarcodeImageDecoder()
     let deps = DefaultDocumentImporter.Deps(
         pdfImport: { bytes, label, persist in
             try await pdfImporter.import(

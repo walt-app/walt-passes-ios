@@ -145,7 +145,8 @@ let package = Package(
         .testTarget(
             name: "PassesDocumentTests",
             // PassesStorage: the ImageFormat roster-parity guard only.
-            dependencies: ["PassesDocument", "PassesCore", "PassesStorage"],
+            // PassesBarcode: the integration tests' decode budget.
+            dependencies: ["PassesDocument", "PassesCore", "PassesStorage", "PassesBarcode"],
             path: "Tests/PassesDocumentTests"
         ),
         .testTarget(
