@@ -120,6 +120,16 @@ struct PassesDocumentGuardTests {
         try #require(callSites >= 2, "both production decoder call sites must exist")
     }
 
+    /// The decoder-injection overload is a test seam; only the no-config factory is public.
+    @Test func onlyTheDefaultDocumentImporterFactoryIsPublic() throws {
+        var publicFactories = 0
+        for file in try Self.allPackageSourceFiles() {
+            let text = try String(contentsOf: file, encoding: .utf8)
+            publicFactories += text.components(separatedBy: "public func makeDocumentImporter(").count - 1
+        }
+        #expect(publicFactories == 1)
+    }
+
     /// The importer's `ImageFormat` and storage's `DocumentInsert.ImageFormat`
     /// are two rosters with no compile-time link (the mapping is the consumer's
     /// seam); adding a container to one and not the other must fail HERE, not at

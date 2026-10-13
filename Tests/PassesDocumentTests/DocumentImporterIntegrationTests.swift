@@ -1,11 +1,16 @@
 import CoreGraphics
 import Foundation
 import ImageIO
+import PassesBarcode
 import PassesCore
 import Testing
 import UniformTypeIdentifiers
 
 @testable import PassesDocument
+
+/// These assert what the importer reads, not how fast; a cold Vision start on CI
+/// can outrun the production 5 s budget.
+private let generousDecodeBudget: Duration = .seconds(120)
 
 /// End-to-end through the REAL importer — real bounded image decode, real Vision
 /// barcode extraction, real PDF sniff — the iOS analogue of Android's
@@ -15,10 +20,17 @@ import UniformTypeIdentifiers
 @Suite("Document importer integration")
 struct DocumentImporterIntegrationTests {
 
+    private static func makeImporter() -> any DocumentImporter {
+        makeDocumentImporter(
+            config: DocumentImportConfig(),
+            barcodeDecoder: VisionBarcodeImageDecoder(
+                config: BarcodeDecodeConfig(decodeTimeout: generousDecodeBudget)))
+    }
+
     @Test func qrBearingPngImportsAsOneCompositeArtifact() async throws {
         let png = try Self.qrPng(payload: "WALT-COMPOSITE-1")
         nonisolated(unsafe) var persisted: [DocumentPersist] = []
-        let result = try await makeDocumentImporter().import(
+        let result = try await Self.makeImporter().import(
             source: .data(png), displayLabel: "Loyalty",
             confirmBarcode: { payload, _ in payload == "WALT-COMPOSITE-1" },
             persist: { persisted.append($0) })
@@ -43,7 +55,7 @@ struct DocumentImporterIntegrationTests {
     @Test func declinedConfirmationImportsAsAPlainImage() async throws {
         let png = try Self.qrPng(payload: "DECLINE-ME")
         nonisolated(unsafe) var persisted: [DocumentPersist] = []
-        let result = try await makeDocumentImporter().import(
+        let result = try await Self.makeImporter().import(
             source: .data(png), displayLabel: "Photo",
             confirmBarcode: { _, _ in false },
             persist: { persisted.append($0) })
@@ -62,7 +74,7 @@ struct DocumentImporterIntegrationTests {
     @Test func barcodeLessPhotoImportsAsAPlainImage() async throws {
         let png = try Self.plainPng(width: 64, height: 48)
         nonisolated(unsafe) var persisted: [DocumentPersist] = []
-        let result = try await makeDocumentImporter().import(
+        let result = try await Self.makeImporter().import(
             source: .data(png), displayLabel: "Photo",
             confirmBarcode: { _, _ in true },
             persist: { persisted.append($0) })
