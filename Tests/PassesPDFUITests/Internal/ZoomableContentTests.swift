@@ -5,11 +5,9 @@ import Testing
 
 @testable import PassesPDFUI
 
-/// Pins the shared zoom primitive (ios-dts.12, wpass-pl7.4 mirror): the
-/// constants, the pan clamp math, and the clip INVENTORY — Android's pixel
-/// test (`ZoomableImageClipTest`) cannot run here, so the iOS pin is
-/// structural and claims exactly what it checks: one scale site in the
-/// module, in this file; one clip, framed to the slot before it clips.
+/// Pins the shared zoom primitive: the constants, the pan clamp and VoiceOver
+/// zoom math, the clip by pixels (Android `ZoomableImageClipTest` analogue),
+/// and the clip inventory: one scale site in the module, one slot-framed clip.
 @MainActor
 struct ZoomableContentTests {
 
@@ -37,6 +35,59 @@ struct ZoomableContentTests {
         // At 1x the content is pinned centered.
         let pinned = Zoom.clampOffset(CGSize(width: 50, height: 50), scale: 1, slot: slot)
         #expect(pinned == .zero)
+    }
+
+    @Test func voiceOverZoomStepsWithinTheRoster() {
+        #expect(Zoom.accessibilityZoomed(1, zoomIn: true) == 2)
+        #expect(Zoom.accessibilityZoomed(2.5, zoomIn: false) == 1.5)
+        #expect(Zoom.accessibilityZoomed(5, zoomIn: true) == 5)
+        #expect(Zoom.accessibilityZoomed(1.5, zoomIn: false) == 1)
+    }
+
+    /// Behavioral clip pin: content zoomed and panned toward the dock band must
+    /// paint the whole slot (control) and none of the band below it.
+    @Test func zoomedContentNeverPaintsTheDockBand() throws {
+        let side = 40
+        let band = 20
+        let view = VStack(spacing: 0) {
+            ZoomableContent(
+                label: Text("Zoomed"), initialScale: 5, initialOffset: CGSize(width: 0, height: 30)
+            ) {
+                Color(.sRGB, red: 1, green: 0, blue: 0).padding(10)
+            }
+            .frame(width: CGFloat(side), height: CGFloat(side))
+            Color.clear.frame(width: CGFloat(side), height: CGFloat(band))
+        }
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 1
+        let image = try #require(renderer.cgImage)
+        let red = try #require(Self.redMask(image))
+        try #require(image.width == side && image.height == side + band)
+        let slotRed = (0..<side).reduce(0) { sum, row in sum + red[row].filter { $0 }.count }
+        let bandRed = (side..<(side + band)).reduce(0) { sum, row in sum + red[row].filter { $0 }.count }
+        #expect(slotRed == side * side, "the zoomed content must fill the slot")
+        #expect(bandRed == 0, "zoomed content painted outside its slot")
+    }
+
+    /// Row-major (top row first) map of strongly red, opaque pixels.
+    private static func redMask(_ image: CGImage) -> [[Bool]]? {
+        let width = image.width
+        let height = image.height
+        guard
+            let context = CGContext(
+                data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return nil }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let data = context.data else { return nil }
+        let pixels = data.assumingMemoryBound(to: UInt8.self)
+        return (0..<height).map { row in
+            (0..<width).map { col in
+                let offset = (row * width + col) * 4
+                return pixels[offset] > 200 && pixels[offset + 1] < 60 && pixels[offset + 3] > 200
+            }
+        }
     }
 
     /// The clip inventory: every `scaleEffect` in this module lives in the

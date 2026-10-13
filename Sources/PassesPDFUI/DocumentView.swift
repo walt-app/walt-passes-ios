@@ -117,13 +117,9 @@ public struct DocumentView: View {
     /// shared-token hoist is still open there too).
     static let faceRadius: CGFloat = 20
 
-    /// Longer-side cap for the inline surfaces' decoded pixels, shared by the
-    /// pager's stored-raster inflate and the image arm's bounded decode. The
-    /// inline card slot never shows more than ~400 pt of width, so 1200 px
-    /// covers a 3x display crisply while keeping `defaultPageWindow` pages of
-    /// cache under ~20 MB where the uncapped decode would hold ~80 MB.
-    /// Internal so the decode-budget test pins against the source of truth.
-    static let inlineMaxPixelSize: Int = 1200
+    /// Longer-side pixel cap for inline decodes (~400 pt slot at 3x). Public so
+    /// host surfaces that decode stored rasters inline share the same budget.
+    public static let inlineMaxPixelSize: Int = 1200
 }
 
 /// The ONE face both arms paint their slot with, so they cannot drift on the

@@ -190,23 +190,23 @@ struct DocumentImporterSourceReadTests {
     // MARK: - Cancellation
 
     /// The bounded waits return values rather than throwing, so cancellation is
-    /// surfaced before persist: an abandoned import stores nothing.
+    /// surfaced before persist: an abandoned import stores nothing. The confirm
+    /// hook cancels its own task, so the cancel always lands before persist.
     @Test func aCancelledImportPersistsNothing() async {
         let seams = Seams()
+        seams.extractResult = .decodedBarcode(payload: secretPayload, format: .pdf417)
         let task = Task {
             try await makeImporter(seams).import(
                 source: .data(pngBytes), displayLabel: "P",
-                confirmBarcode: nil, persist: persistRecorder(seams))
+                confirmBarcode: { _, _ in
+                    withUnsafeCurrentTask { $0?.cancel() }
+                    return true
+                },
+                persist: persistRecorder(seams))
         }
-        task.cancel()
-        do {
-            _ = try await task.value
-            // A benign race: the import may complete before the cancel lands.
-        } catch is CancellationError {
-            #expect(seams.persisted.isEmpty)
-        } catch {
-            Issue.record("expected CancellationError, got \(error)")
-        }
+        await #expect(throws: CancellationError.self) { _ = try await task.value }
+        #expect(seams.extractCalls.count == 1)
+        #expect(seams.persisted.isEmpty)
     }
 
     // MARK: - Payload redaction

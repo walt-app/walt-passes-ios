@@ -68,8 +68,7 @@ func makeImporter(
     config.maxBytes = maxBytes
     config.pdfConfig = PDFImportConfig(telemetryGuard: RecordingPdfGuard(seams: seams))
     config.imageTelemetryGuard = RecordingGuard(seams: seams)
-    return DefaultDocumentImporter(
-        config: config,
+    let deps = DefaultDocumentImporter.Deps(
         pdfImport: { bytes, label, persist in
             seams.lock.withLock { seams.pdfCalls.append((bytes, label)) }
             if case .imported = seams.pdfResult {
@@ -89,6 +88,7 @@ func makeImporter(
         wallClock: { fixedWallClockMs },
         idGenerator: { "fixed-id" }
     )
+    return DefaultDocumentImporter(config: config, deps: deps)
 }
 
 func persistRecorder(_ seams: Seams) -> @Sendable (DocumentPersist) async throws -> Void {
