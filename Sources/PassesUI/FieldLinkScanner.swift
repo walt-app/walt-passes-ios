@@ -28,8 +28,8 @@ import Foundation
 /// field (only LF, tab and CRLF pass), then `containsRenderingHazard` rejects any
 /// match holding a Cf, Cc, Zl or Zp scalar, so no actionable string carries one.
 ///
-/// The patterns spell out their character classes rather than `\s` / `\d`, which
-/// are Unicode-aware on ICU.
+/// The patterns spell out their character classes rather than `\s` / `\d`: ICU's
+/// `\d` admits non-ASCII digits, which would dial digits other than those shown.
 ///
 /// Mirror of Android's `is.walt.passes.ui.FieldLinkScanner`.
 public enum FieldLinkScanner {
@@ -49,7 +49,7 @@ public enum FieldLinkScanner {
 
     /// `+` and `(` immediately before a digit run signal an unmatched-paren or
     /// international form.
-    private static let phonePrefixHints: Set<UInt16> = [UInt16(UInt8(ascii: "+")), UInt16(UInt8(ascii: "("))]
+    private static let phonePrefixHints: Set<UInt16> = Set("+(".utf16)
 
     /// Characters that can appear inside the matched phone substring and count
     /// as formatting hints. No-break spaces are not hints: such a number without

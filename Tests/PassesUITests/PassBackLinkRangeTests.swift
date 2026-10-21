@@ -20,6 +20,14 @@ struct PassBackLinkRangeTests {
         )
     }
 
+    @Test func nonAsciiTextBeforeALinkKeepsItsRange() {
+        let text = "Caf\u{00E9} \u{2615}\u{FE0F} \u{1F1E9}\u{1F1F0}\nhttps://a.example/x"
+        let bridged = NSString(string: text) as String
+        for input in [text, bridged] {
+            #expect(linkedRuns(input) == [LinkedRun(("https://a.example/x", 0))])
+        }
+    }
+
     private struct LinkedRun: Equatable {
         let text: String
         let index: Int

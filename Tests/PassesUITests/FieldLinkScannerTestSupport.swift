@@ -60,12 +60,8 @@ private func actionableTarget(_ intent: SecurityIntent) -> String {
     }
 }
 
-/// CPU time burned on the calling thread, in milliseconds.
-///
-/// The catastrophic-backtracking guards measured wall clock and flaked under the parallel
-/// suite: they were reporting the machine's contention, not the scanner's behaviour.
-/// A real blowup is super-linear CPU, which this still catches, and `FieldLinkScanner.scan` is a
-/// synchronous pure function so none of its work escapes this thread.
+/// CPU time burned on the calling thread, in milliseconds. Unlike wall clock it ignores
+/// machine contention, and `scan` is synchronous, so none of its work escapes this thread.
 private func threadCPUMilliseconds() -> Double {
     var time = timespec()
     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &time)
