@@ -150,6 +150,16 @@ struct FieldLinkScannerMultiLineTests {
         expectExactSpans("Tel \(phone).", [(phone, .phone)])
     }
 
+    @Test func phoneWithFigureAndThinSpacesIsOneSpan() {
+        let phone = "+33\u{2007}1\u{2009}23\u{2007}45\u{2009}67\u{2007}89"
+        expectExactSpans("Tel \(phone).", [(phone, .phone)])
+    }
+
+    @Test func otherUnicodeSpacesEndAPhoneMatch() {
+        // Only five horizontal spaces join digit groups; U+2002 splits off the country code.
+        expectExactSpans("+1\u{2002}800 555 1234", [("800 555 1234", .phone)])
+    }
+
     @Test func phoneSpacedOnlyWithNoBreakSpacesAndNoPlusStaysUnlinked() {
         #expect(FieldLinkScanner.scan("Ref 555\u{00A0}123\u{00A0}4567", source: linkScannerTestSource).isEmpty)
     }

@@ -45,7 +45,7 @@ public enum FieldLinkScanner {
 
     // Stops at any Unicode White_Space character or `<>"'()`.
     private static let urlPattern =
-        #"https?://[^\t\n\u000B\f\r \u0085   -     　<>"'()]+"#
+        #"https?://[^\t\n\u000B\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000<>"'()]+"#
 
     // A match starts only where a local-part run starts and not after an `@`; `@` is
     // outside the possessive `++` class.
@@ -53,7 +53,7 @@ public enum FieldLinkScanner {
         #"(?<![A-Za-z0-9._%+\-@])[A-Za-z0-9._%+\-]++@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"#
 
     private static let phonePattern =
-        #"(?<!\p{Nd})(\+?[0-9][0-9     \-()]{6,}[0-9])(?!\p{Nd})"#
+        #"(?<!\p{Nd})(\+?[0-9][0-9 \u00A0\u2007\u2009\u202F\-()]{6,}[0-9])(?!\p{Nd})"#
 
     /// `+` and `(` immediately before a digit run signal an unmatched-paren or
     /// international form.
