@@ -33,6 +33,8 @@ public struct FullScreenDocumentView: View {
     public let imageDecoder: (any BoundedImageDecoder)?
     public let onClose: () -> Void
     public let telemetry: DocumentTelemetryGuard
+    /// Zero-based PDF page to open on, clamped; read once. Image arms ignore it.
+    public let initialPage: Int
     let closeButton: ((@escaping () -> Void) -> AnyView)?
 
     /// `closeButton` lets the host swap the close chrome (mirror of Android's
@@ -46,6 +48,7 @@ public struct FullScreenDocumentView: View {
         imageDecoder: (any BoundedImageDecoder)? = nil,
         onClose: @escaping () -> Void,
         telemetry: DocumentTelemetryGuard = DocumentTelemetryGuardNoOp.shared,
+        initialPage: Int = 0,
         closeButton: ((@escaping () -> Void) -> AnyView)? = nil
     ) {
         self.doc = doc
@@ -54,6 +57,7 @@ public struct FullScreenDocumentView: View {
         self.imageDecoder = imageDecoder
         self.onClose = onClose
         self.telemetry = telemetry
+        self.initialPage = initialPage
         self.closeButton = closeButton
     }
 
@@ -100,7 +104,8 @@ public struct FullScreenDocumentView: View {
                 doc: pdf,
                 pages: requiredBackend(
                     pages, "FullScreenDocumentView(PDFDocument) requires a non-nil pages"),
-                telemetry: telemetry
+                telemetry: telemetry,
+                initialPage: initialPage
             )
         case is ImageDocument, is BarcodedImageDocument:
             FullScreenImageView(
@@ -123,13 +128,31 @@ public struct FullScreenDocumentView: View {
 }
 
 /// The PDF arm: swipeable pager of zoomable stored-raster pages (render-once).
-private struct FullScreenPdfView: View {
+/// Internal, not private, so the seeded selection is testable.
+struct FullScreenPdfView: View {
     let doc: PDFDocument
     let pages: any DocumentPageSource
     let telemetry: DocumentTelemetryGuard
 
-    @State private var currentPage: Int = 0
+    @State private(set) var currentPage: Int
     @State private var cache: PDFThumbnailCache = PDFThumbnailCache()
+
+    init(
+        doc: PDFDocument, pages: any DocumentPageSource, telemetry: DocumentTelemetryGuard,
+        initialPage: Int
+    ) {
+        self.doc = doc
+        self.pages = pages
+        self.telemetry = telemetry
+        _currentPage = State(
+            initialValue: Self.clampedInitialPage(initialPage, pageCount: doc.pageCount))
+    }
+
+    /// Android's `coerceIn(0, max(pageCount - 1, 0))`: a document with no
+    /// pages clamps to 0 instead of trapping on an empty range.
+    static func clampedInitialPage(_ page: Int, pageCount: Int) -> Int {
+        min(max(page, 0), max(pageCount, 1) - 1)
+    }
 
     var body: some View {
         TabView(selection: $currentPage) {
