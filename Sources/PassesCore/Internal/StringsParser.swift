@@ -1,14 +1,14 @@
 import Foundation
 
 /// Outcome of running `parseStrings` over a single `<locale>.lproj/pass.strings` payload.
-/// Internal only; the parser-glue layer lifts a `failed` into the right `ParseResult` arm.
+/// Internal only; `DefaultPassParser` decides what a `failed` means for the pass.
 internal enum StringsResult: Equatable {
     case ok(LocalizedStrings)
     case failed(StringsFailure)
 }
 
-/// Why `parseStrings` rejected a payload. All arms except `valueTooLong` lift to
-/// `MalformedReason.invalidStrings`; `valueTooLong` lifts to `resourceLimitExceeded(.jsonStringSize)`.
+/// Why `parseStrings` rejected a payload. Every arm except `valueTooLong` drops that one locale;
+/// `valueTooLong` is a resource-limit trip and fails the pass as `resourceLimitExceeded(.jsonStringSize)`.
 internal enum StringsFailure: Error, Equatable {
     case invalidEncoding
     case unterminatedString

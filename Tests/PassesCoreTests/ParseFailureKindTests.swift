@@ -13,7 +13,7 @@ struct ParseFailureKindTests {
     @Test func tamperedFlattensToTampered() {
         for reason: TamperReason in [
             .manifestSignatureMismatch, .fileHashMismatch,
-            .signatureCryptoFailure, .signerCertificateMissing,
+            .signatureCryptoFailure, .signerCertificateMissing, .signatureUntrusted,
         ] {
             #expect(ParseResult.tampered(reason: reason).toFailureKind() == .tampered)
         }

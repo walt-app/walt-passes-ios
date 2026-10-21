@@ -109,11 +109,14 @@ internal struct DefaultPassParser: PassParser {
         if stringsEntries.count > config.maxLocaleCount {
             return .halt(.malformed(reason: .resourceLimitExceeded(limit: .localeCount)))
         }
+        // A locale whose .strings does not parse is dropped, not fatal: its bytes already passed
+        // the manifest and signature checks, so only its text is lost.
         var map: [PassLocale: LocalizedStrings] = [:]
         for entry in stringsEntries {
             switch parseStrings(entry.bytes, config: config) {
             case .ok(let strings): map[PassLocale(entry.locale)] = strings
-            case .failed(let failure): return .halt(stringsFailureToResult(failure))
+            case .failed(let failure):
+                if let halt = stringsFailureHaltOrNil(failure) { return .halt(halt) }
             }
         }
         return .cont(map)
@@ -180,11 +183,12 @@ private func passJsonFailureToResult(_ failure: PassJsonFailure) -> ParseResult 
     }
 }
 
-private func stringsFailureToResult(_ failure: StringsFailure) -> ParseResult {
+/// The resource-limit trip still fails the pass; a structural failure only drops the locale.
+private func stringsFailureHaltOrNil(_ failure: StringsFailure) -> ParseResult? {
     switch failure {
     case .valueTooLong: return .malformed(reason: .resourceLimitExceeded(limit: .jsonStringSize))
     case .invalidEncoding, .unterminatedString, .unterminatedComment, .badStructure, .badEscape:
-        return .malformed(reason: .invalidStrings)
+        return nil
     }
 }
 

@@ -43,6 +43,9 @@ public enum TamperReason: Sendable, Equatable {
     /// to a corrupted blob, which bought the bug months of unflagged production
     /// exposure.
     case signerCertificateMissing
+    /// The signature verified, but its chain reaches no bundled Apple anchor and
+    /// `ParserConfig.acceptSelfSignedCertificates` is off. A policy refusal, not a crypto failure.
+    case signatureUntrusted
 }
 
 public enum MalformedReason: Sendable, Equatable {
@@ -51,12 +54,8 @@ public enum MalformedReason: Sendable, Equatable {
     case missingManifest
     case invalidPassJson
     case invalidManifest
-    /// A `<locale>.lproj/pass.strings` file is structurally invalid (charset error,
-    /// unterminated token, missing `=`/`;`, unrecognized escape, unpaired surrogate).
-    /// Surfaced separately from `invalidPassJson` so telemetry and UI can distinguish
-    /// a malformed localization payload from a malformed pass.json — the two have
-    /// different operational implications (a bad .strings file degrades one locale;
-    /// a bad pass.json takes the whole pass down).
+    /// Not returned by the default parser; a bad `.strings` file drops its locale.
+    /// Kept for exhaustive switches.
     case invalidStrings
     case resourceLimitExceeded(limit: ResourceLimit)
 }
@@ -72,6 +71,8 @@ public enum ResourceLimit: Sendable, CaseIterable {
     case jsonStringSize
     case imagePixelCount
     case localeCount
+    /// The sum of every entry's decompressed bytes passed `ParserConfig.maxInflatedBytes`.
+    case inflatedSize
 }
 
 public enum UnsupportedReason: Sendable, Equatable {

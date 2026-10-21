@@ -21,7 +21,7 @@ internal enum SignatureVerifyResult: Equatable {
 ///  - `isValidSignature(trustRoots: appleRoots, intermediates: wwdr)` == `.success`
 ///    -> `.appleVerified`.
 ///  - `.failure(.unableToValidateSigner)` (signature math valid, chain did not reach Apple):
-///    honors `acceptSelfSignedCertificates`. If false -> `.tampered(.signatureCryptoFailure)`.
+///    honors `acceptSelfSignedCertificates`. If false -> `.tampered(.signatureUntrusted)`.
 ///    If true: a self-issued signer (issuer == subject) -> `.selfSigned`, else
 ///    `.certChainIncomplete`.
 ///  - `.failure(.invalidCMSBlock(reason))`: the wire-order fallback in `wireOrderFallbackVerdict`
@@ -184,7 +184,7 @@ private func verifyCMS(
 /// the config-gated trust arms. Shared by the strict path and the wire-order fallback.
 private func chainVerdict(signer: Certificate, config: ParserConfig) -> SignatureVerifyResult {
     if !config.acceptSelfSignedCertificates {
-        return .failed(.signatureCryptoFailure)
+        return .failed(.signatureUntrusted)
     }
     return isSelfIssued(signer) ? .ok(.selfSigned) : .ok(.certChainIncomplete)
 }

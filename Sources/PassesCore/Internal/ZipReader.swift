@@ -32,19 +32,29 @@ internal enum ZipReader {
         /// A single entry's decompressed size exceeded `maxEntryBytes`. Carries the entry name
         /// so the caller can keep the per-entry size-limit arm.
         case entryTooLarge(name: String)
+        /// The decompressed bytes of every entry so far, directories included, would exceed
+        /// `totalByteLimit`.
+        case totalTooLarge
     }
 
-    /// Decodes every file entry. `perEntryByteLimit` bounds each entry's decompressed size; an
-    /// entry past it throws `entryTooLarge` so the caller surfaces the resource-limit arm. The
-    /// reader does not enforce archive-size / entry-count / name caps - those are the
-    /// extractor's job.
-    static func read(_ data: [UInt8], perEntryByteLimit: Int64) throws -> [Entry] {
+    /// Decodes every entry. `perEntryByteLimit` bounds each entry's decompressed size and
+    /// `totalByteLimit` their sum; both are charged against the declared size before the entry's
+    /// buffer is allocated. The reader does not enforce archive-size / entry-count / name caps -
+    /// those are the extractor's job.
+    static func read(_ data: [UInt8], perEntryByteLimit: Int64, totalByteLimit: Int64) throws -> [Entry] {
         let eocd = try findEndOfCentralDirectory(data)
         var entries: [Entry] = []
         var offset = eocd.centralDirectoryOffset
+        var inflatedTotal: Int64 = 0
         for _ in 0..<eocd.entryCount {
             let (header, next) = try parseCentralDirectoryHeader(data, at: offset)
-            let bytes = try readLocalEntry(data, header: header, perEntryByteLimit: perEntryByteLimit)
+            let bytes = try readLocalEntry(
+                data,
+                header: header,
+                perEntryByteLimit: perEntryByteLimit,
+                totalByteLimit: totalByteLimit,
+                inflatedTotal: &inflatedTotal
+            )
             entries.append(Entry(name: header.name, bytes: bytes))
             offset = next
         }
@@ -153,7 +163,9 @@ internal enum ZipReader {
     private static func readLocalEntry(
         _ data: [UInt8],
         header: CentralHeader,
-        perEntryByteLimit: Int64
+        perEntryByteLimit: Int64,
+        totalByteLimit: Int64,
+        inflatedTotal: inout Int64
     ) throws -> [UInt8] {
         // A data-descriptor-only entry (general-purpose bit 3) carries zero sizes in the local
         // header and defers them to a trailing descriptor; the central directory still holds
@@ -174,6 +186,8 @@ internal enum ZipReader {
         if Int64(header.uncompressedSize) > perEntryByteLimit {
             throw ReadError.entryTooLarge(name: header.name)
         }
+        inflatedTotal += Int64(header.uncompressedSize)
+        if inflatedTotal > totalByteLimit { throw ReadError.totalTooLarge }
         let compressed = Array(data[dataStart..<dataStart + header.compressedSize])
         switch header.compressionMethod {
         case 0:

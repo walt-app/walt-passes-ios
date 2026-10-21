@@ -33,5 +33,12 @@ struct ParserConfigTests {
         #expect(cfg.maxJsonStringBytes == ParserConfig.defaultMaxJsonStringBytes)
         #expect(cfg.maxImagePixelCount == ParserConfig.defaultMaxImagePixelCount)
         #expect(cfg.maxLocaleCount == ParserConfig.defaultMaxLocaleCount)
+        #expect(cfg.maxInflatedBytes == ParserConfig.defaultMaxInflatedBytes)
+    }
+
+    /// Android `ParserConfig.DEFAULT_MAX_INFLATED_BYTES`; the two kernels share one budget.
+    @Test func inflatedBudgetDefaultMatchesAndroid() {
+        #expect(ParserConfig.defaultMaxInflatedBytes == 32 * 1024 * 1024)
+        #expect(ResourceLimit.inflatedSize.limitFrom(ParserConfig()) == 32 * 1024 * 1024)
     }
 }

@@ -9,6 +9,11 @@ import Foundation
 /// against the input stream length before unzipping; `maxEntries` is checked while iterating
 /// the central directory; `maxJsonDepth` is enforced inside the JSON reader.
 ///
+/// `maxInflatedBytes` bounds the sum of every entry's decompressed bytes in one archive,
+/// directory payloads included, so many entries that each fit `maxEntryBytes` cannot add up
+/// to a memory-exhausting total. A consumer that raises `maxArchiveBytes` past it must raise
+/// it too.
+///
 /// `maxJsonStringBytes` is intentionally cross-format: it bounds individual string
 /// values in `pass.json` *and* individual values in `<locale>.lproj/pass.strings`. The
 /// two formats share an attack surface (a single oversized string deferring allocation
@@ -27,6 +32,7 @@ public struct ParserConfig: Sendable, Equatable {
     public let maxLocaleCount: Int
     public let acceptUnsignedArchives: Bool
     public let acceptSelfSignedCertificates: Bool
+    public let maxInflatedBytes: Int64
 
     public init(
         maxArchiveBytes: Int64 = Self.defaultMaxArchiveBytes,
@@ -37,7 +43,8 @@ public struct ParserConfig: Sendable, Equatable {
         maxImagePixelCount: Int = Self.defaultMaxImagePixelCount,
         maxLocaleCount: Int = Self.defaultMaxLocaleCount,
         acceptUnsignedArchives: Bool = true,
-        acceptSelfSignedCertificates: Bool = true
+        acceptSelfSignedCertificates: Bool = true,
+        maxInflatedBytes: Int64 = Self.defaultMaxInflatedBytes
     ) {
         self.maxArchiveBytes = maxArchiveBytes
         self.maxEntries = maxEntries
@@ -48,11 +55,14 @@ public struct ParserConfig: Sendable, Equatable {
         self.maxLocaleCount = maxLocaleCount
         self.acceptUnsignedArchives = acceptUnsignedArchives
         self.acceptSelfSignedCertificates = acceptSelfSignedCertificates
+        self.maxInflatedBytes = maxInflatedBytes
     }
 
     public static let defaultMaxArchiveBytes: Int64 = 10 * 1024 * 1024
     public static let defaultMaxEntries: Int = 256
     public static let defaultMaxEntryBytes: Int64 = 4 * 1024 * 1024
+    /// About three times the compressed cap: pass members are mostly PNGs that barely compress.
+    public static let defaultMaxInflatedBytes: Int64 = 32 * 1024 * 1024
     public static let defaultMaxJsonDepth: Int = 16
     public static let defaultMaxJsonStringBytes: Int = 1 * 1024 * 1024
     public static let defaultMaxImagePixelCount: Int = 4096 * 4096
@@ -86,6 +96,7 @@ extension ResourceLimit {
         case .jsonStringSize: return Int64(config.maxJsonStringBytes)
         case .imagePixelCount: return Int64(config.maxImagePixelCount)
         case .localeCount: return Int64(config.maxLocaleCount)
+        case .inflatedSize: return config.maxInflatedBytes
         }
     }
 }
