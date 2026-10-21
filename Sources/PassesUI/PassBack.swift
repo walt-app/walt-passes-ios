@@ -73,6 +73,7 @@ private struct BackFieldRow: View {
             fieldLabel: displayLabel,
             organizationName: organizationName
         )
+        // Not memoized as Android's `remember` does: the scan is linear and its regexes cached.
         let spans = FieldLinkScanner.scan(displayValue, source: source)
         VStack(alignment: .leading, spacing: 4) {
             if let lbl = displayLabel, !lbl.isEmpty {
@@ -129,22 +130,21 @@ private struct BackFieldClickableText: View {
                 })
     }
 
-    private var attributed: AttributedString {
-        var result = AttributedString(text)
-        let ns = text as NSString
-        for (i, span) in spans.enumerated() {
-            let nsRange = NSRange(location: span.start, length: span.endExclusive - span.start)
-            guard
-                nsRange.location + nsRange.length <= ns.length,
-                let stringRange = Range(nsRange, in: text),
-                let attrRange = result.range(of: String(text[stringRange]))
-            else { continue }
-            if let linkURL = URL(string: "x-walt-passes-ui://\(i)") {
-                result[attrRange].link = linkURL
-            }
-            result[attrRange].underlineStyle = .single
-            result[attrRange].font = .body.weight(.medium)
+    private var attributed: AttributedString { backFieldAttributedValue(text, spans: spans) }
+}
+
+/// Marks each span at its own offsets. Searching for the span's text instead would put a
+/// repeated link (a URL that prefixes another, a phone inside a URL) on the first copy.
+func backFieldAttributedValue(_ text: String, spans: [LinkSpan]) -> AttributedString {
+    var result = AttributedString(text)
+    for (i, span) in spans.enumerated() {
+        let nsRange = NSRange(location: span.start, length: span.endExclusive - span.start)
+        guard let attrRange = Range(nsRange, in: result) else { continue }
+        if let linkURL = URL(string: "x-walt-passes-ui://\(i)") {
+            result[attrRange].link = linkURL
         }
-        return result
+        result[attrRange].underlineStyle = .single
+        result[attrRange].font = .body.weight(.medium)
     }
+    return result
 }
