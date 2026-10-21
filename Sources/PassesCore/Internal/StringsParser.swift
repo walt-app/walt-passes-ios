@@ -33,6 +33,9 @@ internal enum StringsFailure: Error, Equatable {
 ///     equivalent, conservatively summed per code unit so an oversized value is rejected mid-read).
 /// The cap is applied to values only, not keys: keys are dotted identifiers that routinely
 /// exceed any sensible value cap; the cap bounds rendered-surface memory, not key length.
+///
+/// Narrower than passes-android #275, which widened its grammar to unquoted and single-quoted
+/// tokens, the `"key";` shorthand and more escapes. Such files drop their locale here.
 internal func parseStrings(_ bytes: [UInt8], config: ParserConfig) -> StringsResult {
     guard let text = decodeWithBomSniff(bytes) else {
         return .failed(.invalidEncoding)

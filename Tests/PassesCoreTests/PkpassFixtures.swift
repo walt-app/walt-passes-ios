@@ -93,6 +93,31 @@ enum ZipBuilder {
         return out
     }
 
+    /// One deflated local header that `names.count` central-directory entries all point at. A
+    /// streaming reader sees one entry; a central-directory reader inflates it once per name.
+    static func aliased(_ bytes: [UInt8], names: [String]) -> [UInt8] {
+        let payload = deflate(bytes)
+        let crc = crc32(bytes)
+        let firstName = [UInt8](names[0].utf8)
+        var out: [UInt8] = [0x50, 0x4B, 0x03, 0x04]
+        out += u16(20) + u16(0) + u16(8) + u16(0) + u16(0) + u32(crc)
+        out += u32(payload.count) + u32(bytes.count) + u16(firstName.count) + u16(0)
+        out += firstName + payload
+        let centralStart = out.count
+        for name in names {
+            let nameBytes = [UInt8](name.utf8)
+            out += [0x50, 0x4B, 0x01, 0x02]
+            out += u16(20) + u16(20) + u16(0) + u16(8) + u16(0) + u16(0) + u32(crc)
+            out += u32(payload.count) + u32(bytes.count) + u16(nameBytes.count)
+            out += u16(0) + u16(0) + u16(0) + u16(0) + u32(0) + u32(0)
+            out += nameBytes
+        }
+        let centralSize = out.count - centralStart
+        out += [0x50, 0x4B, 0x05, 0x06] + u16(0) + u16(0) + u16(names.count) + u16(names.count)
+        out += u32(centralSize) + u32(centralStart) + u16(0)
+        return out
+    }
+
     /// An empty but structurally valid ZIP (just an EOCD record).
     static func empty() -> [UInt8] {
         var out: [UInt8] = []

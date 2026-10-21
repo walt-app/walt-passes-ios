@@ -11,9 +11,10 @@ import Foundation
 /// Scope, mirrored against the pkpass threat model rather than a general unzip: ZIP64,
 /// data-descriptor-only entries (general-purpose bit 3 set), and encrypted entries are
 /// rejected as `notAZipArchive`. Real pkpass files are small standard zips, so this is a
-/// documented, deliberate limitation rather than a gap. The size / count / name / duplicate
-/// guards live in `SafeArchiveExtractor`, which drives this reader entry-by-entry; this type
-/// only knows the format.
+/// documented, deliberate limitation rather than a gap. This reader owns the per-entry and
+/// whole-archive decompressed-size caps; `SafeArchiveExtractor` owns the archive-size, count,
+/// name and duplicate guards. Central-directory entries may alias one local header, which a
+/// streaming reader cannot see; the whole-archive cap is what bounds that shape.
 internal enum ZipReader {
     /// A single central-directory entry resolved to its decompressed bytes. Order matches the
     /// central directory, which a conformant writer keeps in local-file-header order, so the
@@ -188,12 +189,13 @@ internal enum ZipReader {
         }
         inflatedTotal += Int64(header.uncompressedSize)
         if inflatedTotal > totalByteLimit { throw ReadError.totalTooLarge }
-        let compressed = Array(data[dataStart..<dataStart + header.compressedSize])
+        // A slice, not a copy: only the bytes this entry keeps are allocated.
+        let compressed = data[dataStart..<dataStart + header.compressedSize]
         switch header.compressionMethod {
         case 0:
             // Stored. The compressed and uncompressed sizes must agree.
             guard header.compressedSize == header.uncompressedSize else { throw ReadError.notAZip }
-            return compressed
+            return Array(compressed)
         case 8:
             return try inflate(
                 compressed,
@@ -212,12 +214,14 @@ internal enum ZipReader {
     /// entry short-circuits because `compression_decode_buffer` returns 0 both for "produced
     /// nothing" and "buffer too small," which would otherwise be ambiguous.
     private static func inflate(
-        _ compressed: [UInt8],
+        _ compressed: ArraySlice<UInt8>,
         expectedSize: Int,
         name: String,
         perEntryByteLimit: Int64
     ) throws -> [UInt8] {
         if expectedSize == 0 { return [] }
+        // Nonzero output from no input is corrupt, and an empty slice may have no base address.
+        guard !compressed.isEmpty else { throw ReadError.notAZip }
         var destination = [UInt8](repeating: 0, count: expectedSize)
         let written = destination.withUnsafeMutableBufferPointer { dst -> Int in
             compressed.withUnsafeBufferPointer { src in

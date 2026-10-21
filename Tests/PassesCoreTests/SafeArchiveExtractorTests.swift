@@ -91,6 +91,32 @@ struct SafeArchiveExtractorTests {
         }
     }
 
+    /// Many central-directory entries aliasing one 4 MiB local header: each passes the per-entry
+    /// cap, so only the whole-archive cap stops the reader inflating it once per entry.
+    @Test func aliasedEntriesTripTheInflatedSizeLimit() {
+        let zeros = [UInt8](repeating: 0, count: Int(ParserConfig.defaultMaxEntryBytes))
+        let archive = ZipBuilder.aliased(zeros, names: (0..<64).map { "file\($0).png" })
+        #expect(Int64(archive.count) < ParserConfig.defaultMaxArchiveBytes)
+        if case .failure(let reason) = extract(archive) {
+            #expect(reason == .resourceLimitExceeded(limit: .inflatedSize))
+        } else {
+            Issue.record("expected inflated-size failure")
+        }
+    }
+
+    /// A deflated entry declaring output but carrying no compressed bytes is corrupt.
+    @Test func deflatedEntryWithNoCompressedBytesIsRejected() {
+        var archive = ZipBuilder.build([ZipBuilder.File("pass.json", [UInt8](repeating: 1, count: 10), deflated: true)])
+        let eocd = archive.count - 22
+        let centralStart = Int(archive[eocd + 16]) | Int(archive[eocd + 17]) << 8
+        for offset in 20..<24 { archive[centralStart + offset] = 0 }  // central compressed size
+        if case .failure(let reason) = extract(archive) {
+            #expect(reason == .notAZipArchive)
+        } else {
+            Issue.record("expected notAZipArchive")
+        }
+    }
+
     @Test func inflatedTotalExactlyAtTheLimitIsAccepted() {
         let files = (0..<4).map { ZipBuilder.File("file\($0).png", [UInt8](repeating: 1, count: 25)) }
         let e = entries(extract(ZipBuilder.build(files), config: ParserConfig(maxInflatedBytes: 100)))
