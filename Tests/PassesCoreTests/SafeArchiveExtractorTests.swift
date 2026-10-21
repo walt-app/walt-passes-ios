@@ -77,6 +77,88 @@ struct SafeArchiveExtractorTests {
         }
     }
 
+    /// Nine 4 MiB entries each fit the per-entry cap and the archive stays a few KiB, but they
+    /// inflate to 36 MiB, past the 32 MiB default budget.
+    @Test func manyEntriesUnderTheEntryCapTripTheInflatedSizeLimitAtDefaults() {
+        let zeros = [UInt8](repeating: 0, count: Int(ParserConfig.defaultMaxEntryBytes))
+        let files = (0..<9).map { ZipBuilder.File("file\($0).png", zeros, deflated: true) }
+        let archive = ZipBuilder.build(files)
+        #expect(Int64(archive.count) < ParserConfig.defaultMaxArchiveBytes)
+        if case .failure(let reason) = extract(archive) {
+            #expect(reason == .resourceLimitExceeded(limit: .inflatedSize))
+        } else {
+            Issue.record("expected inflated-size failure")
+        }
+    }
+
+    /// Many central-directory entries aliasing one 4 MiB local header: each passes the per-entry
+    /// cap, so only the whole-archive cap stops the reader inflating it once per entry.
+    @Test func aliasedEntriesTripTheInflatedSizeLimit() {
+        let zeros = [UInt8](repeating: 0, count: Int(ParserConfig.defaultMaxEntryBytes))
+        let archive = ZipBuilder.aliased(zeros, names: (0..<64).map { "file\($0).png" })
+        #expect(Int64(archive.count) < ParserConfig.defaultMaxArchiveBytes)
+        if case .failure(let reason) = extract(archive) {
+            #expect(reason == .resourceLimitExceeded(limit: .inflatedSize))
+        } else {
+            Issue.record("expected inflated-size failure")
+        }
+    }
+
+    /// A deflated entry declaring output but carrying no compressed bytes is corrupt.
+    @Test func deflatedEntryWithNoCompressedBytesIsRejected() {
+        var archive = ZipBuilder.build([ZipBuilder.File("pass.json", [UInt8](repeating: 1, count: 10), deflated: true)])
+        let eocd = archive.count - 22
+        let centralStart = Int(archive[eocd + 16]) | Int(archive[eocd + 17]) << 8
+        for offset in 20..<24 { archive[centralStart + offset] = 0 }  // central compressed size
+        if case .failure(let reason) = extract(archive) {
+            #expect(reason == .notAZipArchive)
+        } else {
+            Issue.record("expected notAZipArchive")
+        }
+    }
+
+    @Test func inflatedTotalExactlyAtTheLimitIsAccepted() {
+        let files = (0..<4).map { ZipBuilder.File("file\($0).png", [UInt8](repeating: 1, count: 25)) }
+        let e = entries(extract(ZipBuilder.build(files), config: ParserConfig(maxInflatedBytes: 100)))
+        #expect(e?.count == 4)
+    }
+
+    @Test func inflatedTotalOneByteOverTheLimitIsRejected() {
+        let files = (0..<4).map { ZipBuilder.File("file\($0).png", [UInt8](repeating: 1, count: 25)) }
+        let config = ParserConfig(maxInflatedBytes: 99)
+        if case .failure(let reason) = extract(ZipBuilder.build(files), config: config) {
+            #expect(reason == .resourceLimitExceeded(limit: .inflatedSize))
+        } else {
+            Issue.record("expected inflated-size failure")
+        }
+    }
+
+    /// Directory entries are discarded after reading, but their payload is still inflated, so it
+    /// pays into the budget (Android drains them through the same budget).
+    @Test func directoryEntryPayloadsAreChargedAgainstTheInflatedSizeLimit() {
+        let archive = ZipBuilder.build([
+            ZipBuilder.File("en.lproj/", [UInt8](repeating: 1, count: 60)),
+            ZipBuilder.File("pass.json", [UInt8](repeating: 1, count: 60)),
+        ])
+        let config = ParserConfig(maxInflatedBytes: 100)
+        if case .failure(let reason) = extract(archive, config: config) {
+            #expect(reason == .resourceLimitExceeded(limit: .inflatedSize))
+        } else {
+            Issue.record("expected inflated-size failure")
+        }
+    }
+
+    /// One entry over the per-entry cap keeps its own, more specific reason.
+    @Test func entrySizeIsReportedBeforeTheInflatedTotal() {
+        let archive = ZipBuilder.build([ZipBuilder.File("pass.json", [UInt8](repeating: 1, count: 100))])
+        let config = ParserConfig(maxEntryBytes: 50, maxInflatedBytes: 50)
+        if case .failure(let reason) = extract(archive, config: config) {
+            #expect(reason == .resourceLimitExceeded(limit: .entrySize))
+        } else {
+            Issue.record("expected entry-size failure")
+        }
+    }
+
     @Test func pathTraversalRejected() {
         let archive = ZipBuilder.build([ZipBuilder.File("../evil.json", "{}")])
         if case .failure(let reason) = extract(archive) {

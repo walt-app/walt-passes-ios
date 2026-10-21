@@ -24,6 +24,7 @@ struct ParseResultTests {
             .fileHashMismatch,
             .signatureCryptoFailure,
             .signerCertificateMissing,
+            .signatureUntrusted,
         ]
         #expect(Set(reasons).count == reasons.count)
     }
@@ -50,12 +51,12 @@ struct ParseResultTests {
         #expect(reasons.count == 3)
     }
 
-    @Test func resourceLimitHasAllSevenBuckets() {
-        #expect(ResourceLimit.allCases.count == 7)
+    @Test func resourceLimitHasAllEightBuckets() {
+        #expect(ResourceLimit.allCases.count == 8)
         #expect(
             Set(ResourceLimit.allCases) == [
                 .archiveSize, .entryCount, .entrySize,
-                .jsonDepth, .jsonStringSize, .imagePixelCount, .localeCount,
+                .jsonDepth, .jsonStringSize, .imagePixelCount, .localeCount, .inflatedSize,
             ]
         )
     }

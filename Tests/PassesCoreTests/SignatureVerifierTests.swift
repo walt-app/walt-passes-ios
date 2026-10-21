@@ -84,7 +84,39 @@ struct SignatureVerifierTests {
             trustAnchors: [unrelated.certificate],
             knownIntermediates: []
         )
-        #expect(result == .failed(.signatureCryptoFailure))
+        #expect(result == .failed(.signatureUntrusted))
+    }
+
+    /// A sound signature whose chain reaches no anchor is a policy refusal under strict mode, not
+    /// a crypto failure (Android #286).
+    @Test func validNonAppleChainIsUntrustedUnderStrict() throws {
+        let root = try SignatureTestSupport.makeRoot(commonName: "Root")
+        let leaf = try SignatureTestSupport.makeLeaf(commonName: "Leaf", issuer: root)
+        let signature = try SignatureTestSupport.sign(manifestBytes: manifest, signer: leaf)
+        let unrelated = try SignatureTestSupport.makeRoot(commonName: "Unrelated")
+        let result = SignatureTestSupport.verify(
+            signatureBytes: signature,
+            manifestBytes: manifest,
+            config: .strict,
+            trustAnchors: [unrelated.certificate],
+            knownIntermediates: []
+        )
+        #expect(result == .failed(.signatureUntrusted))
+    }
+
+    /// Strict mode does not relabel a broken signature as merely untrusted.
+    @Test func tamperedManifestUnderStrictIsStillAMismatch() throws {
+        let root = try SignatureTestSupport.makeRoot(commonName: "Root")
+        let leaf = try SignatureTestSupport.makeLeaf(commonName: "Leaf", issuer: root)
+        let signature = try SignatureTestSupport.sign(manifestBytes: manifest, signer: leaf)
+        let result = SignatureTestSupport.verify(
+            signatureBytes: signature,
+            manifestBytes: [UInt8]("{\"pass.json\":\"DIFFERENT\"}".utf8),
+            config: .strict,
+            trustAnchors: [root.certificate],
+            knownIntermediates: []
+        )
+        #expect(result == .failed(.manifestSignatureMismatch))
     }
 
     @Test func tamperedManifestFailsVerification() throws {
@@ -283,7 +315,7 @@ struct SignatureVerifierTests {
                 config: .strict,
                 trustAnchors: [unrelated.certificate],
                 knownIntermediates: []
-            ) == .failed(.signatureCryptoFailure)
+            ) == .failed(.signatureUntrusted)
         )
         // Same blob, lenient config: recovered as an incomplete chain rather than as tampering,
         // which is the arm Android's real reported pass landed on.

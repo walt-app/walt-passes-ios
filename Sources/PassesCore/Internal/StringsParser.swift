@@ -1,14 +1,14 @@
 import Foundation
 
 /// Outcome of running `parseStrings` over a single `<locale>.lproj/pass.strings` payload.
-/// Internal only; the parser-glue layer lifts a `failed` into the right `ParseResult` arm.
+/// Internal only; `DefaultPassParser` decides what a `failed` means for the pass.
 internal enum StringsResult: Equatable {
     case ok(LocalizedStrings)
     case failed(StringsFailure)
 }
 
-/// Why `parseStrings` rejected a payload. All arms except `valueTooLong` lift to
-/// `MalformedReason.invalidStrings`; `valueTooLong` lifts to `resourceLimitExceeded(.jsonStringSize)`.
+/// Why `parseStrings` rejected a payload. Every arm except `valueTooLong` drops that one locale;
+/// `valueTooLong` is a resource-limit trip and fails the pass as `resourceLimitExceeded(.jsonStringSize)`.
 internal enum StringsFailure: Error, Equatable {
     case invalidEncoding
     case unterminatedString
@@ -33,6 +33,9 @@ internal enum StringsFailure: Error, Equatable {
 ///     equivalent, conservatively summed per code unit so an oversized value is rejected mid-read).
 /// The cap is applied to values only, not keys: keys are dotted identifiers that routinely
 /// exceed any sensible value cap; the cap bounds rendered-surface memory, not key length.
+///
+/// Narrower than passes-android #275, which widened its grammar to unquoted and single-quoted
+/// tokens, the `"key";` shorthand and more escapes. Such files drop their locale here.
 internal func parseStrings(_ bytes: [UInt8], config: ParserConfig) -> StringsResult {
     guard let text = decodeWithBomSniff(bytes) else {
         return .failed(.invalidEncoding)

@@ -8,12 +8,13 @@ import Foundation
 /// or DEFLATE (method 8) entries. Apple's `COMPRESSION_ZLIB` is raw DEFLATE, exactly ZIP
 /// method 8.
 ///
-/// Scope, mirrored against the pkpass threat model rather than a general unzip: ZIP64,
-/// data-descriptor-only entries (general-purpose bit 3 set), and encrypted entries are
-/// rejected as `notAZipArchive`. Real pkpass files are small standard zips, so this is a
-/// documented, deliberate limitation rather than a gap. The size / count / name / duplicate
-/// guards live in `SafeArchiveExtractor`, which drives this reader entry-by-entry; this type
-/// only knows the format.
+/// Scope, mirrored against the pkpass threat model rather than a general unzip: ZIP64 and
+/// encrypted entries are rejected as `notAZipArchive`; data-descriptor entries (bit 3) are read
+/// from their central-directory sizes. Real pkpass files are small standard zips, so this is a
+/// documented, deliberate limitation rather than a gap. This reader owns the per-entry and
+/// whole-archive decompressed-size caps; `SafeArchiveExtractor` owns the archive-size, count,
+/// name and duplicate guards. Central-directory entries may alias one local header, which a
+/// streaming reader cannot see; the whole-archive cap is what bounds that shape.
 internal enum ZipReader {
     /// A single central-directory entry resolved to its decompressed bytes. Order matches the
     /// central directory, which a conformant writer keeps in local-file-header order, so the
@@ -32,19 +33,29 @@ internal enum ZipReader {
         /// A single entry's decompressed size exceeded `maxEntryBytes`. Carries the entry name
         /// so the caller can keep the per-entry size-limit arm.
         case entryTooLarge(name: String)
+        /// The decompressed bytes of every entry so far, directories included, would exceed
+        /// `totalByteLimit`.
+        case totalTooLarge
     }
 
-    /// Decodes every file entry. `perEntryByteLimit` bounds each entry's decompressed size; an
-    /// entry past it throws `entryTooLarge` so the caller surfaces the resource-limit arm. The
-    /// reader does not enforce archive-size / entry-count / name caps - those are the
-    /// extractor's job.
-    static func read(_ data: [UInt8], perEntryByteLimit: Int64) throws -> [Entry] {
+    /// Decodes every entry. `perEntryByteLimit` bounds each entry's decompressed size and
+    /// `totalByteLimit` their sum; both are charged against the declared size before the entry's
+    /// buffer is allocated. The reader does not enforce archive-size / entry-count / name caps -
+    /// those are the extractor's job.
+    static func read(_ data: [UInt8], perEntryByteLimit: Int64, totalByteLimit: Int64) throws -> [Entry] {
         let eocd = try findEndOfCentralDirectory(data)
         var entries: [Entry] = []
         var offset = eocd.centralDirectoryOffset
+        var inflatedTotal: Int64 = 0
         for _ in 0..<eocd.entryCount {
             let (header, next) = try parseCentralDirectoryHeader(data, at: offset)
-            let bytes = try readLocalEntry(data, header: header, perEntryByteLimit: perEntryByteLimit)
+            let bytes = try readLocalEntry(
+                data,
+                header: header,
+                perEntryByteLimit: perEntryByteLimit,
+                totalByteLimit: totalByteLimit,
+                inflatedTotal: &inflatedTotal
+            )
             entries.append(Entry(name: header.name, bytes: bytes))
             offset = next
         }
@@ -153,7 +164,9 @@ internal enum ZipReader {
     private static func readLocalEntry(
         _ data: [UInt8],
         header: CentralHeader,
-        perEntryByteLimit: Int64
+        perEntryByteLimit: Int64,
+        totalByteLimit: Int64,
+        inflatedTotal: inout Int64
     ) throws -> [UInt8] {
         // A data-descriptor-only entry (general-purpose bit 3) carries zero sizes in the local
         // header and defers them to a trailing descriptor; the central directory still holds
@@ -174,12 +187,15 @@ internal enum ZipReader {
         if Int64(header.uncompressedSize) > perEntryByteLimit {
             throw ReadError.entryTooLarge(name: header.name)
         }
-        let compressed = Array(data[dataStart..<dataStart + header.compressedSize])
+        inflatedTotal += Int64(header.uncompressedSize)
+        if inflatedTotal > totalByteLimit { throw ReadError.totalTooLarge }
+        // A slice, not a copy: only the bytes this entry keeps are allocated.
+        let compressed = data[dataStart..<dataStart + header.compressedSize]
         switch header.compressionMethod {
         case 0:
             // Stored. The compressed and uncompressed sizes must agree.
             guard header.compressedSize == header.uncompressedSize else { throw ReadError.notAZip }
-            return compressed
+            return Array(compressed)
         case 8:
             return try inflate(
                 compressed,
@@ -198,12 +214,14 @@ internal enum ZipReader {
     /// entry short-circuits because `compression_decode_buffer` returns 0 both for "produced
     /// nothing" and "buffer too small," which would otherwise be ambiguous.
     private static func inflate(
-        _ compressed: [UInt8],
+        _ compressed: ArraySlice<UInt8>,
         expectedSize: Int,
         name: String,
         perEntryByteLimit: Int64
     ) throws -> [UInt8] {
         if expectedSize == 0 { return [] }
+        // Nonzero output from no input is corrupt, and an empty slice may have no base address.
+        guard !compressed.isEmpty else { throw ReadError.notAZip }
         var destination = [UInt8](repeating: 0, count: expectedSize)
         let written = destination.withUnsafeMutableBufferPointer { dst -> Int in
             compressed.withUnsafeBufferPointer { src in

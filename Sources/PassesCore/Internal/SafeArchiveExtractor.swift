@@ -24,6 +24,9 @@ internal enum ExtractResult {
 ///    are skipped before the count.
 ///  - **Per-entry decompressed size.** `maxEntryBytes` caps each entry; the zip-bomb guard. The
 ///    `ZipReader` rejects an over-cap entry before inflating it.
+///  - **Whole-archive decompressed size.** `maxInflatedBytes` caps the sum across entries,
+///    directory payloads included, so many entries under the per-entry cap cannot add up to a
+///    memory-exhausting total. Charged on each entry's declared size before it is inflated.
 ///  - **Path traversal (zip-slip).** `pathTraversalReason` rejects entry names with `..`/`.`
 ///    segments, leading `/`, backslashes, Windows drive prefixes, or empty segments. Structural
 ///    only - no file-system canonicalization, because nothing here ever touches the file system.
@@ -97,9 +100,15 @@ private func magicByteFailure(_ bytes: [UInt8]) -> MalformedReason? {
 private func runZipPipeline(_ bytes: [UInt8], config: ParserConfig) -> ExtractResult {
     let rawEntries: [ZipReader.Entry]
     do {
-        rawEntries = try ZipReader.read(bytes, perEntryByteLimit: config.maxEntryBytes)
+        rawEntries = try ZipReader.read(
+            bytes,
+            perEntryByteLimit: config.maxEntryBytes,
+            totalByteLimit: config.maxInflatedBytes
+        )
     } catch ZipReader.ReadError.entryTooLarge {
         return .failure(reason: .resourceLimitExceeded(limit: .entrySize))
+    } catch ZipReader.ReadError.totalTooLarge {
+        return .failure(reason: .resourceLimitExceeded(limit: .inflatedSize))
     } catch {
         return .failure(reason: .notAZipArchive)
     }

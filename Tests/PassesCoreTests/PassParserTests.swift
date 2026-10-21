@@ -94,6 +94,84 @@ struct PassParserTests {
         #expect(pass.locales[PassLocale("en")]?.entries["k"] == "Hello")
     }
 
+    // MARK: Locale drop (Android #275)
+
+    private func passWithStrings(_ strings: [(locale: String, bytes: [UInt8])]) -> [UInt8] {
+        var payload = [ZipBuilder.File(passJsonFileName, PkpassFixtures.passJson())]
+        payload += strings.map { ZipBuilder.File("\($0.locale).lproj/pass.strings", $0.bytes) }
+        return PkpassFixtures.unsignedArchive(payload: payload)
+    }
+
+    private func locales(_ result: ParseResult) -> [PassLocale: LocalizedStrings]? {
+        guard case .success(let pass, _) = result else {
+            Issue.record("expected success, got \(result)")
+            return nil
+        }
+        return pass.locales
+    }
+
+    private let goodStrings = [UInt8]("\"k\" = \"Hello\";".utf8)
+    private let unparseableStrings = [UInt8]("\"k\" = ".utf8)
+    /// A lone continuation byte with no BOM: not UTF-8, so strict decode refuses it.
+    private let undecodableStrings: [UInt8] = [0x22, 0x6B, 0x22, 0x3D, 0x22, 0x80, 0x22, 0x3B]
+
+    @Test func unparseableLocaleIsDroppedAndTheOthersKept() {
+        let result = parse(passWithStrings([("en", goodStrings), ("fr", unparseableStrings)]))
+        let map = locales(result)
+        #expect(map?[PassLocale("en")]?.entries["k"] == "Hello")
+        #expect(map?[PassLocale("fr")] == nil)
+        #expect(map?.count == 1)
+    }
+
+    @Test func undecodableLocaleIsDroppedToo() {
+        let result = parse(passWithStrings([("de", undecodableStrings), ("en", goodStrings)]))
+        let map = locales(result)
+        #expect(map?.keys.map(\.tag) == ["en"])
+    }
+
+    @Test func passWithEveryLocaleBadStillParsesWithNoLocales() {
+        let result = parse(passWithStrings([("de", undecodableStrings), ("fr", unparseableStrings)]))
+        #expect(locales(result)?.isEmpty == true)
+    }
+
+    /// The value cap is a resource limit, so it still fails the whole pass.
+    @Test func oversizedStringsValueStillFailsThePass() {
+        let long = [UInt8]("\"k\" = \"\(String(repeating: "x", count: 40))\";".utf8)
+        let result = parse(passWithStrings([("en", long)]), config: ParserConfig(maxJsonStringBytes: 20))
+        #expect(result == .malformed(reason: .resourceLimitExceeded(limit: .jsonStringSize)))
+    }
+
+    @Test func oversizedValueFailsThePassEvenAlongsideADroppedLocale() {
+        let long = [UInt8]("\"k\" = \"\(String(repeating: "x", count: 40))\";".utf8)
+        let archive = passWithStrings([("de", unparseableStrings), ("en", long)])
+        let result = parse(archive, config: ParserConfig(maxJsonStringBytes: 20))
+        #expect(result == .malformed(reason: .resourceLimitExceeded(limit: .jsonStringSize)))
+    }
+
+    /// Integrity runs over every entry before any `.strings` parse, so a swapped file is still
+    /// tampering even though its content would only have dropped a locale.
+    @Test func tamperedStringsFileStillFailsIntegrity() {
+        let pass = ZipBuilder.File(passJsonFileName, PkpassFixtures.passJson())
+        let original = ZipBuilder.File("en.lproj/pass.strings", goodStrings)
+        let manifestBytes = PkpassFixtures.manifest(for: [pass, original])
+        let archive = ZipBuilder.build([
+            pass,
+            ZipBuilder.File("en.lproj/pass.strings", unparseableStrings),
+            ZipBuilder.File(manifestFileName, manifestBytes),
+        ])
+        #expect(parse(archive) == .tampered(reason: .fileHashMismatch))
+    }
+
+    // MARK: Inflated-size cap (Android #269)
+
+    @Test func manySmallerEntriesTripTheInflatedSizeLimit() {
+        let icons = (0..<4).map { ZipBuilder.File("icon\($0).png", [UInt8](repeating: 1, count: 300)) }
+        let archive = PkpassFixtures.unsignedArchive(
+            payload: [ZipBuilder.File(passJsonFileName, PkpassFixtures.passJson())] + icons)
+        let result = parse(archive, config: ParserConfig(maxInflatedBytes: 1_000))
+        #expect(result == .malformed(reason: .resourceLimitExceeded(limit: .inflatedSize)))
+    }
+
     @Test func imageAttachedToPass() {
         let payload = [
             ZipBuilder.File(passJsonFileName, PkpassFixtures.passJson()),
