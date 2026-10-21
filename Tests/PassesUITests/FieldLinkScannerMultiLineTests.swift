@@ -53,6 +53,14 @@ struct FieldLinkScannerMultiLineTests {
         )
     }
 
+    @Test func sameLinkOnTwoLinesYieldsTwoSpansAtTheirOwnOffsets() {
+        let text = "Web https://a.example\nhttps://a.example\n555-123-4567 / 555-123-4567"
+        let spans = FieldLinkScanner.scan(text, source: linkScannerTestSource)
+        #expect(spans.map(\.start) == [4, 22, 40, 55])
+        #expect(spans.map(\.endExclusive) == [21, 39, 52, 67])
+        #expect(spans.map { LinkKind($0.intent) } == [.url, .url, .phone, .phone])
+    }
+
     @Test func urlStopsAtLineBreak() {
         expectExactSpans("https://acme.example/a\nnext line", [("https://acme.example/a", .url)])
     }

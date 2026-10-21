@@ -24,18 +24,9 @@ import Foundation
 ///   right after an `@`, so in `a@b.example-c@d.example` only `a@b.example` links
 ///   and a long run without a usable `@` is read once, not once per position.
 ///
-/// Rendering hazards are checked at two levels:
-///
-/// - Field level (`containsFieldHazard`): a field holding any Cf or Cc scalar, or
-///   U+2028 / U+2029, surfaces no links at all. The only exceptions are line feed,
-///   tab, and carriage return directly followed by line feed, which separate lines
-///   and columns in real back fields. A lone carriage return is rejected because it
-///   may render with no width. A clean link beside a bidi control is dropped too,
-///   since the context the user reads is no longer trustworthy.
-/// - Match level (`containsRenderingHazard`): every match is rejected if it holds
-///   ANY Cf or Cc scalar (line feed, carriage return and tab included) or U+2028 /
-///   U+2029, so no actionable string ever carries one. No pattern can match the
-///   whitespace the field gate admits, so this is defence in depth.
+/// Rendering hazards are checked twice: `containsFieldHazard` gates the whole
+/// field (only LF, tab and CRLF pass), then `containsRenderingHazard` rejects any
+/// match holding a Cf, Cc, Zl or Zp scalar, so no actionable string carries one.
 ///
 /// The patterns spell out their character classes rather than `\s` / `\d`, which
 /// are Unicode-aware on ICU.
@@ -44,27 +35,29 @@ import Foundation
 public enum FieldLinkScanner {
 
     // Stops at any Unicode White_Space character or `<>"'()`.
-    private static let urlPattern =
-        #"https?://[^\t\n\u000B\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000<>"'()]+"#
+    private static let urlRegex = compile(
+        #"https?://[^\t\n\u000B\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000<>"'()]+"#)
 
     // A match starts only where a local-part run starts and not after an `@`; `@` is
     // outside the possessive `++` class.
-    private static let emailPattern =
-        #"(?<![A-Za-z0-9._%+\-@])[A-Za-z0-9._%+\-]++@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"#
+    private static let emailRegex = compile(
+        #"(?<![A-Za-z0-9._%+\-@])[A-Za-z0-9._%+\-]++@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"#)
 
-    private static let phonePattern =
-        #"(?<!\p{Nd})(\+?[0-9][0-9 \u00A0\u2007\u2009\u202F\-()]{6,}[0-9])(?!\p{Nd})"#
+    // Separators must match `phoneRunPunctuation`.
+    private static let phoneRegex = compile(
+        #"(?<!\p{Nd})(\+?[0-9][0-9 \u00A0\u2007\u2009\u202F\-()]{6,}[0-9])(?!\p{Nd})"#)
 
     /// `+` and `(` immediately before a digit run signal an unmatched-paren or
     /// international form.
-    private static let phonePrefixHints: Set<UInt16> = [0x2B, 0x28]
+    private static let phonePrefixHints: Set<UInt16> = [UInt16(UInt8(ascii: "+")), UInt16(UInt8(ascii: "("))]
 
     /// Characters that can appear inside the matched phone substring and count
     /// as formatting hints. No-break spaces are not hints: such a number without
     /// `+` stays unlinked.
     private static let internalPhoneHints: Set<Character> = ["+", "-", " "]
 
-    /// Non-digit scalars that extend a phone run for the mixed-digit check.
+    /// Non-digit scalars that extend a phone run for the mixed-digit check; the same
+    /// separators as `phoneRegex`.
     private static let phoneRunPunctuation: Set<Unicode.Scalar> = [
         " ", "\u{00A0}", "\u{2007}", "\u{2009}", "\u{202F}", "-", "(", ")", "+",
     ]
@@ -74,7 +67,7 @@ public enum FieldLinkScanner {
     public static func scan(_ fieldValue: String, source: SourceField) -> [LinkSpan] {
         if containsFieldHazard(fieldValue) { return [] }
 
-        let urls = cleanMatches(in: fieldValue, pattern: urlPattern).map { match in
+        let urls = cleanMatches(in: fieldValue, urlRegex).map { match in
             LinkSpan(
                 start: match.start,
                 endExclusive: match.endExclusive,
@@ -90,7 +83,7 @@ public enum FieldLinkScanner {
 
         // Skip emails inside an already-claimed URL span ("http://x@y.com").
         var urlClaims = ClaimedRanges(urls)
-        let emails = cleanMatches(in: fieldValue, pattern: emailPattern)
+        let emails = cleanMatches(in: fieldValue, emailRegex)
             .filter { !urlClaims.overlaps(start: $0.start, endExclusive: $0.endExclusive) }
             .map { match in
                 LinkSpan(
@@ -101,7 +94,7 @@ public enum FieldLinkScanner {
             }
 
         var claims = ClaimedRanges((urls + emails).sorted { $0.start < $1.start })
-        let phoneMatches = cleanMatches(in: fieldValue, pattern: phonePattern)
+        let phoneMatches = cleanMatches(in: fieldValue, phoneRegex)
             .filter { isLinkablePhone(match: $0, fullText: fieldValue) }
         let mixedRuns = phoneMatches.isEmpty ? nil : mixedDigitRuns(fieldValue)
         let phones =
@@ -200,12 +193,18 @@ public enum FieldLinkScanner {
         return host
     }
 
-    private static func cleanMatches(in text: String, pattern: String) -> [RegexMatch] {
-        regexMatches(in: text, pattern: pattern).filter { !containsRenderingHazard($0.value) }
+    private static func cleanMatches(in text: String, _ regex: NSRegularExpression) -> [RegexMatch] {
+        regexMatches(in: text, regex: regex).filter { !containsRenderingHazard($0.value) }
+    }
+
+    // The patterns are constants, so a failure here is a programming error caught by every test run.
+    private static func compile(_ pattern: String) -> NSRegularExpression {
+        // swiftlint:disable:next force_try
+        try! NSRegularExpression(pattern: pattern)
     }
 
     private static func isLinkablePhone(match: RegexMatch, fullText: String) -> Bool {
-        match.value.utf8.filter { (0x30...0x39).contains($0) }.count >= 7
+        match.value.utf8.count(where: { (UInt8(ascii: "0")...UInt8(ascii: "9")).contains($0) }) >= 7
             && hasPhoneFormattingHint(match: match, fullText: fullText)
     }
 
@@ -215,7 +214,7 @@ public enum FieldLinkScanner {
         if match.value.contains(where: { internalPhoneHints.contains($0) }) { return true }
         let ns = fullText as NSString
         if match.start > 0, phonePrefixHints.contains(ns.character(at: match.start - 1)) { return true }
-        return match.endExclusive < ns.length && ns.character(at: match.endExclusive) == 0x29
+        return match.endExclusive < ns.length && ns.character(at: match.endExclusive) == UInt16(UInt8(ascii: ")"))
     }
 
     /// Flags, in one linear pass, every UTF-16 offset inside a run holding a
@@ -263,10 +262,9 @@ private struct ClaimedRanges {
     }
 }
 
-/// One detected link in a back-field value. `start` and `endExclusive` are
-/// UTF-16-equivalent offsets (since the underlying regex match operates on
-/// `String`'s Character indices, callers using SwiftUI's `AttributedString`
-/// can map these directly).
+/// One detected link in a back-field value. `start` and `endExclusive` are UTF-16
+/// code-unit offsets (`NSString` / `NSRange` units), not `Character` counts: a CRLF
+/// is one `Character` but two offsets.
 ///
 /// The memberwise initializer is internal (Swift's default for a `public` struct), so
 /// consumers can only obtain a `LinkSpan` from `FieldLinkScanner.scan`, which guarantees
@@ -287,10 +285,7 @@ internal struct RegexMatch {
     let endExclusive: Int
 }
 
-internal func regexMatches(in text: String, pattern: String) -> [RegexMatch] {
-    guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
-        return []
-    }
+internal func regexMatches(in text: String, regex: NSRegularExpression) -> [RegexMatch] {
     let nsText = text as NSString
     let full = NSRange(location: 0, length: nsText.length)
     let matches = regex.matches(in: text, options: [], range: full)

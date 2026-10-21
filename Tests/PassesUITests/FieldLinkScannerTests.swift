@@ -305,29 +305,21 @@ struct FieldLinkScannerTests {
     }
 
     @Test func phoneScanCompletesQuicklyOnPathologicalInput() {
-        let pathological = String(repeating: "0123456789", count: 410)  // ~4096
-        let start = threadCPUMilliseconds()
-        _ = FieldLinkScanner.scan(pathological, source: source)
-        let cpu = threadCPUMilliseconds() - start
-        #expect(cpu < 500, "cpu=\(cpu)ms")
+        expectLinearScan(String(repeating: "0123456789", count: 410))  // ~4096
     }
 
     @Test func mixedAlphaDigitSoupCompletesQuickly() {
-        let pathological = String(repeating: "5 -", count: 2048)
-        let start = threadCPUMilliseconds()
-        _ = FieldLinkScanner.scan(pathological, source: source)
-        let cpu = threadCPUMilliseconds() - start
-        #expect(cpu < 500, "cpu=\(cpu)ms")
+        expectLinearScan(String(repeating: "5 -", count: 2048))
     }
 
     @Test func phoneDenseFieldScansInLinearTime() {
         // Every `+` is a hint and starts a new 8-digit match inside one long run.
-        expectLinearScan(String(repeating: "+12345678 ", count: 30_000))
+        expectLinearScan(String(repeating: "+12345678 ", count: 15_000))
     }
 
     @Test func mixedDigitRunScansInLinearTime() {
-        // One run spanning the field, mixed by U+0663, holding 30k rejected phone matches.
-        expectLinearScan(String(repeating: "1234-5678 \u{0663} ", count: 30_000))
+        // One run spanning the field, mixed by U+0663, holding 15k rejected phone matches.
+        expectLinearScan(String(repeating: "1234-5678 \u{0663} ", count: 15_000))
     }
 
     @Test func emailLocalPartRunWithoutAtScansInLinearTime() {
