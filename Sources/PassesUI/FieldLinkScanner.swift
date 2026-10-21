@@ -10,67 +10,105 @@ import Foundation
 /// the string the user sees in the confirmation sheet is the same string this
 /// scanner pulled out of the pass.
 ///
+/// Intentionally conservative: prefers false negatives over false positives.
+///
+/// - A URL needs an `http`/`https` scheme and runs to the first Unicode
+///   White_Space character or one of `<>"'()`.
+/// - A phone number needs at least seven ASCII digits and a formatting hint (a
+///   leading `+`, an ASCII space, dash, or parenthesis). Digit groups may be
+///   separated by U+0020, U+00A0, U+2007, U+2009 or U+202F, so a match never
+///   crosses a tab or line break. A run (decimal digits plus those separators and
+///   `+-()`) holding any non-ASCII decimal digit yields no link rather than a
+///   truncated one, so the dialled digits are exactly the ones displayed.
+/// - An email starts only where a run of local-part characters starts and never
+///   right after an `@`, so in `a@b.example-c@d.example` only `a@b.example` links
+///   and a long run without a usable `@` is read once, not once per position.
+///
+/// Rendering hazards are checked at two levels:
+///
+/// - Field level (`containsFieldHazard`): a field holding any Cf or Cc scalar, or
+///   U+2028 / U+2029, surfaces no links at all. The only exceptions are line feed,
+///   tab, and carriage return directly followed by line feed, which separate lines
+///   and columns in real back fields. A lone carriage return is rejected because it
+///   may render with no width. A clean link beside a bidi control is dropped too,
+///   since the context the user reads is no longer trustworthy.
+/// - Match level (`containsRenderingHazard`): every match is rejected if it holds
+///   ANY Cf or Cc scalar (line feed, carriage return and tab included) or U+2028 /
+///   U+2029, so no actionable string ever carries one. No pattern can match the
+///   whitespace the field gate admits, so this is defence in depth.
+///
+/// The patterns spell out their character classes rather than `\s` / `\d`, which
+/// are Unicode-aware on ICU.
+///
 /// Mirror of Android's `is.walt.passes.ui.FieldLinkScanner`.
 public enum FieldLinkScanner {
 
-    private static let urlPattern = #"https?://[^\s<>"'()]+"#
-    private static let emailPattern = #"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"#
-    private static let phonePattern = #"(?<!\d)(\+?\d[\d\s\-()]{6,}\d)(?!\d)"#
+    // Stops at any Unicode White_Space character or `<>"'()`.
+    private static let urlPattern =
+        #"https?://[^\t\n\u000B\f\r \u0085   -     　<>"'()]+"#
+
+    // A match starts only where a local-part run starts and not after an `@`; `@` is
+    // outside the possessive `++` class.
+    private static let emailPattern =
+        #"(?<![A-Za-z0-9._%+\-@])[A-Za-z0-9._%+\-]++@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"#
+
+    private static let phonePattern =
+        #"(?<!\p{Nd})(\+?[0-9][0-9     \-()]{6,}[0-9])(?!\p{Nd})"#
 
     /// `+` and `(` immediately before a digit run signal an unmatched-paren or
     /// international form.
-    private static let phonePrefixHints: Set<Character> = ["+", "("]
+    private static let phonePrefixHints: Set<UInt16> = [0x2B, 0x28]
 
     /// Characters that can appear inside the matched phone substring and count
-    /// as formatting hints.
+    /// as formatting hints. No-break spaces are not hints: such a number without
+    /// `+` stays unlinked.
     private static let internalPhoneHints: Set<Character> = ["+", "-", " "]
+
+    /// Non-digit scalars that extend a phone run for the mixed-digit check.
+    private static let phoneRunPunctuation: Set<Unicode.Scalar> = [
+        " ", "\u{00A0}", "\u{2007}", "\u{2009}", "\u{202F}", "-", "(", ")", "+",
+    ]
 
     private static let mirrorLabels: Set<String> = ["www", "m", "mb", "mobile"]
 
     public static func scan(_ fieldValue: String, source: SourceField) -> [LinkSpan] {
-        // Field-level rejection: if ANY part of this field contains a Unicode
-        // formatting (Cf) or control (Cc) codepoint, surface NO tappable links.
-        if containsRenderingHazard(fieldValue) { return [] }
+        if containsFieldHazard(fieldValue) { return [] }
 
-        var spans: [LinkSpan] = []
-
-        for match in regexMatches(in: fieldValue, pattern: urlPattern) {
-            spans.append(
-                LinkSpan(
-                    start: match.start,
-                    endExclusive: match.endExclusive,
-                    intent: .url(
-                        B3UrlIntent(
-                            url: match.value,
-                            sourceField: source,
-                            registrableDomain: registrableDomainOf(match.value)
-                        )
+        let urls = cleanMatches(in: fieldValue, pattern: urlPattern).map { match in
+            LinkSpan(
+                start: match.start,
+                endExclusive: match.endExclusive,
+                intent: .url(
+                    B3UrlIntent(
+                        url: match.value,
+                        sourceField: source,
+                        registrableDomain: registrableDomainOf(match.value)
                     )
                 )
             )
         }
 
-        for match in regexMatches(in: fieldValue, pattern: emailPattern) {
-            if overlapsExisting(start: match.start, end: match.endExclusive, existing: spans) {
-                continue
-            }
-            spans.append(
+        // Skip emails inside an already-claimed URL span ("http://x@y.com").
+        var urlClaims = ClaimedRanges(urls)
+        let emails = cleanMatches(in: fieldValue, pattern: emailPattern)
+            .filter { !urlClaims.overlaps(start: $0.start, endExclusive: $0.endExclusive) }
+            .map { match in
                 LinkSpan(
                     start: match.start,
                     endExclusive: match.endExclusive,
                     intent: .email(EmailIntent(emailAddress: match.value, sourceField: source))
                 )
-            )
-        }
-
-        for match in regexMatches(in: fieldValue, pattern: phonePattern) {
-            let digitCount = match.value.filter(\.isNumber).count
-            if digitCount < 7 { continue }
-            if !hasPhoneFormattingHint(match: match, fullText: fieldValue) { continue }
-            if overlapsExisting(start: match.start, end: match.endExclusive, existing: spans) {
-                continue
             }
-            spans.append(
+
+        var claims = ClaimedRanges((urls + emails).sorted { $0.start < $1.start })
+        let phoneMatches = cleanMatches(in: fieldValue, pattern: phonePattern)
+            .filter { isLinkablePhone(match: $0, fullText: fieldValue) }
+        let mixedRuns = phoneMatches.isEmpty ? nil : mixedDigitRuns(fieldValue)
+        let phones =
+            phoneMatches
+            .filter { mixedRuns?[$0.start] != true }
+            .filter { !claims.overlaps(start: $0.start, endExclusive: $0.endExclusive) }
+            .map { match in
                 LinkSpan(
                     start: match.start,
                     endExclusive: match.endExclusive,
@@ -81,22 +119,40 @@ public enum FieldLinkScanner {
                         )
                     )
                 )
-            )
-        }
+            }
 
-        return spans.sorted(by: { $0.start < $1.start })
+        return (urls + emails + phones).sorted { $0.start < $1.start }
     }
 
-    /// True if `s` contains any Unicode Cf (Format) or Cc (Control) codepoint.
-    /// These include bidi controls (U+202A..U+202E, U+2066..U+2069, U+200E/F,
-    /// U+061C), zero-width characters, and raw control bytes. All can change
-    /// the rendered glyph order or visibility without changing byte content.
+    /// True if `s` contains any Unicode Cf (Format) or Cc (Control) scalar, or a
+    /// line or paragraph separator (U+2028 / U+2029). These include bidi controls
+    /// (U+202A..U+202E, U+2066..U+2069, U+200E/F, U+061C), zero-width characters,
+    /// supplementary-plane TAG characters, and raw control bytes. All can change
+    /// the rendered glyph order, visibility or line layout without changing what
+    /// the string resolves to. Applied to every matched link substring.
     public static func containsRenderingHazard(_ s: String) -> Bool {
+        s.unicodeScalars.contains(where: isHazard)
+    }
+
+    /// Whole-field gate: `containsRenderingHazard` minus line feed, tab, and
+    /// carriage return directly followed by line feed. A lone carriage return is a
+    /// hazard. Iterates scalars because Swift treats CRLF as one `Character`.
+    static func containsFieldHazard(_ s: String) -> Bool {
+        var pendingCarriageReturn = false
         for scalar in s.unicodeScalars {
-            if scalar.properties.generalCategory == .format { return true }
-            if scalar.properties.generalCategory == .control { return true }
+            if pendingCarriageReturn && scalar != "\n" { return true }
+            pendingCarriageReturn = scalar == "\r"
+            if scalar == "\n" || scalar == "\t" || scalar == "\r" { continue }
+            if isHazard(scalar) { return true }
         }
-        return false
+        return pendingCarriageReturn
+    }
+
+    private static func isHazard(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.properties.generalCategory {
+        case .format, .control, .lineSeparator, .paragraphSeparator: return true
+        default: return false
+        }
     }
 
     /// Best-effort PSL-free registrable-domain extraction. Strips scheme,
@@ -144,30 +200,66 @@ public enum FieldLinkScanner {
         return host
     }
 
-    private static func hasPhoneFormattingHint(match: RegexMatch, fullText: String) -> Bool {
-        if match.value.contains(where: { internalPhoneHints.contains($0) }) { return true }
-        // Use NSString for code-unit-aligned indexing - `match.start` and
-        // `match.endExclusive` are NSString offsets.
-        let ns = fullText as NSString
-        let before: Character? =
-            match.start > 0
-            ? Character(ns.substring(with: NSRange(location: match.start - 1, length: 1)))
-            : nil
-        let after: Character? =
-            match.endExclusive < ns.length
-            ? Character(ns.substring(with: NSRange(location: match.endExclusive, length: 1)))
-            : nil
-        if let b = before, phonePrefixHints.contains(b) { return true }
-        if after == ")" { return true }
-        return false
+    private static func cleanMatches(in text: String, pattern: String) -> [RegexMatch] {
+        regexMatches(in: text, pattern: pattern).filter { !containsRenderingHazard($0.value) }
     }
 
-    private static func overlapsExisting(
-        start: Int,
-        end: Int,
-        existing: [LinkSpan]
-    ) -> Bool {
-        existing.contains { $0.start < end && start < $0.endExclusive }
+    private static func isLinkablePhone(match: RegexMatch, fullText: String) -> Bool {
+        match.value.utf8.filter { (0x30...0x39).contains($0) }.count >= 7
+            && hasPhoneFormattingHint(match: match, fullText: fullText)
+    }
+
+    // Hint: an internal `+`, dash or ASCII space, or an adjacent `+` / `(` before or
+    // `)` after. Offsets are UTF-16, so neighbours are read as code units.
+    private static func hasPhoneFormattingHint(match: RegexMatch, fullText: String) -> Bool {
+        if match.value.contains(where: { internalPhoneHints.contains($0) }) { return true }
+        let ns = fullText as NSString
+        if match.start > 0, phonePrefixHints.contains(ns.character(at: match.start - 1)) { return true }
+        return match.endExclusive < ns.length && ns.character(at: match.endExclusive) == 0x29
+    }
+
+    /// Flags, in one linear pass, every UTF-16 offset inside a run holding a
+    /// non-ASCII decimal digit; nil when no run does. A phone match starting in
+    /// such a run is a truncated slice, so it is dropped.
+    private static func mixedDigitRuns(_ text: String) -> [Bool]? {
+        var flags: [Bool]?
+        var runStart = 0
+        var offset = 0
+        var mixed = false
+        func closeRun(at end: Int) {
+            if mixed {
+                if flags == nil { flags = Array(repeating: false, count: text.utf16.count) }
+                for i in runStart..<end { flags?[i] = true }
+            }
+            mixed = false
+        }
+        for scalar in text.unicodeScalars {
+            let width = scalar.utf16.count
+            let isDigit = scalar.properties.generalCategory == .decimalNumber
+            if isDigit || phoneRunPunctuation.contains(scalar) {
+                if isDigit && !scalar.isASCII { mixed = true }
+            } else {
+                closeRun(at: offset)
+                runStart = offset + width
+            }
+            offset += width
+        }
+        closeRun(at: offset)
+        return flags
+    }
+}
+
+/// Overlap queries for ascending, disjoint ranges against sorted, disjoint
+/// claimed spans; linear overall.
+private struct ClaimedRanges {
+    private let claimed: [LinkSpan]
+    private var next = 0
+
+    init(_ claimed: [LinkSpan]) { self.claimed = claimed }
+
+    mutating func overlaps(start: Int, endExclusive: Int) -> Bool {
+        while next < claimed.count && claimed[next].endExclusive <= start { next += 1 }
+        return next < claimed.count && claimed[next].start < endExclusive
     }
 }
 

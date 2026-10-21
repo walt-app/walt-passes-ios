@@ -10,11 +10,7 @@ import Testing
 @Suite("FieldLinkScanner")
 struct FieldLinkScannerTests {
 
-    private let source = SourceField(
-        fieldKey: "support_url",
-        fieldLabel: "Support",
-        organizationName: "Acme"
-    )
+    private let source = linkScannerTestSource
 
     @Test func detectsHttpsUrl() {
         let spans = FieldLinkScanner.scan(
@@ -51,6 +47,73 @@ struct FieldLinkScannerTests {
             return
         }
         #expect(i.emailAddress == "support@acme.example")
+    }
+
+    @Test func emailsBesidePunctuationAndInProseKeepExactRanges() {
+        let texts = [
+            "(support@acme.example)",
+            "<support@acme.example>",
+            "\"support@acme.example\"",
+            "Mail: support@acme.example.",
+            "Mail support@acme.example, or call.",
+            "Write to support@acme.example!",
+            "Mail support@acme.example\nThanks",
+        ]
+        for text in texts {
+            expectExactSpans(text, [("support@acme.example", .email)])
+        }
+    }
+
+    @Test func emailLocalPartTakesTheWholeRun() {
+        let emails = [
+            "first.last+tag@mail.acme.example",
+            "a_b%c-d@acme-1.example",
+            "Ops.Team@Acme.EXAMPLE",
+            "x@acme.example",
+        ]
+        for email in emails {
+            expectExactSpans("Contact \(email) today", [(email, .email)])
+        }
+    }
+
+    @Test func emailDomainEndsAtTheLastValidTld() {
+        expectExactSpans("a@b.example..", [("a@b.example", .email)])
+        expectExactSpans("a@b.example.c", [("a@b.example", .email)])
+        expectExactSpans("a@b.example-1", [("a@b.example", .email)])
+        expectExactSpans("a@b.c.de.f1", [("a@b.c.de", .email)])
+    }
+
+    @Test func emailWithoutUsableDomainDoesNotLink() {
+        for text in ["a@", "@acme.example", "a@acme", "a@acme.e", "a@@acme.example", "a@."] {
+            #expect(FieldLinkScanner.scan(text, source: source).isEmpty, "\(text)")
+        }
+    }
+
+    @Test func separatedEmailsAllLink() {
+        expectExactSpans(
+            "a@b.example, c@d.example;e@f.example g@h.example",
+            [
+                ("a@b.example", .email),
+                ("c@d.example", .email),
+                ("e@f.example", .email),
+                ("g@h.example", .email),
+            ]
+        )
+    }
+
+    @Test func emailNeverStartsInsideAPreviousAddress() {
+        // A match may not start mid-run or right after an `@`, so only the first address links.
+        let cases = [
+            ("a@b.example-c@d.example", "a@b.example"),
+            ("a@b.example.c@d.example", "a@b.example"),
+            ("a@b.ex1@d.example", "a@b.ex"),
+            ("a@b.co1x@y.co2z@w.co", "a@b.co"),
+            ("a@b.example-c@d.example@e.example", "a@b.example"),
+        ]
+        for (text, first) in cases {
+            expectExactSpans(text, [(first, .email)])
+        }
+        #expect(FieldLinkScanner.scan("a@b@c.example", source: source).isEmpty)
     }
 
     @Test func detectsInternationalPhone() {
@@ -257,6 +320,30 @@ struct FieldLinkScannerTests {
         #expect(cpu < 500, "cpu=\(cpu)ms")
     }
 
+    @Test func phoneDenseFieldScansInLinearTime() {
+        // Every `+` is a hint and starts a new 8-digit match inside one long run.
+        expectLinearScan(String(repeating: "+12345678 ", count: 30_000))
+    }
+
+    @Test func mixedDigitRunScansInLinearTime() {
+        // One run spanning the field, mixed by U+0663, holding 30k rejected phone matches.
+        expectLinearScan(String(repeating: "1234-5678 \u{0663} ", count: 30_000))
+    }
+
+    @Test func emailLocalPartRunWithoutAtScansInLinearTime() {
+        expectLinearScan(String(repeating: "a", count: 200_000))
+    }
+
+    @Test func emailDomainWithoutTldScansInLinearTime() {
+        // The domain never ends in a TLD, and is itself one long local-part run.
+        expectLinearScan("a@" + String(repeating: "a.", count: 100_000))
+    }
+
+    @Test func phoneShapedLocalPartRunScansInLinearTime() {
+        // One unbroken local-part run without `@`, holding 22k phone matches.
+        expectLinearScan(String(repeating: "+12345678", count: 22_000))
+    }
+
     // -- registrableDomain extraction ------------------------------------------
 
     @Test func registrableDomainKeepsTwoLabelMirrorHost() {
@@ -284,16 +371,4 @@ struct FieldLinkScannerTests {
     @Test func registrableDomainReturnsNilForNonHttpScheme() {
         #expect(FieldLinkScanner.registrableDomainOf("mailto:x@y.example") == nil)
     }
-}
-
-/// CPU time burned on the calling thread, in milliseconds.
-///
-/// The catastrophic-backtracking guards above measured wall clock and flaked under the parallel
-/// suite (ipass-sry): they were reporting the machine's contention, not the scanner's behaviour.
-/// A real blowup is exponential CPU, which this still catches, and `FieldLinkScanner.scan` is a
-/// synchronous pure function so none of its work escapes this thread.
-private func threadCPUMilliseconds() -> Double {
-    var time = timespec()
-    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &time)
-    return Double(time.tv_sec) * 1000 + Double(time.tv_nsec) / 1_000_000
 }
