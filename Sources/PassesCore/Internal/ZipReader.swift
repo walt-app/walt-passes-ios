@@ -8,9 +8,9 @@ import Foundation
 /// or DEFLATE (method 8) entries. Apple's `COMPRESSION_ZLIB` is raw DEFLATE, exactly ZIP
 /// method 8.
 ///
-/// Scope, mirrored against the pkpass threat model rather than a general unzip: ZIP64,
-/// data-descriptor-only entries (general-purpose bit 3 set), and encrypted entries are
-/// rejected as `notAZipArchive`. Real pkpass files are small standard zips, so this is a
+/// Scope, mirrored against the pkpass threat model rather than a general unzip: ZIP64 and
+/// encrypted entries are rejected as `notAZipArchive`; data-descriptor entries (bit 3) are read
+/// from their central-directory sizes. Real pkpass files are small standard zips, so this is a
 /// documented, deliberate limitation rather than a gap. This reader owns the per-entry and
 /// whole-archive decompressed-size caps; `SafeArchiveExtractor` owns the archive-size, count,
 /// name and duplicate guards. Central-directory entries may alias one local header, which a
