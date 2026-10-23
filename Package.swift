@@ -39,18 +39,19 @@ let package = Package(
         // iOS Data Protection (FileProtectionType.complete) on the DB file, NOT SQLCipher
         // (ios-b1f epic decision 2026-06-02). Only PassesStorage links it.
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.11.0"),
-        // Apple's pure-Swift X.509 + CMS. PassesCore's signature verifier uses it to
-        // verify the detached PKCS#7/CMS signature over a pkpass manifest and classify the
-        // chain against bundled Apple roots — the iOS analogue of Android's BouncyCastle
-        // path (user-approved §7 decision 2026-06-02). Pulls swift-asn1 + swift-crypto
-        // transitively. Only PassesCore links it.
+        // Apple's pure-Swift X.509 + CMS for PassesCore's pkpass signature verifier, the iOS
+        // analogue of Android's BouncyCastle path. Only PassesCore links it.
         .package(url: "https://github.com/apple/swift-certificates.git", from: "1.19.1"),
+        // Direct so the floor is ours: RSA certificates in a pkpass signature reach swift-crypto's
+        // key parser, and 4.5.1 fixes a double free there (CVE-2026-43823).
+        .package(url: "https://github.com/apple/swift-crypto.git", from: "4.5.1"),
     ],
     targets: [
         .target(
             name: "PassesCore",
             dependencies: [
                 .product(name: "X509", package: "swift-certificates"),
+                .product(name: "Crypto", package: "swift-crypto"),
             ],
             path: "Sources/PassesCore",
             resources: [
