@@ -44,7 +44,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-certificates.git", from: "1.19.1"),
         // Direct so the floor is ours: RSA certificates in a pkpass signature reach swift-crypto's
         // key parser, and 4.5.1 fixes a double free there (CVE-2026-43823).
-        .package(url: "https://github.com/apple/swift-crypto.git", from: "4.5.1"),
+        .package(url: "https://github.com/apple/swift-crypto.git", from: "5.0.3"),
     ],
     targets: [
         .target(
