@@ -1,5 +1,5 @@
 {
-  "originHash" : "39906cef0ab39c673686b073bf6cebead9d961b39c8bd923dfad0f7c70d376a3",
+  "originHash" : "8e5b627f338ed1fed92306db997fa96206af0db3022fc9b0c81c83193f890298",
   "pins" : [
     {
       "identity" : "grdb.swift",
@@ -24,8 +24,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-certificates.git",
       "state" : {
-        "revision" : "ff86b924ead66f853b8baf91f3c41926a8f36177",
-        "version" : "1.21.0"
+        "revision" : "84f03fafeca28c19f5fc4b528df3d22ce8896bd7",
+        "version" : "1.21.1"
       }
     },
     {
