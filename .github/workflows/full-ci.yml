@@ -43,7 +43,8 @@ jobs:
     if: >-
       github.event_name != 'pull_request' ||
       github.event.label.name == 'full-ci'
-    runs-on: macos-15
+    # swift-crypto 5 declares Swift tools 6.2, so the runner needs Xcode 26 or later.
+    runs-on: macos-26
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
