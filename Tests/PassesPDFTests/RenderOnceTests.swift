@@ -140,11 +140,14 @@ struct RenderOnceTests {
         let dims = PDFKitRenderer.fittedDimensions(
             pageWidth: 595, pageHeight: 842, maxPixels: 4 * 1024 * 1024
         )
-        #expect(Int64(dims.widthPx) * Int64(dims.heightPx) <= 4 * 1024 * 1024)
+        // Typed locals: the inline form times out the type checker on Xcode 26.6.
+        let budget: Int64 = 4 * 1024 * 1024
+        let pixels = Int64(dims.widthPx) * Int64(dims.heightPx)
+        #expect(pixels <= budget)
         let aspect = Double(dims.widthPx) / Double(dims.heightPx)
         #expect(abs(aspect - 595.0 / 842.0) < 0.01)
         // Fills at least 99% of the budget (floors cost at most a row/column).
-        #expect(Int64(dims.widthPx) * Int64(dims.heightPx) > 4 * 1024 * 1024 * 99 / 100)
+        #expect(pixels > budget * 99 / 100)
     }
 
     @Test func fittedDimensionsDegenerateAspectStaysLegalAndBounded() {
