@@ -43,7 +43,7 @@ jobs:
     if: >-
       github.event_name != 'pull_request' ||
       github.event.label.name == 'full-ci'
-    # swift-crypto 5 needs Swift 6.2 tools, which the macos-15 image (Xcode 16.4) lacks.
+    # swift-crypto 5 declares Swift tools 6.2, so the runner needs Xcode 26 or later.
     runs-on: macos-26
     timeout-minutes: 40
     steps:
